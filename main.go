@@ -1,18 +1,19 @@
 package main
 
 import (
+	"embed"
+
 	"github.com/codefly-dev/cli/pkg/plugins"
 	"github.com/codefly-dev/cli/pkg/plugins/services"
 	"github.com/codefly-dev/core/configurations"
 )
 
 // Plugin version
-var conf = configurations.Plugin{
-	Publisher:  "codefly.ai",
-	Identifier: "go-grpc",
-	Kind:       configurations.PluginService,
-	Version:    "0.0.0",
-}
+
+//go:embed plugin.codefly.yaml
+var configuration embed.FS
+
+var conf = configurations.LoadPluginConfigurations(configuration)
 
 type Spec struct {
 	Debug              bool `yaml:"debug"` // Developer only
@@ -22,13 +23,13 @@ type Spec struct {
 }
 
 type Service struct {
-	Base *services.Base
+	*services.Base
 
 	// Spec
 	*Spec
 
 	// Endpoints
-	GrpcEndpoint configurations.Endpoint
+	GrpcEndpoint *configurations.Endpoint
 	RestEndpoint *configurations.Endpoint
 }
 

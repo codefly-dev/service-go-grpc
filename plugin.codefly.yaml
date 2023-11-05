@@ -1,0 +1,4 @@
+name: go-grpc
+publisher: codefly.ai
+kind: service
+version: 0.0.1

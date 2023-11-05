@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/codefly-dev/go-grpc/base/adapters"
-	codefly "github.com/codefly-dev/sdk-go"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/codefly-dev/go-grpc/base/adapters"
+	codefly "github.com/codefly-dev/sdk-go"
 )
 
 func main() {

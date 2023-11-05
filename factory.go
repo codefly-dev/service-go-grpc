@@ -3,6 +3,10 @@ package main
 import (
 	"embed"
 	"fmt"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
 	"github.com/codefly-dev/cli/pkg/plugins/communicate"
 	golanghelpers "github.com/codefly-dev/cli/pkg/plugins/helpers/go"
 	"github.com/codefly-dev/cli/pkg/plugins/services"
@@ -12,7 +16,6 @@ import (
 	"github.com/codefly-dev/core/configurations"
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/templates"
-	"strings"
 )
 
 type Factory struct {
@@ -59,9 +62,11 @@ type CreateConfiguration struct {
 }
 
 func (p *Factory) NewCreateCommunicate() (*communicate.ClientContext, error) {
-	client := communicate.NewClientContext(communicate.Create, p.Base.PluginLogger)
+	client := communicate.NewClientContext(communicate.Create, p.PluginLogger)
 	err := client.NewSequence(
-		client.NewConfirm(&corev1.Message{Name: "confirm"}, true),
+		client.NewConfirm(&corev1.Message{Name: "watch", Message: "Code hot-reload (Recommended)?", Description: "Let codefly restart/resync your service when code changes are detected"}, true),
+		client.NewConfirm(&corev1.Message{Name: "debug-build", Message: "Local debug with symbols build (Recommended)?", Description: "Debugging will be easier!"}, true),
+		client.NewConfirm(&corev1.Message{Name: "rest", Message: "Transcode gRPC to REST?", Description: "Automatically get a REST endpoint from your gRPC definition"}, false),
 	)
 	if err != nil {
 		return nil, err
@@ -70,7 +75,7 @@ func (p *Factory) NewCreateCommunicate() (*communicate.ClientContext, error) {
 }
 
 func (p *Factory) Init(req *v1.InitRequest) (*factoryv1.InitResponse, error) {
-	defer p.Base.PluginLogger.Catch()
+	defer p.PluginLogger.Catch()
 
 	err := p.Base.Init(req, &p.Spec)
 	if err != nil {
@@ -82,60 +87,64 @@ func (p *Factory) Init(req *v1.InitRequest) (*factoryv1.InitResponse, error) {
 		return nil, err
 	}
 
-	channels, err := p.Base.WithCommunications(services.NewChannel(communicate.Create, p.create))
+	channels, err := p.WithCommunications(services.NewChannel(communicate.Create, p.create))
 	if err != nil {
 		return nil, err
 	}
 
 	return &factoryv1.InitResponse{
-		Version:  p.Base.Version(),
+		Version:  p.Version(),
 		Channels: channels,
 	}, nil
 }
 
 func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateResponse, error) {
-	defer p.Base.PluginLogger.Catch()
+	defer p.PluginLogger.Catch()
 
 	// Make sure the communication for create has been done successfully
 	if !p.create.Ready() {
-		return nil, p.Base.PluginLogger.Errorf("create: communication not ready")
+		return nil, p.PluginLogger.Errorf("create: communication not ready")
 	}
 
-	p.Base.ServiceLogger.Info("Creating service")
+	//p.Spec.Watch =
+	p.ServiceLogger.Info("Creating service")
 
 	create := CreateConfiguration{
-		Name:      strings.Title(p.Base.Identity.Name),
-		Domain:    p.Base.Identity.Domain,
-		Namespace: p.Base.Identity.Namespace,
-		Readme:    Readme{Summary: p.Base.Identity.Name},
+		Name:      cases.Title(language.English, cases.NoLower).String(p.Identity.Name),
+		Domain:    p.Identity.Domain,
+		Namespace: p.Identity.Namespace,
+		Readme:    Readme{Summary: p.Identity.Name},
 	}
 
 	// Templatize as usual
-	err := templates.CopyAndApply(p.Base.PluginLogger, templates.NewEmbeddedFileSystem(factory), shared.NewDir("templates/factory"),
-		shared.NewDir(p.Base.Location), create)
+	err := templates.CopyAndApply(p.PluginLogger, templates.NewEmbeddedFileSystem(factory), shared.NewDir("templates/factory"),
+		shared.NewDir(p.Location), create)
 	if err != nil {
-		return nil, p.Base.PluginLogger.Wrapf(err, "cannot copy and apply template")
+		return nil, p.PluginLogger.Wrapf(err, "cannot copy and apply template")
 	}
 
-	err = templates.CopyAndApply(p.Base.PluginLogger, templates.NewEmbeddedFileSystem(builder), shared.NewDir("templates/builder"),
-		shared.NewDir(p.Base.Local("builder")), nil)
+	err = templates.CopyAndApply(p.PluginLogger, templates.NewEmbeddedFileSystem(builder), shared.NewDir("templates/builder"),
+		shared.NewDir(p.Local("builder")), nil)
 	if err != nil {
-		return nil, p.Base.PluginLogger.Wrapf(err, "cannot copy and apply template")
+		return nil, p.PluginLogger.Wrapf(err, "cannot copy and apply template")
 	}
 
-	out, err := shared.GenerateTree(p.Base.Location, " ")
+	out, err := shared.GenerateTree(p.Location, " ")
 	if err != nil {
 		return nil, err
 	}
-	p.Base.PluginLogger.Info("tree: %s", out)
+	p.PluginLogger.Info("tree: %s", out)
 
 	// Load default
-	err = configurations.LoadSpec(req.Spec, &p.Spec, shared.BaseLogger(p.Base.PluginLogger))
+	err = configurations.LoadSpec(req.Spec, &p.Spec, shared.BaseLogger(p.PluginLogger))
 	if err != nil {
 		return nil, err
 	}
 
-	p.InitEndpoints()
+	endpoints, err := p.InitEndpoints()
+	if err != nil {
+		return nil, err
+	}
 
 	//	May override or check spec here
 	spec, err := configurations.SerializeSpec(p.Spec)
@@ -143,36 +152,15 @@ func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateRespons
 		return nil, err
 	}
 
-	helper := golanghelpers.Go{Dir: p.Base.Location}
+	helper := golanghelpers.Go{Dir: p.Location}
 
-	err = helper.BufGenerate(p.Base.PluginLogger)
+	err = helper.BufGenerate(p.PluginLogger)
 	if err != nil {
 		return nil, fmt.Errorf("factory>create: go helper: cannot run buf generate: %v", err)
 	}
-	err = helper.ModTidy(p.Base.PluginLogger)
+	err = helper.ModTidy(p.PluginLogger)
 	if err != nil {
 		return nil, fmt.Errorf("factory>create: go helper: cannot run mod tidy: %v", err)
-	}
-
-	grpc, err := services.NewGrpcApi(p.Base.Local("api.proto"))
-	if err != nil {
-		return nil, shared.Wrapf(err, "cannot create grpc api")
-	}
-	endpoint, err := services.WithApi(&p.GrpcEndpoint, grpc)
-	if err != nil {
-		return nil, shared.Wrapf(err, "cannot add gRPC api to endpoint")
-	}
-	endpoints := []*corev1.Endpoint{endpoint}
-	if p.RestEndpoint != nil {
-		rest, err := services.NewOpenApi(p.Base.Local("adapters/v1/swagger/api.swagger.json"))
-		if err != nil {
-			return nil, shared.Wrapf(err, "cannot create REST api")
-		}
-		r, err := services.WithApi(p.RestEndpoint, rest)
-		if err != nil {
-			return nil, shared.Wrapf(err, "cannot add grpc api to endpoint")
-		}
-		endpoints = append(endpoints, r)
 	}
 
 	return &factoryv1.CreateResponse{
@@ -182,18 +170,18 @@ func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateRespons
 }
 
 func (p *Factory) Update(req *factoryv1.UpdateRequest) (*factoryv1.UpdateResponse, error) {
-	defer p.Base.PluginLogger.Catch()
+	defer p.PluginLogger.Catch()
 
-	p.Base.ServiceLogger.Info("Updating")
+	p.ServiceLogger.Info("Updating")
 
-	err := templates.CopyAndApply(p.Base.PluginLogger, templates.NewEmbeddedFileSystem(builder), shared.NewDir("templates/builder"),
-		shared.NewDir(p.Base.Local("builder")), nil)
+	err := templates.CopyAndApply(p.PluginLogger, templates.NewEmbeddedFileSystem(builder), shared.NewDir("templates/builder"),
+		shared.NewDir(p.Local("builder")), nil)
 	if err != nil {
-		return nil, p.Base.PluginLogger.Wrapf(err, "cannot copy and apply template")
+		return nil, p.PluginLogger.Wrapf(err, "cannot copy and apply template")
 	}
 
-	helper := golanghelpers.Go{Dir: p.Base.Location}
-	err = helper.Update(p.Base.PluginLogger)
+	helper := golanghelpers.Go{Dir: p.Location}
+	err = helper.Update(p.PluginLogger)
 	if err != nil {
 		return nil, fmt.Errorf("factory>update: go helper: cannot run update: %v", err)
 	}
@@ -201,25 +189,40 @@ func (p *Factory) Update(req *factoryv1.UpdateRequest) (*factoryv1.UpdateRespons
 }
 
 func (p *Factory) Communicate(req *corev1.Engage) (*corev1.InformationRequest, error) {
-	p.Base.PluginLogger.DebugMe("factory communicate: %v", req)
+	p.PluginLogger.DebugMe("factory communicate: %v", req)
 	return p.Base.Communicate(req)
 }
 
-func (p *Service) InitEndpoints() {
-	p.GrpcEndpoint = configurations.Endpoint{
-		Name:        configurations.Grpc,
-		Api:         &configurations.Api{Protocol: configurations.Grpc},
-		Description: "Expose gRPC",
-	}
-
-	p.Base.PluginLogger.Debugf("initEndpoints: %v", p.Spec.CreateHttpEndpoint)
-	if p.Spec.CreateHttpEndpoint {
-		p.RestEndpoint = &configurations.Endpoint{
-			Name:        configurations.Http,
-			Api:         &configurations.Api{Protocol: configurations.Http, Framework: configurations.RestFramework},
-			Description: "Expose REST",
-		}
-	}
+func (p *Service) InitEndpoints() ([]*corev1.Endpoint, error) {
+	//p.GrpcEndpoint = &configurations.Endpoint{
+	//	Name:        configurations.Grpc,
+	//	Api:         &configurations.Api{Protocol: configurations.Grpc},
+	//	Description: "Expose gRPC",
+	//}
+	//
+	//p.PluginLogger.Debugf("initEndpoints: %v", p.Spec.CreateHttpEndpoint)
+	//if p.Spec.CreateHttpEndpoint {
+	//	p.RestEndpoint = &configurations.Endpoint{
+	//		Name:        configurations.Http,
+	//		Api:         &configurations.Api{Protocol: configurations.Http, Framework: configurations.RestFramework},
+	//		Description: "Expose REST",
+	//	}
+	//}
+	//
+	//grpc, err := services.NewGrpcApi(p.GrpcEndpoint, p.Local("api.proto"))
+	//if err != nil {
+	//	return nil, shared.Wrapf(err, "cannot create grpc api")
+	//}
+	//
+	//endpoints := []*corev1.Endpoint{grpc}
+	//if p.RestEndpoint != nil {
+	//	rest, err := services.NewOpenApi(p.RestEndpoint, p.Local("adapters/v1/swagger/api.swagger.json"))
+	//	if err != nil {
+	//		return nil, shared.Wrapf(err, "cannot create REST api")
+	//	}
+	//	endpoints = append(endpoints, rest)
+	//}
+	return nil, nil
 }
 
 //go:embed templates/factory

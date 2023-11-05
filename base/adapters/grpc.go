@@ -3,11 +3,12 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"net"
+
 	"github.com/bufbuild/protovalidate-go"
 	gen "github.com/codefly-dev/go-grpc/base/adapters/v1"
 	codefly "github.com/codefly-dev/sdk-go"
 	"google.golang.org/grpc"
-	"net"
 )
 
 type Configuration struct {
