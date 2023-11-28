@@ -29,7 +29,6 @@ func NewFactory() *Factory {
 		Service: NewService(),
 	}
 }
-
 func (p *Factory) Init(req *servicev1.InitRequest) (*factoryv1.InitResponse, error) {
 	defer p.AgentLogger.Catch()
 
@@ -82,6 +81,7 @@ type Deployment struct {
 }
 
 type CreateConfiguration struct {
+	*services.Information
 	Image      *configurations.DockerImage
 	Deployment Deployment
 	Domain     string
@@ -115,8 +115,15 @@ func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateRespons
 	p.Settings.Watch = p.create.Confirm(p.createSequence.Find(Watch)).Confirmed
 	p.Settings.CreateHttpEndpoint = p.create.Confirm(p.createSequence.Find(WithRest)).Confirmed
 
+	create := CreateConfiguration{
+		Information: p.Information,
+		Image:       &configurations.DockerImage{Name: "TODO"},
+		Envs:        []string{},
+		Deployment:  Deployment{Replicas: 1},
+	}
+
 	ignores := []string{"go.work", "service.generation.codefly.yaml"}
-	err := p.Templates(p.Information, services.WithFactory(factory, ignores...),
+	err := p.Templates(create, services.WithFactory(factory, ignores...),
 		services.WithBuilder(builder),
 		services.WithDeploymentFor(deployment, "kustomize/base"))
 	if err != nil {
