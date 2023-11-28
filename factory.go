@@ -185,6 +185,7 @@ func (p *Factory) Sync(req *factoryv1.SyncRequest) (*factoryv1.SyncResponse, err
 		return nil, p.Wrapf(err, "cannot remove adapters")
 	}
 	// Re-generate
+	p.AgentLogger.TODO("change buf to use openapi or not dependencing on things...")
 	err = helper.BufGenerate(p.AgentLogger)
 	if err != nil {
 		return nil, p.Wrapf(err, "cannot generate proto")
