@@ -79,7 +79,6 @@ type CreateConfiguration struct {
 	*services.Information
 	Image      *configurations.DockerImage
 	Deployment Deployment
-	Domain     string
 	Envs       []string
 }
 
@@ -112,7 +111,7 @@ func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateRespons
 
 	create := CreateConfiguration{
 		Information: p.Information,
-		Image:       &configurations.DockerImage{Name: "TODO"},
+		Image:       p.DockerImage(),
 		Envs:        []string{},
 		Deployment:  Deployment{Replicas: 1},
 	}
