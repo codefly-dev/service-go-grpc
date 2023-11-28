@@ -52,12 +52,7 @@ func (p *Factory) Init(req *servicev1.InitRequest) (*factoryv1.InitResponse, err
 		return nil, err
 	}
 
-	return &factoryv1.InitResponse{
-		Version:   p.Version(),
-		Endpoints: p.Endpoints,
-		Channels:  channels,
-		ReadMe:    readme,
-	}, nil
+	return p.FactoryInitResponse(p.Endpoints, channels, readme)
 }
 
 const Watch = "watch"
@@ -123,7 +118,8 @@ func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateRespons
 	}
 
 	ignores := []string{"go.work", "service.generation.codefly.yaml"}
-	err := p.Templates(create, services.WithFactory(factory, ignores...),
+	err := p.Templates(create,
+		services.WithFactory(factory, ignores...),
 		services.WithBuilder(builder),
 		services.WithDeploymentFor(deployment, "kustomize/base"))
 	if err != nil {
@@ -237,11 +233,12 @@ func (p *Factory) Build(req *factoryv1.BuildRequest) (*factoryv1.BuildResponse, 
 	if err != nil {
 		return nil, p.Wrapf(err, "cannot copy and apply template")
 	}
+	image := p.DockerImage()
 	builder, err := dockerhelpers.NewBuilder(dockerhelpers.BuilderConfiguration{
 		Root:       p.Location,
 		Dockerfile: "codefly/builder/Dockerfile",
-		Image:      p.Identity.Name,
-		Tag:        p.Configuration.Version,
+		Image:      image.Name,
+		Tag:        image.Tag,
 	})
 	if err != nil {
 		return nil, p.Wrapf(err, "cannot create builder")
@@ -254,7 +251,20 @@ func (p *Factory) Build(req *factoryv1.BuildRequest) (*factoryv1.BuildResponse, 
 	return &factoryv1.BuildResponse{}, nil
 }
 
+type DeploymentParameter struct {
+	Image *configurations.DockerImage
+}
+
 func (p *Factory) Deploy(req *factoryv1.DeploymentRequest) (*factoryv1.DeploymentResponse, error) {
+	defer p.AgentLogger.Catch()
+	deploy := DeploymentParameter{Image: p.DockerImage()}
+	err := p.Templates(deploy,
+		services.WithDeploymentFor(deployment, "kustomize/overlays/environment",
+			services.WithDestination("kustomize/overlays/%s", req.Environment.Name)),
+	)
+	if err != nil {
+		return nil, err
+	}
 	return &factoryv1.DeploymentResponse{}, nil
 }
 
