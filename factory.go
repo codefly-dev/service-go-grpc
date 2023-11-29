@@ -182,7 +182,7 @@ func (p *Factory) Sync(req *factoryv1.SyncRequest) (*factoryv1.SyncResponse, err
 		return nil, p.Wrapf(err, "cannot remove adapters")
 	}
 	// Re-generate
-	p.AgentLogger.TODO("change buf to use openapi or not dependencing on things...")
+	p.AgentLogger.TODO("change buf to use openapi or not depending on things...")
 	err = helper.BufGenerate(p.AgentLogger)
 	if err != nil {
 		return nil, p.Wrapf(err, "cannot generate proto")
@@ -259,9 +259,9 @@ func (p *Factory) Deploy(req *factoryv1.DeploymentRequest) (*factoryv1.Deploymen
 	defer p.AgentLogger.Catch()
 	deploy := DeploymentParameter{Image: p.DockerImage(), Information: p.Information, Deployment: Deployment{Replicas: 1}}
 	err := p.Templates(deploy,
-		services.WithDeploymentFor(deployment, "kustomize/base", templates.WithOverride(&templates.OverrideAll{})),
+		services.WithDeploymentFor(deployment, "kustomize/base", templates.WithOverrideAll()),
 		services.WithDeploymentFor(deployment, "kustomize/overlays/environment",
-			services.WithDestination("kustomize/overlays/%s", req.Environment.Name), templates.WithOverride(&templates.OverrideAll{})),
+			services.WithDestination("kustomize/overlays/%s", req.Environment.Name), templates.WithOverrideAll()),
 	)
 	if err != nil {
 		return nil, err
