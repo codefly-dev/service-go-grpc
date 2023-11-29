@@ -113,14 +113,12 @@ func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateRespons
 		Information: p.Information,
 		Image:       p.DockerImage(),
 		Envs:        []string{},
-		Deployment:  Deployment{Replicas: 1},
 	}
 
 	ignores := []string{"go.work", "service.generation.codefly.yaml"}
 	err := p.Templates(create,
 		services.WithFactory(factory, ignores...),
-		services.WithBuilder(builder),
-		services.WithDeploymentFor(deployment, "kustomize/base"))
+		services.WithBuilder(builder))
 	if err != nil {
 		return nil, err
 	}
@@ -253,14 +251,17 @@ func (p *Factory) Build(req *factoryv1.BuildRequest) (*factoryv1.BuildResponse, 
 
 type DeploymentParameter struct {
 	Image *configurations.DockerImage
+	*services.Information
+	Deployment
 }
 
 func (p *Factory) Deploy(req *factoryv1.DeploymentRequest) (*factoryv1.DeploymentResponse, error) {
 	defer p.AgentLogger.Catch()
-	deploy := DeploymentParameter{Image: p.DockerImage()}
+	deploy := DeploymentParameter{Image: p.DockerImage(), Information: p.Information, Deployment: Deployment{Replicas: 1}}
 	err := p.Templates(deploy,
+		services.WithDeploymentFor(deployment, "kustomize/base", templates.WithOverride(&templates.OverrideAll{})),
 		services.WithDeploymentFor(deployment, "kustomize/overlays/environment",
-			services.WithDestination("kustomize/overlays/%s", req.Environment.Name)),
+			services.WithDestination("kustomize/overlays/%s", req.Environment.Name), templates.WithOverride(&templates.OverrideAll{})),
 	)
 	if err != nil {
 		return nil, err
