@@ -71,15 +71,10 @@ func (p *Factory) NewCreateCommunicate() (*communicate.ClientContext, error) {
 	return client, nil
 }
 
-type Deployment struct {
-	Replicas int
-}
-
 type CreateConfiguration struct {
 	*services.Information
-	Image      *configurations.DockerImage
-	Deployment Deployment
-	Envs       []string
+	Image *configurations.DockerImage
+	Envs  []string
 }
 
 func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateResponse, error) {
@@ -247,6 +242,10 @@ func (p *Factory) Build(req *factoryv1.BuildRequest) (*factoryv1.BuildResponse, 
 		return nil, p.Wrapf(err, "cannot build image")
 	}
 	return &factoryv1.BuildResponse{}, nil
+}
+
+type Deployment struct {
+	Replicas int
 }
 
 type DeploymentParameter struct {

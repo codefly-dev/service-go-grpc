@@ -1,19 +1,19 @@
 #!/bin/bash
 
-# Usage: ./update_version.sh <new_version>
+# Usage: ./tag.sh <new_version>
 
-NEW_VERSION=$1
 YAML_FILE="agent.codefly.yaml"
-
-if [ -z "$NEW_VERSION" ]; then
-    echo "Error: No version provided."
-    exit 1
-fi
 
 if [ ! -f "$YAML_FILE" ]; then
     echo "Error: YAML file $YAML_FILE does not exist."
     exit 1
 fi
+
+# Argument is patch/minor/major and defaults to patch
+NEW_VERSION_TYPE=${1:-patch}
+
+CURRENT_VERSION=$(yq eval '.version' "$YAML_FILE")
+NEW_VERSION=$(semver bump "$NEW_VERSION_TYPE" "$CURRENT_VERSION")
 
 # Update the version in the YAML file (for macOS)
 sed -i '' "s/version:.*/version: $NEW_VERSION/" "$YAML_FILE"
