@@ -6,3 +6,5 @@ builds:
     goos:
       - darwin
       - linux
+    goarch:
+      - amd64
