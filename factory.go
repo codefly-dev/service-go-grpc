@@ -109,6 +109,7 @@ func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateRespons
 		Image:       p.DockerImage(),
 		Envs:        []string{},
 	}
+	p.DebugMe("TITLE :%v", create.Service.Name.Title)
 
 	ignores := []string{"go.work", "service.generation.codefly.yaml"}
 	err := p.Templates(create,
