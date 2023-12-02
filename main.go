@@ -12,7 +12,7 @@ import (
 )
 
 // Agent version
-var agent = configurations.LoadAgentConfiguration(shared.Embed(info))
+var agent = shared.Must(configurations.LoadFromFs[configurations.Agent](shared.Embed(info)))
 
 type Settings struct {
 	Debug              bool `yaml:"debug"` // Developer only

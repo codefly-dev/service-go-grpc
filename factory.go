@@ -7,6 +7,7 @@ import (
 	"github.com/codefly-dev/core/agents/endpoints"
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
 	golanghelpers "github.com/codefly-dev/core/agents/helpers/go"
+	protohelpers "github.com/codefly-dev/core/agents/helpers/proto"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/configurations"
 	agentsv1 "github.com/codefly-dev/core/proto/v1/go/agents"
@@ -22,6 +23,8 @@ type Factory struct {
 
 	create         *communicate.ClientContext
 	createSequence *communicate.Sequence
+	protohelper    protohelpers.Proto
+	gohelper       golanghelpers.Go
 }
 
 func NewFactory() *Factory {
@@ -109,8 +112,6 @@ func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateRespons
 		Image:       p.DockerImage(),
 		Envs:        []string{},
 	}
-	p.DebugMe("TITLE :%v", create.Service.Name.Title)
-
 	ignores := []string{"go.work", "service.generation.codefly.yaml"}
 	err := p.Templates(create,
 		services.WithFactory(factory, ignores...),
@@ -131,15 +132,17 @@ func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateRespons
 		return nil, p.Wrapf(err, "cannot create endpoints")
 	}
 
-	helper := golanghelpers.Go{Dir: p.Location}
-
-	err = helper.BufGenerate(p.AgentLogger)
+	p.protohelper = protohelpers.Proto{Dir: p.Location}
+	err = p.protohelper.Generate(p.Context())
 	if err != nil {
-		return nil, fmt.Errorf("factory>create: go helper: cannot run buf generate: %v", err)
+		return nil, fmt.Errorf("factory>create: go gohelper: cannot run buf generate: %v", err)
 	}
-	err = helper.ModTidy(p.AgentLogger)
+
+	p.gohelper = golanghelpers.Go{Dir: p.Location}
+
+	err = p.gohelper.ModTidy(p.AgentLogger)
 	if err != nil {
-		return nil, fmt.Errorf("factory>create: go helper: cannot run mod tidy: %v", err)
+		return nil, fmt.Errorf("factory>create: go gohelper: cannot run mod tidy: %v", err)
 	}
 
 	return p.Base.Create(p.Settings, p.Endpoints...)
@@ -169,21 +172,23 @@ func (p *Factory) Sync(req *factoryv1.SyncRequest) (*factoryv1.SyncResponse, err
 	p.AgentLogger.TODO("Some caching please!")
 
 	p.AgentLogger.Debugf("running sync: %v", p.Location)
-	helper := golanghelpers.Go{Dir: p.Location}
 
 	// Clean-up the generated code
 	p.AgentLogger.TODO("get location of generated code from buf")
+
 	err := os.RemoveAll(p.Local("adapters/servicev1"))
 	if err != nil {
 		return nil, p.Wrapf(err, "cannot remove adapters")
 	}
 	// Re-generate
 	p.AgentLogger.TODO("change buf to use openapi or not depending on things...")
-	err = helper.BufGenerate(p.AgentLogger)
+
+	err = p.protohelper.Generate(p.Context())
 	if err != nil {
 		return nil, p.Wrapf(err, "cannot generate proto")
 	}
-	err = helper.ModTidy(p.AgentLogger)
+
+	err = p.gohelper.ModTidy(p.AgentLogger)
 	if err != nil {
 		return nil, p.Wrapf(err, "cannot tidy go.mod")
 	}
