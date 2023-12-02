@@ -23,7 +23,7 @@ type Factory struct {
 
 	create         *communicate.ClientContext
 	createSequence *communicate.Sequence
-	protohelper    protohelpers.Proto
+	protohelper    *protohelpers.Proto
 	gohelper       golanghelpers.Go
 }
 
@@ -132,7 +132,10 @@ func (p *Factory) Create(req *factoryv1.CreateRequest) (*factoryv1.CreateRespons
 		return nil, p.Wrapf(err, "cannot create endpoints")
 	}
 
-	p.protohelper = protohelpers.Proto{Dir: p.Location}
+	p.protohelper, err = protohelpers.NewProto(p.Location)
+	if err != nil {
+		return nil, p.Wrapf(err, "cannot create proto helper")
+	}
 	err = p.protohelper.Generate(p.Context())
 	if err != nil {
 		return nil, fmt.Errorf("factory>create: go gohelper: cannot run buf generate: %v", err)
