@@ -1,14 +1,16 @@
 version: 1
 
 builds:
-  - env:
+  - id: darwin
+    env:
       - CGO_ENABLED=0
     goos:
       - darwin
     goarch:
       - amd64
       - arm64
-  - env:
+  - id: linux
+    env:
       - CGO_ENABLED=0
     goos:
       - linux
