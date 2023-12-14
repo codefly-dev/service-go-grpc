@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
 	"net"
 
 	"github.com/bufbuild/protovalidate-go"
@@ -51,6 +52,7 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 		validator:     v,
 	}
 	gen.Register{{.Service.Name.Title}}Server(grpcServer, &s)
+	reflection.Register(grpcServer)
 	return &s, nil
 }
 

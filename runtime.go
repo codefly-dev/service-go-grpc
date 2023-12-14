@@ -3,14 +3,14 @@ package main
 import (
 	"context"
 	"github.com/codefly-dev/core/agents/services"
-	agentsv1 "github.com/codefly-dev/core/proto/v1/go/agents"
+	agentsv1 "github.com/codefly-dev/core/generated/v1/go/proto/agents"
 	"strings"
 
 	"github.com/codefly-dev/core/agents/helpers/code"
 	golanghelpers "github.com/codefly-dev/core/agents/helpers/go"
 	"github.com/codefly-dev/core/agents/network"
-	servicev1 "github.com/codefly-dev/core/proto/v1/go/services"
-	runtimev1 "github.com/codefly-dev/core/proto/v1/go/services/runtime"
+	servicev1 "github.com/codefly-dev/core/generated/v1/go/proto/services"
+	runtimev1 "github.com/codefly-dev/core/generated/v1/go/proto/services/runtime"
 	"github.com/codefly-dev/core/shared"
 	"github.com/pkg/errors"
 )
@@ -28,7 +28,7 @@ func NewRuntime() *Runtime {
 	}
 }
 
-func (p *Runtime) Init(req *servicev1.InitRequest) (*runtimev1.InitResponse, error) {
+func (p *Runtime) Init(ctx context.Context, req *servicev1.InitRequest) (*runtimev1.InitResponse, error) {
 	defer p.AgentLogger.Catch()
 
 	err := p.Base.Init(req, p.Settings)
@@ -44,7 +44,7 @@ func (p *Runtime) Init(req *servicev1.InitRequest) (*runtimev1.InitResponse, err
 	return p.Base.RuntimeInitResponse(p.Endpoints)
 }
 
-func (p *Runtime) Configure(req *runtimev1.ConfigureRequest) (*runtimev1.ConfigureResponse, error) {
+func (p *Runtime) Configure(ctx context.Context, req *runtimev1.ConfigureRequest) (*runtimev1.ConfigureResponse, error) {
 	defer p.AgentLogger.Catch()
 
 	nets, err := p.Network()
@@ -80,10 +80,8 @@ func (p *Runtime) Configure(req *runtimev1.ConfigureRequest) (*runtimev1.Configu
 	}, nil
 }
 
-func (p *Runtime) Start(req *runtimev1.StartRequest) (*runtimev1.StartResponse, error) {
+func (p *Runtime) Start(ctx context.Context, req *runtimev1.StartRequest) (*runtimev1.StartResponse, error) {
 	defer p.AgentLogger.Catch()
-
-	ctx := context.Background()
 
 	p.AgentLogger.Debugf("network mapping: %v", req.NetworkMappings)
 
@@ -91,6 +89,7 @@ func (p *Runtime) Start(req *runtimev1.StartRequest) (*runtimev1.StartResponse, 
 	if err != nil {
 		return nil, p.Wrapf(err, "cannot convert network mappings to environment variables")
 	}
+
 	p.Runner.Envs = append(p.Runner.Envs, envs...)
 	p.Runner.Envs = append(p.Runner.Envs, "CODEFLY_SDK__LOGLEVEL", "debug")
 
@@ -113,11 +112,11 @@ func (p *Runtime) Start(req *runtimev1.StartRequest) (*runtimev1.StartResponse, 
 	}, nil
 }
 
-func (p *Runtime) Information(req *runtimev1.InformationRequest) (*runtimev1.InformationResponse, error) {
+func (p *Runtime) Information(ctx context.Context, req *runtimev1.InformationRequest) (*runtimev1.InformationResponse, error) {
 	return &runtimev1.InformationResponse{}, nil
 }
 
-func (p *Runtime) Stop(req *runtimev1.StopRequest) (*runtimev1.StopResponse, error) {
+func (p *Runtime) Stop(ctx context.Context, req *runtimev1.StopRequest) (*runtimev1.StopResponse, error) {
 	defer p.AgentLogger.Catch()
 
 	p.AgentLogger.Debugf("stopping service")
@@ -133,8 +132,8 @@ func (p *Runtime) Stop(req *runtimev1.StopRequest) (*runtimev1.StopResponse, err
 	return &runtimev1.StopResponse{}, nil
 }
 
-func (p *Runtime) Communicate(req *agentsv1.Engage) (*agentsv1.InformationRequest, error) {
-	return p.Base.Communicate(req)
+func (p *Runtime) Communicate(ctx context.Context, req *agentsv1.Engage) (*agentsv1.InformationRequest, error) {
+	return p.Base.Communicate(ctx, req)
 }
 
 /* Details
