@@ -148,7 +148,6 @@ func (p *Factory) Create(ctx context.Context, req *factoryv1.CreateRequest) (*fa
 		return nil, fmt.Errorf("factory>create: go gohelper: cannot run mod tidy: %v", err)
 	}
 
-	return p.Base.CreateResponse(ctx, p.Settings, p.Endpoints...)
 }
 
 func (p *Factory) Update(ctx context.Context, req *factoryv1.UpdateRequest) (*factoryv1.UpdateResponse, error) {
