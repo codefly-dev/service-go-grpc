@@ -3,9 +3,10 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"net"
+
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
-	"net"
 
 	"github.com/bufbuild/protovalidate-go"
 	gen "github.com/codefly-dev/go-grpc/base/adapters/v1"

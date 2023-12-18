@@ -3,14 +3,14 @@ package main
 import (
 	"context"
 	"embed"
+
 	"github.com/codefly-dev/core/agents"
 	"github.com/codefly-dev/core/agents/endpoints"
-	basev1 "github.com/codefly-dev/core/generated/v1/go/proto/base"
-	agentv1 "github.com/codefly-dev/core/generated/v1/go/proto/services/agent"
-	"github.com/codefly-dev/core/shared"
-
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/configurations"
+	basev1 "github.com/codefly-dev/core/generated/go/base/v1"
+	agentv1 "github.com/codefly-dev/core/generated/go/services/agent/v1"
+	"github.com/codefly-dev/core/shared"
 )
 
 // Agent version
@@ -36,6 +36,10 @@ type Service struct {
 }
 
 func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv1.AgentInformationRequest) (*agentv1.AgentInformation, error) {
+	defer s.Wool.Catch()
+
+	s.Wool.Debug("get agent information")
+
 	return &agentv1.AgentInformation{
 		Capabilities: []*agentv1.Capability{
 			{Type: agentv1.Capability_FACTORY},
@@ -46,25 +50,25 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv1.AgentInfor
 
 func NewService() *Service {
 	return &Service{
-		Base:     services.NewServiceBase(shared.NewContext(), agent.Of(configurations.ServiceAgent)),
+		Base:     services.NewServiceBase(context.Background(), agent),
 		Settings: &Settings{},
 	}
 }
 
-func (s *Service) LoadEndpoints() error {
-	defer s.AgentLogger.Catch()
+func (s *Service) LoadEndpoints(ctx context.Context) error {
+	defer s.Wool.Catch()
 	var err error
 	for _, ep := range s.Configuration.Endpoints {
 		switch ep.API {
 		case configurations.Grpc:
-			s.GrpcEndpoint, err = endpoints.NewGrpcAPI(ep, s.Local("api.proto"))
+			s.GrpcEndpoint, err = endpoints.NewGrpcAPI(ctx, ep, s.Local("api.proto"))
 			if err != nil {
 				return s.Wrapf(err, "cannot create grpc api")
 			}
 			s.Endpoints = append(s.Endpoints, s.GrpcEndpoint)
 			continue
 		case configurations.Rest:
-			s.RestEndpoint, err = endpoints.NewRestAPIFromOpenAPI(s.Context(), ep, s.Local("api.swagger.json"))
+			s.RestEndpoint, err = endpoints.NewRestAPIFromOpenAPI(ctx, ep, s.Local("api.swagger.json"))
 			if err != nil {
 				return s.Wrapf(err, "cannot create openapi api")
 			}
