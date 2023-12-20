@@ -4,6 +4,12 @@ import (
 	"context"
 	"embed"
 
+	"google.golang.org/grpc/codes"
+
+	"google.golang.org/grpc/status"
+
+	"github.com/codefly-dev/core/templates"
+
 	"github.com/codefly-dev/core/agents"
 	"github.com/codefly-dev/core/agents/endpoints"
 	"github.com/codefly-dev/core/agents/services"
@@ -40,11 +46,25 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv1.AgentInfor
 
 	s.Wool.Debug("get agent information")
 
+	readme, err := templates.ApplyTemplateFrom(shared.Embed(readme), "templates/agent/README.md", s.Information)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	s.DebugMe("readme success")
+
 	return &agentv1.AgentInformation{
 		Capabilities: []*agentv1.Capability{
 			{Type: agentv1.Capability_FACTORY},
 			{Type: agentv1.Capability_RUNTIME},
 		},
+		Languages: []*agentv1.Language{
+			{Type: agentv1.Language_GO},
+		},
+		Protocols: []*agentv1.Protocol{
+			{Type: agentv1.Protocol_HTTP},
+			{Type: agentv1.Protocol_GRPC},
+		},
+		ReadMe: readme,
 	}, nil
 }
 
@@ -88,3 +108,6 @@ func main() {
 
 //go:embed agent.codefly.yaml
 var info embed.FS
+
+//go:embed templates/agent
+var readme embed.FS

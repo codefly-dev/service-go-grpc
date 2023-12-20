@@ -3,7 +3,7 @@ module github.com/codefly-dev/service-go-grpc
 go 1.21.5
 
 require (
-	github.com/codefly-dev/core v0.0.58
+	github.com/codefly-dev/core v0.0.63
 	github.com/pkg/errors v0.9.1
 )
 
@@ -83,7 +83,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.21.0 // indirect
 	go.opentelemetry.io/otel/trace v1.21.0 // indirect
 	golang.org/x/crypto v0.17.0 // indirect
-	golang.org/x/exp v0.0.0-20231214170342-aacd6d4b4611 // indirect
+	golang.org/x/exp v0.0.0-20231219180239-dc181d75b848 // indirect
 	golang.org/x/mod v0.14.0 // indirect
 	golang.org/x/net v0.19.0 // indirect
 	golang.org/x/sys v0.15.0 // indirect

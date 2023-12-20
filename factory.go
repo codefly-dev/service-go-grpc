@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/codefly-dev/core/shared"
+	"github.com/codefly-dev/core/templates"
+
 	"github.com/codefly-dev/core/agents/communicate"
 	"github.com/codefly-dev/core/agents/endpoints"
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
@@ -15,8 +18,6 @@ import (
 	"github.com/codefly-dev/core/configurations"
 	agentv1 "github.com/codefly-dev/core/generated/go/services/agent/v1"
 	factoryv1 "github.com/codefly-dev/core/generated/go/services/factory/v1"
-	"github.com/codefly-dev/core/shared"
-	"github.com/codefly-dev/core/templates"
 )
 
 type Factory struct {
@@ -56,14 +57,11 @@ func (s *Factory) Init(ctx context.Context, req *factoryv1.InitRequest) (*factor
 		return s.FactoryInitResponseError(err)
 	}
 	s.DebugMe("communicate success")
-
-	readme, err := templates.ApplyTemplateFrom(shared.Embed(factory), "templates/factory/README.md", s.Information)
+	gettingStarted, err := templates.ApplyTemplateFrom(shared.Embed(factory), "templates/factory/GETTING_STARTED.md", s.Information)
 	if err != nil {
 		return s.FactoryInitResponseError(err)
 	}
-	s.DebugMe("readme success")
-
-	return s.FactoryInitResponse(s.Endpoints, readme)
+	return s.FactoryInitResponse(s.Endpoints, gettingStarted)
 }
 
 const Watch = "with-hot-reload"
@@ -236,7 +234,7 @@ func (s *Factory) Build(ctx context.Context, req *factoryv1.BuildRequest) (*fact
 		return nil, s.Wrapf(err, "cannot create builder")
 	}
 	//builder.WithLogger(s.Wool)
-	_, err = builder.Build()
+	_, err = builder.Build(ctx)
 	if err != nil {
 		return nil, s.Wrapf(err, "cannot build image")
 	}
