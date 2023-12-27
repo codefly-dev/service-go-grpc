@@ -4,6 +4,10 @@ import (
 	"context"
 	"strings"
 
+	"github.com/codefly-dev/core/runners"
+
+	"github.com/codefly-dev/core/wool"
+
 	"github.com/codefly-dev/core/agents/services"
 	agentv1 "github.com/codefly-dev/core/generated/go/services/agent/v1"
 
@@ -11,7 +15,6 @@ import (
 	golanghelpers "github.com/codefly-dev/core/agents/helpers/go"
 	"github.com/codefly-dev/core/agents/network"
 	runtimev1 "github.com/codefly-dev/core/generated/go/services/runtime/v1"
-	"github.com/pkg/errors"
 )
 
 type Runtime struct {
@@ -27,62 +30,81 @@ func NewRuntime() *Runtime {
 	}
 }
 
-func (s *Runtime) Init(ctx context.Context, req *runtimev1.InitRequest) (*runtimev1.InitResponse, error) {
+func (s *Runtime) Load(ctx context.Context, req *runtimev1.LoadRequest) (*runtimev1.LoadResponse, error) {
 	defer s.Wool.Catch()
+	ctx = s.Wool.Inject(ctx)
 
-	err := s.Base.Init(ctx, req.Identity, s.Settings)
+	err := s.Base.Load(ctx, req.Identity, s.Settings)
 	if err != nil {
-		return s.Base.RuntimeInitResponseError(err)
+		return s.Base.Runtime.LoadError(err)
 	}
+
+	s.Wool.Debug("loaded runtime", wool.RequestField(req).Trace())
 
 	err = s.LoadEndpoints(ctx)
 	if err != nil {
-		return s.Base.RuntimeInitResponseError(err)
+		return s.Base.Runtime.LoadError(err)
 	}
 
-	return s.Base.RuntimeInitResponse(s.Endpoints)
+	return s.Base.Runtime.LoadResponse(s.Endpoints)
 }
 
-func (s *Runtime) Configure(ctx context.Context, req *runtimev1.ConfigureRequest) (*runtimev1.ConfigureResponse, error) {
+func (s *Runtime) Init(ctx context.Context, req *runtimev1.InitRequest) (*runtimev1.InitResponse, error) {
 	defer s.Wool.Catch()
+	ctx = s.Wool.Inject(ctx)
 
-	nets, err := s.Network(ctx)
+	s.Wool.Debug("initialize runtime", wool.RequestField(req).Trace())
+
+	var err error
+	s.NetworkMappings, err = s.Network(ctx)
 	if err != nil {
-		return nil, errors.Wrapf(err, "cannot create default endpoint")
+		return s.Runtime.InitError(err)
 	}
 
-	envs, err := network.ConvertToEnvironmentVariables(nets)
-	if err != nil {
-		return nil, s.Wrapf(err, "cannot convert network mappings to environment variables")
+	if s.Settings.Watch {
+		conf := services.NewWatchConfiguration([]string{".", "adapters"}, "service.codefly.yaml")
+		err := s.SetupWatcher(ctx, conf, s.EventHandler)
+		if err != nil {
+			s.Wool.Warn("error in watcher")
+		}
 	}
 
 	s.Runner = &golanghelpers.Runner{
 		Dir:   s.Location,
 		Args:  []string{"main.go"},
-		Envs:  envs,
 		Debug: s.Settings.Debug,
 	}
 
-	err = s.Runner.Init(context.Background())
+	err = s.Runner.Init(ctx)
 	if err != nil {
-		return &runtimev1.ConfigureResponse{Status: services.ConfigureError(err)}, nil
+		s.Wool.Error("cannot init the go runner", wool.ErrField(err))
+		return s.Runtime.InitError(err)
 	}
+	s.Ready()
+	s.Wool.Info("successful init of runner")
 
-	return &runtimev1.ConfigureResponse{
-		Status:          services.ConfigureSuccess(),
-		NetworkMappings: nets,
-	}, nil
+	return s.Runtime.InitResponse()
 }
 
 func (s *Runtime) Start(ctx context.Context, req *runtimev1.StartRequest) (*runtimev1.StartResponse, error) {
 	defer s.Wool.Catch()
+	ctx = s.Wool.Inject(ctx)
 
-	envs, err := network.ConvertToEnvironmentVariables(req.NetworkMappings)
+	// Self-mapping
+	envs, err := network.ConvertToEnvironmentVariables(s.NetworkMappings)
 	if err != nil {
-		return nil, s.Wrapf(err, "cannot convert network mappings to environment variables")
+		return s.Runtime.StartError(err)
+	}
+	s.Runner.Envs = envs
+
+	others, err := network.ConvertToEnvironmentVariables(req.NetworkMappings)
+	if err != nil {
+		return s.Runtime.StartError(err, wool.Field("in", "convert to environment variables"))
 	}
 
-	s.Runner.Envs = append(s.Runner.Envs, envs...)
+	s.Runner.Envs = append(s.Runner.Envs, others...)
+
+	// TODO: put this into core
 	s.Runner.Envs = append(s.Runner.Envs, "CODEFLY_SDK__LOGLEVEL", "debug")
 
 	if s.Settings.Watch {
@@ -93,19 +115,30 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev1.StartRequest) (*runt
 		}
 	}
 
-	tracker, err := s.Runner.Run(ctx)
+	// Create a new context as the runner will be running in the background
+	runningContext := context.Background()
+	runningContext = s.Wool.Inject(runningContext)
+
+	// TODO: Helps with error handling
+	out, err := s.Runner.Run(runningContext)
 	if err != nil {
-		return nil, errors.Wrapf(err, "cannot run go")
+		return s.Runtime.StartError(err, wool.Field("in", "runner"))
 	}
 
-	return &runtimev1.StartResponse{
-		Status:   services.StartSuccess(),
-		Trackers: []*runtimev1.Tracker{tracker.Proto()},
-	}, nil
+	go func() {
+		for event := range out.Events {
+			s.Wool.Error("event", wool.Field("event", event))
+		}
+	}()
+
+	tracker := runners.TrackedProcess{PID: out.PID}
+	s.Info("starting", wool.Field("pid", out.PID))
+
+	return s.Runtime.StartResponse([]*runtimev1.Tracker{tracker.Proto()})
 }
 
 func (s *Runtime) Information(ctx context.Context, req *runtimev1.InformationRequest) (*runtimev1.InformationResponse, error) {
-	return &runtimev1.InformationResponse{}, nil
+	return s.Base.Runtime.InformationResponse(ctx, req)
 }
 
 func (s *Runtime) Stop(ctx context.Context, req *runtimev1.StopRequest) (*runtimev1.StopResponse, error) {
@@ -136,12 +169,10 @@ func (s *Runtime) EventHandler(event code.Change) error {
 	if strings.Contains(event.Path, "proto") {
 		s.WantSync()
 	} else {
+		s.Wool.Info("detected a code change")
 		s.WantRestart()
 	}
-	err := s.Runner.Init(context.Background())
-	if err != nil {
-		return err
-	}
+
 	return nil
 }
 

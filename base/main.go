@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
 	"os/signal"
 	"syscall"
 
@@ -16,14 +14,16 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	codefly.WithTrace()
-	defer codefly.CatchPanic()
+	provider, err := codefly.Init(ctx)
+	ctx = provider.Inject(ctx)
+
+	defer codefly.CatchPanic(ctx)
 
 	config := &adapters.Configuration{
-		EndpointGrpc: codefly.Endpoint("self::grpc").PortAddress(),
+		EndpointGrpc: codefly.Endpoint(ctx, "self/grpc").PortAddress(),
 	}
-	if codefly.Endpoint("self::rest").IsPresent() {
-		config.EndpointHttp = codefly.Endpoint("self::rest").PortAddress()
+	if codefly.Endpoint(ctx, "self/rest").IsPresent() {
+		config.EndpointHttp = codefly.Endpoint(ctx, "self/rest").PortAddress()
 	}
 
 	server, err := adapters.NewServer(config)
@@ -42,20 +42,4 @@ func main() {
 	server.Stop()
 	fmt.Println("got interruption signal")
 
-}
-
-func multiSignalHandler(signal os.Signal) {
-	switch signal {
-	case syscall.SIGHUP:
-	case syscall.SIGINT:
-		log.Println("Signal:", signal.String())
-		log.Println("Interrupt by Ctrl+C")
-		os.Exit(0)
-	case syscall.SIGTERM:
-		log.Println("Signal:", signal.String())
-		log.Println("Process is killed.")
-		os.Exit(0)
-	default:
-		log.Println("Unhandled/unknown signal")
-	}
 }

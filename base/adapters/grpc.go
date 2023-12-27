@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 
+	"google.golang.org/grpc/reflection"
+
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
@@ -52,6 +54,7 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 		validator:     v,
 	}
 	gen.RegisterWebServer(grpcServer, &s)
+	reflection.Register(grpcServer)
 	return &s, nil
 }
 

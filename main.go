@@ -4,6 +4,8 @@ import (
 	"context"
 	"embed"
 
+	"github.com/codefly-dev/core/configurations/standards"
+
 	"google.golang.org/grpc/codes"
 
 	"google.golang.org/grpc/status"
@@ -11,7 +13,6 @@ import (
 	"github.com/codefly-dev/core/templates"
 
 	"github.com/codefly-dev/core/agents"
-	"github.com/codefly-dev/core/agents/endpoints"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/configurations"
 	basev1 "github.com/codefly-dev/core/generated/go/base/v1"
@@ -44,13 +45,10 @@ type Service struct {
 func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv1.AgentInformationRequest) (*agentv1.AgentInformation, error) {
 	defer s.Wool.Catch()
 
-	s.Wool.Debug("get agent information")
-
 	readme, err := templates.ApplyTemplateFrom(shared.Embed(readme), "templates/agent/README.md", s.Information)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	s.DebugMe("readme success")
 
 	return &agentv1.AgentInformation{
 		Capabilities: []*agentv1.Capability{
@@ -80,15 +78,15 @@ func (s *Service) LoadEndpoints(ctx context.Context) error {
 	var err error
 	for _, ep := range s.Configuration.Endpoints {
 		switch ep.API {
-		case configurations.Grpc:
-			s.GrpcEndpoint, err = endpoints.NewGrpcAPI(ctx, ep, s.Local("api.proto"))
+		case standards.GRPC:
+			s.GrpcEndpoint, err = configurations.NewGrpcAPI(ctx, ep, s.Local("api.proto"))
 			if err != nil {
 				return s.Wrapf(err, "cannot create grpc api")
 			}
 			s.Endpoints = append(s.Endpoints, s.GrpcEndpoint)
 			continue
-		case configurations.Rest:
-			s.RestEndpoint, err = endpoints.NewRestAPIFromOpenAPI(ctx, ep, s.Local("api.swagger.json"))
+		case standards.REST:
+			s.RestEndpoint, err = configurations.NewRestAPIFromOpenAPI(ctx, ep, s.Local("api.swagger.json"))
 			if err != nil {
 				return s.Wrapf(err, "cannot create openapi api")
 			}

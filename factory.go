@@ -10,7 +10,6 @@ import (
 	"github.com/codefly-dev/core/templates"
 
 	"github.com/codefly-dev/core/agents/communicate"
-	"github.com/codefly-dev/core/agents/endpoints"
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
 	golanghelpers "github.com/codefly-dev/core/agents/helpers/go"
 	protohelpers "github.com/codefly-dev/core/agents/helpers/proto"
@@ -32,36 +31,36 @@ func NewFactory() *Factory {
 		Service: NewService(),
 	}
 }
-func (s *Factory) Init(ctx context.Context, req *factoryv1.InitRequest) (*factoryv1.InitResponse, error) {
+func (s *Factory) Load(ctx context.Context, req *factoryv1.LoadRequest) (*factoryv1.LoadResponse, error) {
 	defer s.Wool.Catch()
 
-	err := s.Base.Init(ctx, req.Identity, s.Settings)
+	err := s.Base.Factory.Load(ctx, req.Identity, s.Settings)
 	if err != nil {
 		return nil, err
 	}
-	s.DebugMe("init success")
+	s.Focus("Load success")
 
 	err = s.LoadEndpoints(ctx)
 	if err != nil {
-		return s.FactoryInitResponseError(err)
+		return s.Factory.LoadError(err)
 	}
-	s.DebugMe("load endpoint success")
+	s.Focus("load endpoint success")
 
 	// communication on CreateResponse
 	err = s.Communication.Register(ctx, communicate.New[factoryv1.CreateRequest](createCommunicate()))
 	if err != nil {
-		return s.FactoryInitResponseError(err)
+		return s.Factory.LoadError(err)
 	}
 
 	if err != nil {
-		return s.FactoryInitResponseError(err)
+		return s.Factory.LoadError(err)
 	}
-	s.DebugMe("communicate success")
+	s.Focus("communicate success")
 	gettingStarted, err := templates.ApplyTemplateFrom(shared.Embed(factory), "templates/factory/GETTING_STARTED.md", s.Information)
 	if err != nil {
-		return s.FactoryInitResponseError(err)
+		return s.Factory.LoadError(err)
 	}
-	return s.FactoryInitResponse(s.Endpoints, gettingStarted)
+	return s.Factory.LoadResponse(s.Endpoints, gettingStarted)
 }
 
 const Watch = "with-hot-reload"
@@ -71,7 +70,7 @@ const WithRest = "create-rest-endpoint"
 func createCommunicate() *communicate.Sequence {
 	return communicate.NewSequence(
 		communicate.NewConfirm(&agentv1.Message{Name: Watch, Message: "Code hot-reload (Recommended)?", Description: "codefly can restart your service when code changes are detected 🔎"}, true),
-		communicate.NewConfirm(&agentv1.Message{Name: WithRest, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC definition -- the easiest way to do REST"}, true),
+		communicate.NewConfirm(&agentv1.Message{Name: WithRest, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC defLoadion -- the easiest way to do REST"}, true),
 		communicate.NewConfirm(&agentv1.Message{Name: WithDebugSymbols, Message: "Run with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, true),
 	)
 }
@@ -85,25 +84,25 @@ type CreateConfiguration struct {
 func (s *Factory) Create(ctx context.Context, req *factoryv1.CreateRequest) (*factoryv1.CreateResponse, error) {
 	defer s.Wool.Catch()
 
-	ctx = s.Provider.WithContext(ctx)
+	ctx = s.WoolAgent.Inject(ctx)
 
 	session, err := s.Communication.Done(ctx, communicate.Channel[factoryv1.CreateRequest]())
 	if err != nil {
-		return s.CreateResponseError(err)
+		return s.Factory.CreateError(err)
 	}
 
 	s.Settings.Watch, err = session.Confirm(Watch)
 	if err != nil {
-		return s.CreateResponseError(err)
+		return s.Factory.CreateError(err)
 	}
 	s.Settings.CreateHttpEndpoint, err = session.Confirm(WithRest)
 	if err != nil {
-		return s.CreateResponseError(err)
+		return s.Factory.CreateError(err)
 	}
 
 	s.Settings.WithDebugSymbols, err = session.Confirm(WithDebugSymbols)
 	if err != nil {
-		return s.CreateResponseError(err)
+		return s.Factory.CreateError(err)
 	}
 
 	create := CreateConfiguration{
@@ -145,7 +144,7 @@ func (s *Factory) Create(ctx context.Context, req *factoryv1.CreateRequest) (*fa
 		return nil, fmt.Errorf("factory>create: go gohelper: cannot run mod tidy: %v", err)
 	}
 
-	return s.Base.CreateResponse(ctx, s.Settings, s.Endpoints...)
+	return s.Base.Factory.CreateResponse(ctx, s.Settings, s.Endpoints...)
 }
 
 func (s *Factory) Update(ctx context.Context, req *factoryv1.UpdateRequest) (*factoryv1.UpdateResponse, error) {
@@ -200,18 +199,18 @@ func (s *Factory) Build(ctx context.Context, req *factoryv1.BuildRequest) (*fact
 	s.Wool.Debug("building docker image")
 	docker := DockerTemplating{}
 
-	e, err := endpoints.FromProtoEndpoint(s.GrpcEndpoint)
+	e, err := configurations.FromProtoEndpoint(s.GrpcEndpoint)
 	if err != nil {
 		return nil, s.Wrapf(err, "cannot convert grpc endpoint")
 	}
-	gRPC := configurations.AsEndpointEnvironmentVariableKey(s.Configuration.Application, s.Configuration.Name, e)
+	gRPC := configurations.AsEndpointEnvironmentVariableKey(e)
 	docker.Envs = append(docker.Envs, Env{Key: gRPC, Value: "localhost:9090"})
 	if s.RestEndpoint != nil {
-		e, err = endpoints.FromProtoEndpoint(s.RestEndpoint)
+		e, err = configurations.FromProtoEndpoint(s.RestEndpoint)
 		if err != nil {
 			return nil, s.Wrapf(err, "cannot convert grpc endpoint")
 		}
-		rest := configurations.AsEndpointEnvironmentVariableKey(s.Configuration.Application, s.Configuration.Name, e)
+		rest := configurations.AsEndpointEnvironmentVariableKey(e)
 		docker.Envs = append(docker.Envs, Env{Key: rest, Value: "localhost:8080"})
 	}
 
@@ -265,14 +264,14 @@ func (s *Factory) Deploy(ctx context.Context, req *factoryv1.DeploymentRequest) 
 }
 
 func (s *Factory) CreateEndpoints(ctx context.Context) error {
-	grpc, err := endpoints.NewGrpcAPI(ctx, &configurations.Endpoint{Name: "grpc"}, s.Local("api.proto"))
+	grpc, err := configurations.NewGrpcAPI(ctx, &configurations.Endpoint{Name: "grpc"}, s.Local("api.proto"))
 	if err != nil {
 		return s.Wrapf(err, "cannot create grpc api")
 	}
 	s.Endpoints = append(s.Endpoints, grpc)
 
 	if s.Settings.CreateHttpEndpoint {
-		rest, err := endpoints.NewRestAPIFromOpenAPI(ctx, &configurations.Endpoint{Name: "rest", Visibility: "private"}, s.Local("api.swagger.json"))
+		rest, err := configurations.NewRestAPIFromOpenAPI(ctx, &configurations.Endpoint{Name: "rest", Visibility: "private"}, s.Local("api.swagger.json"))
 		if err != nil {
 			return s.Wrapf(err, "cannot create openapi api")
 		}
