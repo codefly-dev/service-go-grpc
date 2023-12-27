@@ -124,17 +124,17 @@ func (s *Factory) Create(ctx context.Context, req *factoryv1.CreateRequest) (*fa
 
 	err = s.CreateEndpoints(ctx)
 	if err != nil {
-		return nil, s.Wrapf(err, "cannot create endpoints")
+		return nil, s.Wool.Wrapf(err, "cannot create endpoints")
 	}
 
 	s.protohelper, err = protohelpers.NewProto(ctx, s.Location)
 	if err != nil {
-		return nil, s.Wrapf(err, "cannot create proto helper")
+		return nil, s.Wool.Wrapf(err, "cannot create proto helper")
 	}
 
 	err = s.protohelper.Generate(ctx)
 	if err != nil {
-		return nil, s.Wrapf(err, "cannot generate proto")
+		return nil, s.Wool.Wrapf(err, "cannot generate proto")
 	}
 
 	s.gohelper = golanghelpers.Go{Dir: s.Location}
@@ -152,7 +152,7 @@ func (s *Factory) Update(ctx context.Context, req *factoryv1.UpdateRequest) (*fa
 
 	err := s.Base.Templates(nil, services.WithBuilder(builder))
 	if err != nil {
-		return nil, s.Wrapf(err, "cannot copy and apply template")
+		return nil, s.Wool.Wrapf(err, "cannot copy and apply template")
 	}
 
 	helper := golanghelpers.Go{Dir: s.Location}
@@ -168,19 +168,19 @@ func (s *Factory) Sync(ctx context.Context, req *factoryv1.SyncRequest) (*factor
 
 	// err := os.RemoveAll(s.Local("adapters/servicev1"))
 	// if err != nil {
-	// 	return nil, s.Wrapf(err, "cannot remove adapters")
+	// 	return nil, s.Wool.Wrapf(err, "cannot remove adapters")
 	// }
 	// // Re-generate
 	// s.Wool.TODO("change buf to use openapi or not depending on things...")
 
 	// err = s.protohelper.Generate(ctx)
 	// if err != nil {
-	// 	return nil, s.Wrapf(err, "cannot generate proto")
+	// 	return nil, s.Wool.Wrapf(err, "cannot generate proto")
 	// }
 
 	// err = s.gohelper.ModTidy(ctx)
 	// if err != nil {
-	// 	return nil, s.Wrapf(err, "cannot tidy go.mod")
+	// 	return nil, s.Wool.Wrapf(err, "cannot tidy go.mod")
 	// }
 
 	return &factoryv1.SyncResponse{}, nil
@@ -201,14 +201,14 @@ func (s *Factory) Build(ctx context.Context, req *factoryv1.BuildRequest) (*fact
 
 	e, err := configurations.FromProtoEndpoint(s.GrpcEndpoint)
 	if err != nil {
-		return nil, s.Wrapf(err, "cannot convert grpc endpoint")
+		return nil, s.Wool.Wrapf(err, "cannot convert grpc endpoint")
 	}
 	gRPC := configurations.AsEndpointEnvironmentVariableKey(e)
 	docker.Envs = append(docker.Envs, Env{Key: gRPC, Value: "localhost:9090"})
 	if s.RestEndpoint != nil {
 		e, err = configurations.FromProtoEndpoint(s.RestEndpoint)
 		if err != nil {
-			return nil, s.Wrapf(err, "cannot convert grpc endpoint")
+			return nil, s.Wool.Wrapf(err, "cannot convert grpc endpoint")
 		}
 		rest := configurations.AsEndpointEnvironmentVariableKey(e)
 		docker.Envs = append(docker.Envs, Env{Key: rest, Value: "localhost:8080"})
@@ -216,11 +216,11 @@ func (s *Factory) Build(ctx context.Context, req *factoryv1.BuildRequest) (*fact
 
 	err = os.Remove(s.Local("codefly/builder/Dockerfile"))
 	if err != nil {
-		return nil, s.Wrapf(err, "cannot remove dockerfile")
+		return nil, s.Wool.Wrapf(err, "cannot remove dockerfile")
 	}
 	err = s.Templates(ctx, docker, services.WithBuilder(builder))
 	if err != nil {
-		return nil, s.Wrapf(err, "cannot copy and apply template")
+		return nil, s.Wool.Wrapf(err, "cannot copy and apply template")
 	}
 	image := s.DockerImage()
 	builder, err := dockerhelpers.NewBuilder(dockerhelpers.BuilderConfiguration{
@@ -230,12 +230,12 @@ func (s *Factory) Build(ctx context.Context, req *factoryv1.BuildRequest) (*fact
 		Tag:        image.Tag,
 	})
 	if err != nil {
-		return nil, s.Wrapf(err, "cannot create builder")
+		return nil, s.Wool.Wrapf(err, "cannot create builder")
 	}
 	//builder.WithLogger(s.Wool)
 	_, err = builder.Build(ctx)
 	if err != nil {
-		return nil, s.Wrapf(err, "cannot build image")
+		return nil, s.Wool.Wrapf(err, "cannot build image")
 	}
 	return &factoryv1.BuildResponse{}, nil
 }
@@ -266,14 +266,14 @@ func (s *Factory) Deploy(ctx context.Context, req *factoryv1.DeploymentRequest) 
 func (s *Factory) CreateEndpoints(ctx context.Context) error {
 	grpc, err := configurations.NewGrpcAPI(ctx, &configurations.Endpoint{Name: "grpc"}, s.Local("api.proto"))
 	if err != nil {
-		return s.Wrapf(err, "cannot create grpc api")
+		return s.Wool.Wrapf(err, "cannot create grpc api")
 	}
 	s.Endpoints = append(s.Endpoints, grpc)
 
 	if s.Settings.CreateHttpEndpoint {
 		rest, err := configurations.NewRestAPIFromOpenAPI(ctx, &configurations.Endpoint{Name: "rest", Visibility: "private"}, s.Local("api.swagger.json"))
 		if err != nil {
-			return s.Wrapf(err, "cannot create openapi api")
+			return s.Wool.Wrapf(err, "cannot create openapi api")
 		}
 		s.Endpoints = append(s.Endpoints, rest)
 	}

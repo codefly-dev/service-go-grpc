@@ -81,14 +81,14 @@ func (s *Service) LoadEndpoints(ctx context.Context) error {
 		case standards.GRPC:
 			s.GrpcEndpoint, err = configurations.NewGrpcAPI(ctx, ep, s.Local("api.proto"))
 			if err != nil {
-				return s.Wrapf(err, "cannot create grpc api")
+				return s.Wool.Wrapf(err, "cannot create grpc api")
 			}
 			s.Endpoints = append(s.Endpoints, s.GrpcEndpoint)
 			continue
 		case standards.REST:
 			s.RestEndpoint, err = configurations.NewRestAPIFromOpenAPI(ctx, ep, s.Local("api.swagger.json"))
 			if err != nil {
-				return s.Wrapf(err, "cannot create openapi api")
+				return s.Wool.Wrapf(err, "cannot create openapi api")
 			}
 			s.Endpoints = append(s.Endpoints, s.RestEndpoint)
 			continue
