@@ -141,7 +141,7 @@ func (s *Factory) Create(ctx context.Context, req *factoryv1.CreateRequest) (*fa
 
 	err = s.gohelper.ModTidy(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("factory>create: go gohelper: cannot run mod tidy: %v", err)
+		return nil, fmt.Errorf("fcreate: go gohelper: cannot run mod tidy: %v", err)
 	}
 
 	return s.Base.Factory.CreateResponse(ctx, s.Settings, s.Endpoints...)
