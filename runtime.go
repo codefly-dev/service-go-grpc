@@ -117,8 +117,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev1.StartRequest) (*runt
 	runningContext := context.Background()
 	runningContext = s.Wool.Inject(runningContext)
 
-	// TODO: Helps with error handling
-	out, err := s.Runner.Run(runningContext)
+	out, err := s.Runner.Start(runningContext)
 	if err != nil {
 		return s.Runtime.StartError(err, wool.Field("in", "runner"))
 	}

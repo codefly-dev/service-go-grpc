@@ -71,7 +71,7 @@ func createCommunicate() *communicate.Sequence {
 	return communicate.NewSequence(
 		communicate.NewConfirm(&agentv1.Message{Name: Watch, Message: "Code hot-reload (Recommended)?", Description: "codefly can restart your service when code changes are detected 🔎"}, true),
 		communicate.NewConfirm(&agentv1.Message{Name: WithRest, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC defLoadion -- the easiest way to do REST"}, true),
-		communicate.NewConfirm(&agentv1.Message{Name: WithDebugSymbols, Message: "Run with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, true),
+		communicate.NewConfirm(&agentv1.Message{Name: WithDebugSymbols, Message: "Start with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, true),
 	)
 }
 
