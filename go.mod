@@ -3,7 +3,7 @@ module github.com/codefly-dev/service-go-grpc
 go 1.21.5
 
 require (
-	github.com/codefly-dev/core v0.0.76
+	github.com/codefly-dev/core v0.0.81
 	github.com/pkg/errors v0.9.1
 )
 

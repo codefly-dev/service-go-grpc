@@ -39,8 +39,6 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev1.LoadRequest) (*runtim
 		return s.Base.Runtime.LoadError(err)
 	}
 
-	s.Wool.Debug("loaded runtime", wool.RequestField(req).Trace())
-
 	err = s.LoadEndpoints(ctx)
 	if err != nil {
 		return s.Base.Runtime.LoadError(err)
@@ -53,7 +51,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev1.InitRequest) (*runtim
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	s.Wool.Debug("initialize runtime", wool.RequestField(req).Trace())
+	s.Wool.Debug("initialize runtime", wool.NullableField("dependency endpoints", req.DependenciesEndpoints))
 
 	var err error
 	s.NetworkMappings, err = s.Network(ctx)

@@ -199,22 +199,16 @@ func (s *Factory) Build(ctx context.Context, req *factoryv1.BuildRequest) (*fact
 	s.Wool.Debug("building docker image")
 	docker := DockerTemplating{}
 
-	e, err := configurations.FromProtoEndpoint(s.GrpcEndpoint)
-	if err != nil {
-		return nil, s.Wool.Wrapf(err, "cannot convert grpc endpoint")
-	}
-	gRPC := configurations.AsEndpointEnvironmentVariableKey(e)
+	endpoint := configurations.FromProtoEndpoint(s.GrpcEndpoint)
+	gRPC := configurations.AsEndpointEnvironmentVariableKey(endpoint)
 	docker.Envs = append(docker.Envs, Env{Key: gRPC, Value: "localhost:9090"})
 	if s.RestEndpoint != nil {
-		e, err = configurations.FromProtoEndpoint(s.RestEndpoint)
-		if err != nil {
-			return nil, s.Wool.Wrapf(err, "cannot convert grpc endpoint")
-		}
-		rest := configurations.AsEndpointEnvironmentVariableKey(e)
+		endpoint = configurations.FromProtoEndpoint(s.RestEndpoint)
+		rest := configurations.AsEndpointEnvironmentVariableKey(endpoint)
 		docker.Envs = append(docker.Envs, Env{Key: rest, Value: "localhost:8080"})
 	}
 
-	err = os.Remove(s.Local("codefly/builder/Dockerfile"))
+	err := os.Remove(s.Local("codefly/builder/Dockerfile"))
 	if err != nil {
 		return nil, s.Wool.Wrapf(err, "cannot remove dockerfile")
 	}
