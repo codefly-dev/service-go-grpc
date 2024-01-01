@@ -8,7 +8,6 @@ import (
 
 	"github.com/codefly-dev/core/wool"
 
-	"github.com/codefly-dev/core/agents/services"
 	agentv1 "github.com/codefly-dev/core/generated/go/services/agent/v1"
 
 	"github.com/codefly-dev/core/agents/helpers/code"
@@ -19,9 +18,7 @@ import (
 
 type Runtime struct {
 	*Service
-
-	// internal
-	Runner *golanghelpers.Runner
+	docker *runners.Docker
 }
 
 func NewRuntime() *Runtime {
@@ -58,28 +55,35 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev1.InitRequest) (*runtim
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
+	//
+	//if s.Settings.Watch {
+	//	conf := services.NewWatchConfiguration([]string{".", "adapters"}, "service.codefly.yaml")
+	//	err := s.SetupWatcher(ctx, conf, s.EventHandler)
+	//	if err != nil {
+	//		s.Wool.Warn("error in watcher")
+	//	}
+	//}
 
-	if s.Settings.Watch {
-		conf := services.NewWatchConfiguration([]string{".", "adapters"}, "service.codefly.yaml")
-		err := s.SetupWatcher(ctx, conf, s.EventHandler)
-		if err != nil {
-			s.Wool.Warn("error in watcher")
-		}
-	}
-
-	s.Runner = &golanghelpers.Runner{
-		Dir:   s.Location,
-		Args:  []string{"main.go"},
-		Debug: s.Settings.Debug,
-	}
-
-	err = s.Runner.Init(ctx)
+	s.docker, err = runners.NewDocker(ctx, runners.WithWorkspace(s.Location))
 	if err != nil {
-		s.Wool.Error("cannot init the go runner", wool.ErrField(err))
 		return s.Runtime.InitError(err)
 	}
+
+	image := runners.DockerImage{Name: "golang", Tag: "1.21.5"}
+
+	err = s.docker.Init(ctx, image)
+	if err != nil {
+		return s.Runtime.InitError(err)
+	}
+	mod := golanghelpers.DownloadModules().Level(wool.DEBUG)
+	build := golanghelpers.Build().Level(wool.DEBUG)
+	err = s.docker.Run(ctx, mod, build)
+	if err != nil {
+		return s.Runtime.InitError(err)
+	}
+
 	s.Ready()
-	s.Wool.Info("successful init of runner")
+	s.Wool.Info("successful init of docker")
 
 	return s.Runtime.InitResponse()
 }
@@ -93,45 +97,41 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev1.StartRequest) (*runt
 	if err != nil {
 		return s.Runtime.StartError(err)
 	}
-	s.Runner.Envs = envs
-
-	others, err := network.ConvertToEnvironmentVariables(req.NetworkMappings)
+	err = s.docker.Start(ctx, golanghelpers.Run(envs))
 	if err != nil {
-		return s.Runtime.StartError(err, wool.Field("in", "convert to environment variables"))
+		return s.Runtime.StartError(err)
 	}
 
-	s.Runner.Envs = append(s.Runner.Envs, others...)
-
-	// TODO: put this into core
-	s.Runner.Envs = append(s.Runner.Envs, "CODEFLY_SDK__LOGLEVEL", "debug")
-
-	if s.Settings.Watch {
-		conf := services.NewWatchConfiguration([]string{".", "adapters"}, "service.codefly.yaml")
-		err := s.SetupWatcher(ctx, conf, s.EventHandler)
-		if err != nil {
-			s.Wool.Warn("error in watcher")
-		}
-	}
-
-	// Create a new context as the runner will be running in the background
-	runningContext := context.Background()
-	runningContext = s.Wool.Inject(runningContext)
-
-	out, err := s.Runner.Start(runningContext)
-	if err != nil {
-		return s.Runtime.StartError(err, wool.Field("in", "runner"))
-	}
-
-	go func() {
-		for event := range out.Events {
-			s.Wool.Error("event", wool.Field("event", event))
-		}
-	}()
-
-	tracker := runners.TrackedProcess{PID: out.PID}
-	s.Info("starting", wool.Field("pid", out.PID))
-
-	return s.Runtime.StartResponse([]*runtimev1.Tracker{tracker.Proto()})
+	//// TODO: put this into core
+	//s.Runner.Envs = append(s.Runner.Envs, "CODEFLY_SDK__LOGLEVEL", "debug")
+	//
+	//if s.Settings.Watch {
+	//	conf := services.NewWatchConfiguration([]string{".", "adapters"}, "service.codefly.yaml")
+	//	err := s.SetupWatcher(ctx, conf, s.EventHandler)
+	//	if err != nil {
+	//		s.Wool.Warn("error in watcher")
+	//	}
+	//}
+	//
+	//// Create a new context as the runner will be running in the background
+	//runningContext := context.Background()
+	//runningContext = s.Wool.Inject(runningContext)
+	//
+	//out, err := s.Runner.Start(runningContext)
+	//if err != nil {
+	//	return s.Runtime.StartError(err, wool.Field("in", "runner"))
+	//}
+	//
+	//go func() {
+	//	for event := range out.Events {
+	//		s.Wool.Error("event", wool.Field("event", event))
+	//	}
+	//}()
+	//
+	//tracker := runners.TrackedProcess{PID: out.PID}
+	//s.Info("starting", wool.Field("pid", out.PID))
+	//
+	return s.Runtime.StartResponse(nil)
 }
 
 func (s *Runtime) Information(ctx context.Context, req *runtimev1.InformationRequest) (*runtimev1.InformationResponse, error) {
@@ -142,12 +142,8 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev1.StopRequest) (*runtim
 	defer s.Wool.Catch()
 
 	s.Wool.Debug("stopping service")
-	err := s.Runner.Kill(ctx)
-	if err != nil {
-		return nil, s.Wool.Wrapf(err, "cannot kill go")
-	}
 
-	err = s.Base.Stop()
+	err := s.Base.Stop()
 	if err != nil {
 		return nil, err
 	}

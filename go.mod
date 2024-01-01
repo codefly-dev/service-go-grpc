@@ -18,6 +18,7 @@ require (
 	github.com/bufbuild/protovalidate-go v0.4.3 // indirect
 	github.com/cheggaaa/pb/v3 v3.1.4 // indirect
 	github.com/codefly-dev/golor v0.0.10 // indirect
+	github.com/codefly-dev/sdk-go v0.0.12 // indirect
 	github.com/distribution/reference v0.5.0 // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
 	github.com/docker/docker v24.0.7+incompatible // indirect
