@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/rs/cors"
+
 	gen "github.com/codefly-dev/go-grpc/base/adapters/v1"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
@@ -23,19 +25,25 @@ func NewRestServer(c *Configuration) (*RestServer, error) {
 
 func (s *RestServer) Run(ctx context.Context) error {
 	fmt.Println("Starting Rest server at", s.config.EndpointHttp)
+
+	// Create a CORS handler
+	c := cors.New(cors.Options{
+		AllowedOrigins: []string{"*"}, // Allow all origins
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "PATCH"},
+		AllowedHeaders: []string{"*"}, // Allow all headers
+	})
+
 	gwMux := runtime.NewServeMux()
 
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
-
-	//// Register the health check service
-	//err := grpc_health_v1.RegisterHealthHandlerFromEndpoint(ctx, gwMux, s.config.EndpointGrpc, opts)
-	//if err != nil {
-	//	// Handle error
-	//}
 
 	err := gen.RegisterWebHandlerFromEndpoint(ctx, gwMux, s.config.EndpointGrpc, opts)
 	if err != nil {
 		return err
 	}
-	return http.ListenAndServe(s.config.EndpointHttp, gwMux)
+
+	// Wrap your mux with the CORS handler
+	handler := c.Handler(gwMux)
+
+	return http.ListenAndServe(s.config.EndpointHttp, handler)
 }
