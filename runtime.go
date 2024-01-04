@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/codefly-dev/core/runners"
-
 	"github.com/codefly-dev/core/wool"
 
 	"github.com/codefly-dev/core/agents/services"
@@ -124,14 +122,13 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev1.StartRequest) (*runt
 
 	go func() {
 		for event := range out.Events {
-			s.Wool.Error("event", wool.Field("event", event))
+			if event.Err != nil {
+				s.Wool.Error("event", wool.Field("event", event))
+			}
 		}
 	}()
 
-	tracker := runners.TrackedProcess{PID: out.PID}
-	s.Info("starting", wool.Field("pid", out.PID))
-
-	return s.Runtime.StartResponse([]*runtimev1.Tracker{tracker.Proto()})
+	return s.Runtime.StartResponse()
 }
 
 func (s *Runtime) Information(ctx context.Context, req *runtimev1.InformationRequest) (*runtimev1.InformationResponse, error) {

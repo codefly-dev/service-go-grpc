@@ -38,13 +38,11 @@ func (s *Factory) Load(ctx context.Context, req *factoryv1.LoadRequest) (*factor
 	if err != nil {
 		return nil, err
 	}
-	s.Focus("Load success")
 
 	err = s.LoadEndpoints(ctx)
 	if err != nil {
 		return s.Factory.LoadError(err)
 	}
-	s.Focus("load endpoint success")
 
 	// communication on CreateResponse
 	err = s.Communication.Register(ctx, communicate.New[factoryv1.CreateRequest](createCommunicate()))
@@ -55,12 +53,17 @@ func (s *Factory) Load(ctx context.Context, req *factoryv1.LoadRequest) (*factor
 	if err != nil {
 		return s.Factory.LoadError(err)
 	}
-	s.Focus("communicate success")
+
 	gettingStarted, err := templates.ApplyTemplateFrom(shared.Embed(factory), "templates/factory/GETTING_STARTED.md", s.Information)
 	if err != nil {
 		return s.Factory.LoadError(err)
 	}
 	return s.Factory.LoadResponse(s.Endpoints, gettingStarted)
+}
+
+func (s *Factory) Init(ctx context.Context, req *factoryv1.InitRequest) (*factoryv1.InitResponse, error) {
+	defer s.Wool.Catch()
+	return s.Factory.InitResponse()
 }
 
 const Watch = "with-hot-reload"
@@ -95,6 +98,7 @@ func (s *Factory) Create(ctx context.Context, req *factoryv1.CreateRequest) (*fa
 	if err != nil {
 		return s.Factory.CreateError(err)
 	}
+
 	s.Settings.CreateHttpEndpoint, err = session.Confirm(WithRest)
 	if err != nil {
 		return s.Factory.CreateError(err)
