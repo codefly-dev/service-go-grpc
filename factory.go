@@ -204,11 +204,11 @@ func (s *Factory) Build(ctx context.Context, req *factoryv1.BuildRequest) (*fact
 	docker := DockerTemplating{}
 
 	endpoint := configurations.FromProtoEndpoint(s.GrpcEndpoint)
-	gRPC := configurations.AsEndpointEnvironmentVariableKey(endpoint)
+	gRPC := configurations.EndpointEnvironmentVariableKey(endpoint)
 	docker.Envs = append(docker.Envs, Env{Key: gRPC, Value: "localhost:9090"})
 	if s.RestEndpoint != nil {
 		endpoint = configurations.FromProtoEndpoint(s.RestEndpoint)
-		rest := configurations.AsEndpointEnvironmentVariableKey(endpoint)
+		rest := configurations.EndpointEnvironmentVariableKey(endpoint)
 		docker.Envs = append(docker.Envs, Env{Key: rest, Value: "localhost:8080"})
 	}
 
