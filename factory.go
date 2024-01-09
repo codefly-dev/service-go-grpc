@@ -128,11 +128,6 @@ func (s *Factory) Create(ctx context.Context, req *factoryv0.CreateRequest) (*fa
 		return s.Base.Factory.CreateError(err)
 	}
 
-	err = s.CreateEndpoints(ctx)
-	if err != nil {
-		return nil, s.Wool.Wrapf(err, "cannot create endpoints")
-	}
-
 	s.gohelper = &golanghelpers.Go{Dir: s.Location}
 	err = s.gohelper.ModTidy(ctx)
 	if err != nil {
@@ -146,6 +141,11 @@ func (s *Factory) Create(ctx context.Context, req *factoryv0.CreateRequest) (*fa
 	err = s.protohelper.Generate(ctx)
 	if err != nil {
 		return s.Base.Factory.CreateError(err)
+	}
+
+	err = s.CreateEndpoints(ctx)
+	if err != nil {
+		return nil, s.Wool.Wrapf(err, "cannot create endpoints")
 	}
 
 	return s.Base.Factory.CreateResponse(ctx, s.Settings, s.Endpoints...)
@@ -265,14 +265,14 @@ func (s *Factory) Deploy(ctx context.Context, req *factoryv0.DeploymentRequest) 
 }
 
 func (s *Factory) CreateEndpoints(ctx context.Context) error {
-	grpc, err := configurations.NewGrpcAPI(ctx, &configurations.Endpoint{Name: "grpc"}, s.Local("api.proto"))
+	grpc, err := configurations.NewGrpcAPI(ctx, &configurations.Endpoint{Name: "grpc"}, s.Local("proto/api.proto"))
 	if err != nil {
 		return s.Wool.Wrapf(err, "cannot create grpc api")
 	}
 	s.Endpoints = append(s.Endpoints, grpc)
 
 	if s.Settings.CreateHttpEndpoint {
-		rest, err := configurations.NewRestAPIFromOpenAPI(ctx, &configurations.Endpoint{Name: "rest", Visibility: "private"}, s.Local("api.swagger.json"))
+		rest, err := configurations.NewRestAPIFromOpenAPI(ctx, &configurations.Endpoint{Name: "rest", Visibility: "private"}, s.Local("proto/swagger/api.swagger.json"))
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create openapi api")
 		}
