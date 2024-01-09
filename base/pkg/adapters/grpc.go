@@ -7,11 +7,8 @@ import (
 
 	"google.golang.org/grpc/reflection"
 
-	"google.golang.org/grpc/health"
-	"google.golang.org/grpc/health/grpc_health_v1"
-
 	"github.com/bufbuild/protovalidate-go"
-	gen "github.com/codefly-dev/go-grpc/base/adapters/v1"
+	gen "github.com/codefly-dev/go-grpc/base/pkg/adapters/v1"
 	codefly "github.com/codefly-dev/sdk-go"
 	"google.golang.org/grpc"
 )
@@ -40,13 +37,6 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create validator: %w", err)
 	}
-
-	// Set up the health check service
-	healthServer := health.NewServer()
-	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
-
-	// Set the status of your service
-	healthServer.SetServingStatus("Web", grpc_health_v1.HealthCheckResponse_SERVING)
 
 	s := GrpcServer{
 		configuration: c,

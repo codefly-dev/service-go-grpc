@@ -7,7 +7,7 @@ import (
 
 	"github.com/rs/cors"
 
-	gen "github.com/codefly-dev/go-grpc/base/adapters/v1"
+	gen "{{.Domain}}/pkg/adapters/v1"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -37,7 +37,7 @@ func (s *RestServer) Run(ctx context.Context) error {
 
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 
-	err := gen.RegisterWebHandlerFromEndpoint(ctx, gwMux, s.config.EndpointGrpc, opts)
+	err := gen.Register{{.Service.Name.Title}}HandlerFromEndpoint(ctx, gwMux, s.config.EndpointGrpc, opts)
 	if err != nil {
 		return err
 	}

@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/codefly-dev/go-grpc/base/adapters"
+	"github.com/codefly-dev/go-grpc/base/pkg/adapters"
 	codefly "github.com/codefly-dev/sdk-go"
 )
 

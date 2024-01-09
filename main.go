@@ -4,6 +4,8 @@ import (
 	"context"
 	"embed"
 
+	"github.com/codefly-dev/core/builders"
+
 	"github.com/codefly-dev/core/configurations/standards"
 
 	"google.golang.org/grpc/codes"
@@ -15,13 +17,15 @@ import (
 	"github.com/codefly-dev/core/agents"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/configurations"
-	basev1 "github.com/codefly-dev/core/generated/go/base/v1"
-	agentv1 "github.com/codefly-dev/core/generated/go/services/agent/v1"
+	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
+	agentv0 "github.com/codefly-dev/core/generated/go/services/agent/v0"
 	"github.com/codefly-dev/core/shared"
 )
 
 // Agent version
 var agent = shared.Must(configurations.LoadFromFs[configurations.Agent](shared.Embed(info)))
+
+var requirements = &builders.Dependency{Components: []string{"pkg", "main.go"}, Ignore: shared.NewSelect("*.go")}
 
 type Settings struct {
 	Debug bool `yaml:"debug"` // Developer only
@@ -35,14 +39,14 @@ type Service struct {
 	*services.Base
 
 	// Endpoints
-	GrpcEndpoint *basev1.Endpoint
-	RestEndpoint *basev1.Endpoint
+	GrpcEndpoint *basev0.Endpoint
+	RestEndpoint *basev0.Endpoint
 
 	// Settings
 	*Settings
 }
 
-func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv1.AgentInformationRequest) (*agentv1.AgentInformation, error) {
+func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInformationRequest) (*agentv0.AgentInformation, error) {
 	defer s.Wool.Catch()
 
 	readme, err := templates.ApplyTemplateFrom(shared.Embed(readme), "templates/agent/README.md", s.Information)
@@ -50,20 +54,20 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv1.AgentInfor
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	return &agentv1.AgentInformation{
-		RuntimeRequirements: []*agentv1.RuntimeRequirement{
-			{Type: agentv1.RuntimeRequirement_GO},
+	return &agentv0.AgentInformation{
+		RuntimeRequirements: []*agentv0.Runtime{
+			{Type: agentv0.Runtime_GO},
 		},
-		Capabilities: []*agentv1.Capability{
-			{Type: agentv1.Capability_FACTORY},
-			{Type: agentv1.Capability_RUNTIME},
+		Capabilities: []*agentv0.Capability{
+			{Type: agentv0.Capability_FACTORY},
+			{Type: agentv0.Capability_RUNTIME},
 		},
-		Languages: []*agentv1.Language{
-			{Type: agentv1.Language_GO},
+		Languages: []*agentv0.Language{
+			{Type: agentv0.Language_GO},
 		},
-		Protocols: []*agentv1.Protocol{
-			{Type: agentv1.Protocol_HTTP},
-			{Type: agentv1.Protocol_GRPC},
+		Protocols: []*agentv0.Protocol{
+			{Type: agentv0.Protocol_HTTP},
+			{Type: agentv0.Protocol_GRPC},
 		},
 		ReadMe: readme,
 	}, nil

@@ -4,7 +4,10 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"os"
+
+	protohelpers "github.com/codefly-dev/core/agents/helpers/proto"
+
+	"github.com/codefly-dev/core/builders"
 
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/templates"
@@ -12,18 +15,17 @@ import (
 	"github.com/codefly-dev/core/agents/communicate"
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
 	golanghelpers "github.com/codefly-dev/core/agents/helpers/go"
-	protohelpers "github.com/codefly-dev/core/agents/helpers/proto"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/configurations"
-	agentv1 "github.com/codefly-dev/core/generated/go/services/agent/v1"
-	factoryv1 "github.com/codefly-dev/core/generated/go/services/factory/v1"
+	agentv0 "github.com/codefly-dev/core/generated/go/services/agent/v0"
+	factoryv0 "github.com/codefly-dev/core/generated/go/services/factory/v0"
 )
 
 type Factory struct {
 	*Service
 
+	gohelper    *golanghelpers.Go
 	protohelper *protohelpers.Proto
-	gohelper    golanghelpers.Go
 }
 
 func NewFactory() *Factory {
@@ -31,7 +33,7 @@ func NewFactory() *Factory {
 		Service: NewService(),
 	}
 }
-func (s *Factory) Load(ctx context.Context, req *factoryv1.LoadRequest) (*factoryv1.LoadResponse, error) {
+func (s *Factory) Load(ctx context.Context, req *factoryv0.LoadRequest) (*factoryv0.LoadResponse, error) {
 	defer s.Wool.Catch()
 
 	err := s.Base.Factory.Load(ctx, req.Identity, s.Settings)
@@ -45,7 +47,7 @@ func (s *Factory) Load(ctx context.Context, req *factoryv1.LoadRequest) (*factor
 	}
 
 	// communication on CreateResponse
-	err = s.Communication.Register(ctx, communicate.New[factoryv1.CreateRequest](createCommunicate()))
+	err = s.Communication.Register(ctx, communicate.New[factoryv0.CreateRequest](createCommunicate()))
 	if err != nil {
 		return s.Factory.LoadError(err)
 	}
@@ -61,9 +63,15 @@ func (s *Factory) Load(ctx context.Context, req *factoryv1.LoadRequest) (*factor
 	return s.Factory.LoadResponse(s.Endpoints, gettingStarted)
 }
 
-func (s *Factory) Init(ctx context.Context, req *factoryv1.InitRequest) (*factoryv1.InitResponse, error) {
+func (s *Factory) Init(ctx context.Context, req *factoryv0.InitRequest) (*factoryv0.InitResponse, error) {
 	defer s.Wool.Catch()
-	return s.Factory.InitResponse()
+
+	hash, err := requirements.Hash()
+	if err != nil {
+		return s.Factory.InitError(err)
+	}
+
+	return s.Factory.InitResponse(hash)
 }
 
 const Watch = "with-hot-reload"
@@ -72,9 +80,9 @@ const WithRest = "create-rest-endpoint"
 
 func createCommunicate() *communicate.Sequence {
 	return communicate.NewSequence(
-		communicate.NewConfirm(&agentv1.Message{Name: Watch, Message: "Code hot-reload (Recommended)?", Description: "codefly can restart your service when code changes are detected 🔎"}, true),
-		communicate.NewConfirm(&agentv1.Message{Name: WithRest, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC defLoadion -- the easiest way to do REST"}, true),
-		communicate.NewConfirm(&agentv1.Message{Name: WithDebugSymbols, Message: "Start with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, true),
+		communicate.NewConfirm(&agentv0.Message{Name: Watch, Message: "Code hot-reload (Recommended)?", Description: "codefly can restart your service when code changes are detected 🔎"}, true),
+		communicate.NewConfirm(&agentv0.Message{Name: WithRest, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC defLoadion -- the easiest way to do REST"}, true),
+		communicate.NewConfirm(&agentv0.Message{Name: WithDebugSymbols, Message: "Start with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, true),
 	)
 }
 
@@ -84,12 +92,12 @@ type CreateConfiguration struct {
 	Envs  []string
 }
 
-func (s *Factory) Create(ctx context.Context, req *factoryv1.CreateRequest) (*factoryv1.CreateResponse, error) {
+func (s *Factory) Create(ctx context.Context, req *factoryv0.CreateRequest) (*factoryv0.CreateResponse, error) {
 	defer s.Wool.Catch()
 
 	ctx = s.WoolAgent.Inject(ctx)
 
-	session, err := s.Communication.Done(ctx, communicate.Channel[factoryv1.CreateRequest]())
+	session, err := s.Communication.Done(ctx, communicate.Channel[factoryv0.CreateRequest]())
 	if err != nil {
 		return s.Factory.CreateError(err)
 	}
@@ -115,43 +123,35 @@ func (s *Factory) Create(ctx context.Context, req *factoryv1.CreateRequest) (*fa
 		Envs:        []string{},
 	}
 	ignores := []string{"go.work", "service.generation.codefly.yaml"}
-	err = s.Templates(ctx, create,
-		services.WithFactory(factory, ignores...),
-		services.WithBuilder(builder))
+	err = s.Templates(ctx, create, services.WithFactory(factory, ignores...))
 	if err != nil {
-		return nil, err
+		return s.Base.Factory.CreateError(err)
 	}
-
-	// out, err := shared.GenerateTree(s.Location, " ")
-	// if err != nil {
-	// 	return nil, err
 
 	err = s.CreateEndpoints(ctx)
 	if err != nil {
 		return nil, s.Wool.Wrapf(err, "cannot create endpoints")
 	}
 
-	s.protohelper, err = protohelpers.NewProto(ctx, s.Location)
-	if err != nil {
-		return nil, s.Wool.Wrapf(err, "cannot create proto helper")
-	}
-
-	err = s.protohelper.Generate(ctx)
-	if err != nil {
-		return nil, s.Wool.Wrapf(err, "cannot generate proto")
-	}
-
-	s.gohelper = golanghelpers.Go{Dir: s.Location}
-
+	s.gohelper = &golanghelpers.Go{Dir: s.Location}
 	err = s.gohelper.ModTidy(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fcreate: go gohelper: cannot run mod tidy: %v", err)
+		return s.Base.Factory.CreateError(err)
+	}
+
+	s.protohelper, err = protohelpers.NewProto(ctx, s.Local("proto"))
+	if err != nil {
+		return s.Base.Factory.CreateError(err)
+	}
+	err = s.protohelper.Generate(ctx)
+	if err != nil {
+		return s.Base.Factory.CreateError(err)
 	}
 
 	return s.Base.Factory.CreateResponse(ctx, s.Settings, s.Endpoints...)
 }
 
-func (s *Factory) Update(ctx context.Context, req *factoryv1.UpdateRequest) (*factoryv1.UpdateResponse, error) {
+func (s *Factory) Update(ctx context.Context, req *factoryv0.UpdateRequest) (*factoryv0.UpdateResponse, error) {
 	defer s.Wool.Catch()
 
 	err := s.Base.Templates(nil, services.WithBuilder(builder))
@@ -159,18 +159,17 @@ func (s *Factory) Update(ctx context.Context, req *factoryv1.UpdateRequest) (*fa
 		return nil, s.Wool.Wrapf(err, "cannot copy and apply template")
 	}
 
-	helper := golanghelpers.Go{Dir: s.Location}
-	err = helper.Update(ctx)
+	err = s.gohelper.Update(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("factory>update: go helper: cannot run update: %v", err)
 	}
-	return &factoryv1.UpdateResponse{}, nil
+	return &factoryv0.UpdateResponse{}, nil
 }
 
-func (s *Factory) Sync(ctx context.Context, req *factoryv1.SyncRequest) (*factoryv1.SyncResponse, error) {
+func (s *Factory) Sync(ctx context.Context, req *factoryv0.SyncRequest) (*factoryv0.SyncResponse, error) {
 	defer s.Wool.Catch()
 
-	// err := os.RemoveAll(s.Local("adapters/servicev1"))
+	// err := os.RemoveAll(s.Local("adapters/servicev0"))
 	// if err != nil {
 	// 	return nil, s.Wool.Wrapf(err, "cannot remove adapters")
 	// }
@@ -187,7 +186,7 @@ func (s *Factory) Sync(ctx context.Context, req *factoryv1.SyncRequest) (*factor
 	// 	return nil, s.Wool.Wrapf(err, "cannot tidy go.mod")
 	// }
 
-	return &factoryv1.SyncResponse{}, nil
+	return &factoryv0.SyncResponse{}, nil
 }
 
 type Env struct {
@@ -196,23 +195,29 @@ type Env struct {
 }
 
 type DockerTemplating struct {
-	Envs []Env
+	Dependency builders.Dependency
+	Envs       []Env
 }
 
-func (s *Factory) Build(ctx context.Context, req *factoryv1.BuildRequest) (*factoryv1.BuildResponse, error) {
+func (s *Factory) Build(ctx context.Context, req *factoryv0.BuildRequest) (*factoryv0.BuildResponse, error) {
 	s.Wool.Debug("building docker image")
-	docker := DockerTemplating{}
+	ctx = s.WoolAgent.Inject(ctx)
+
+	docker := DockerTemplating{
+		Dependency: *requirements,
+	}
 
 	endpoint := configurations.FromProtoEndpoint(s.GrpcEndpoint)
 	gRPC := configurations.EndpointEnvironmentVariableKey(endpoint)
 	docker.Envs = append(docker.Envs, Env{Key: gRPC, Value: "localhost:9090"})
+
 	if s.RestEndpoint != nil {
 		endpoint = configurations.FromProtoEndpoint(s.RestEndpoint)
 		rest := configurations.EndpointEnvironmentVariableKey(endpoint)
 		docker.Envs = append(docker.Envs, Env{Key: rest, Value: "localhost:8080"})
 	}
 
-	err := os.Remove(s.Local("codefly/builder/Dockerfile"))
+	err := shared.DeleteFile(ctx, s.Local("codefly/builder/Dockerfile"))
 	if err != nil {
 		return nil, s.Wool.Wrapf(err, "cannot remove dockerfile")
 	}
@@ -222,20 +227,18 @@ func (s *Factory) Build(ctx context.Context, req *factoryv1.BuildRequest) (*fact
 	}
 	image := s.DockerImage()
 	builder, err := dockerhelpers.NewBuilder(dockerhelpers.BuilderConfiguration{
-		Root:       s.Location,
-		Dockerfile: "codefly/builder/Dockerfile",
-		Image:      image.Name,
-		Tag:        image.Tag,
+		Root:        s.Location,
+		Dockerfile:  "codefly/builder/Dockerfile",
+		Destination: image,
 	})
 	if err != nil {
 		return nil, s.Wool.Wrapf(err, "cannot create builder")
 	}
-	//builder.WithLogger(s.Wool)
 	_, err = builder.Build(ctx)
 	if err != nil {
 		return nil, s.Wool.Wrapf(err, "cannot build image")
 	}
-	return &factoryv1.BuildResponse{}, nil
+	return &factoryv0.BuildResponse{}, nil
 }
 
 type Deployment struct {
@@ -248,7 +251,7 @@ type DeploymentParameter struct {
 	Deployment
 }
 
-func (s *Factory) Deploy(ctx context.Context, req *factoryv1.DeploymentRequest) (*factoryv1.DeploymentResponse, error) {
+func (s *Factory) Deploy(ctx context.Context, req *factoryv0.DeploymentRequest) (*factoryv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 	deploy := DeploymentParameter{Image: s.DockerImage(), Information: s.Information, Deployment: Deployment{Replicas: 1}}
 	err := s.Templates(ctx, deploy) //services.WithDeploymentFor(deployment, "kustomize/base", templates.WithOverrideAll()),
@@ -258,7 +261,7 @@ func (s *Factory) Deploy(ctx context.Context, req *factoryv1.DeploymentRequest) 
 	if err != nil {
 		return nil, err
 	}
-	return &factoryv1.DeploymentResponse{}, nil
+	return &factoryv0.DeploymentResponse{}, nil
 }
 
 func (s *Factory) CreateEndpoints(ctx context.Context) error {
