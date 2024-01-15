@@ -6,9 +6,18 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/codefly-dev/core/wool"
+
 	"{{.Domain}}/pkg/adapters"
 	codefly "github.com/codefly-dev/sdk-go"
 )
+
+func Must[T any](t T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -19,11 +28,20 @@ func main() {
 
 	defer codefly.CatchPanic(ctx)
 
-	config := &adapters.Configuration{
-		EndpointGrpc: codefly.Endpoint(ctx, "self/grpc").PortAddress(),
+	w := wool.Get(ctx).In("main")
+
+	// For running outside of codefly
+	// Load overrides
+	err = codefly.LoadOverrides(ctx)
+	if err != nil {
+		w.Error("cannot load overrides", wool.Field("error", err))
 	}
-	if codefly.Endpoint(ctx, "self/rest").IsPresent() {
-		config.EndpointHttp = codefly.Endpoint(ctx, "self/rest").PortAddress()
+
+	config := &adapters.Configuration{
+		EndpointGrpc: Must(Must(codefly.GetEndpoint(ctx, "self/grpc")).PortAddress()),
+	}
+	if endpoint, err := codefly.GetEndpoint(ctx, "self/rest"); err == nil {
+		config.EndpointHttp = Must(endpoint.PortAddress())
 	}
 
 	server, err := adapters.NewServer(config)

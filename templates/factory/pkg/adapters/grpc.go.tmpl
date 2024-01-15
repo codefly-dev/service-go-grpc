@@ -8,10 +8,16 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/bufbuild/protovalidate-go"
-	gen "{{.Domain}}/pkg/adapters/v1"
+	gen "{{.Domain}}/proto/go"
 	codefly "github.com/codefly-dev/sdk-go"
 	"google.golang.org/grpc"
 )
+
+func (s *GrpcServer) Version(ctx context.Context, req *gen.VersionRequest) (*gen.VersionResponse, error) {
+	return &gen.VersionResponse{
+		Version: codefly.Version(),
+	}, nil
+}
 
 type Configuration struct {
 	EndpointGrpc string
@@ -19,16 +25,10 @@ type Configuration struct {
 }
 
 type GrpcServer struct {
-	gen.Unimplemented{{.Service.Name.Title}}Server
+	gen.Unimplemented{{.Service.Name.Title}}ServiceServer
 	configuration *Configuration
 	gRPC          *grpc.Server
 	validator     *protovalidate.Validator
-}
-
-func (s *GrpcServer) Version(ctx context.Context, req *gen.VersionRequest) (*gen.VersionResponse, error) {
-	return &gen.VersionResponse{
-		Version: codefly.Version(),
-	}, nil
 }
 
 func NewGrpServer(c *Configuration) (*GrpcServer, error) {
@@ -43,7 +43,7 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 		gRPC:          grpcServer,
 		validator:     v,
 	}
-	gen.Register{{.Service.Name.Title}}Server(grpcServer, &s)
+	gen.Register{{.Service.Name.Title}}ServiceServer(grpcServer, &s)
 	reflection.Register(grpcServer)
 	return &s, nil
 }

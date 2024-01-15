@@ -66,7 +66,7 @@ func (s *Factory) Load(ctx context.Context, req *factoryv0.LoadRequest) (*factor
 func (s *Factory) Init(ctx context.Context, req *factoryv0.InitRequest) (*factoryv0.InitResponse, error) {
 	defer s.Wool.Catch()
 
-	hash, err := requirements.Hash()
+	hash, err := requirements.Hash(ctx)
 	if err != nil {
 		return s.Factory.InitError(err)
 	}

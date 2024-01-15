@@ -4,6 +4,5 @@ base:
 ignores:
   - service.codefly.yaml
   - service.generation.codefly.yaml
-  - kreya
   - go.work
   - go.work.sum

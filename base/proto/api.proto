@@ -10,7 +10,7 @@ message VersionResponse {
     string version = 1;
 }
 
-service Web {
+service WebService {
     rpc Version(VersionRequest) returns (VersionResponse) {
         option (google.api.http) = {
             get: "/version"

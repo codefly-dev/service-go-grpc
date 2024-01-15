@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 
+	"github.com/codefly-dev/core/configurations"
+
 	"github.com/codefly-dev/core/wool"
 
 	"github.com/codefly-dev/core/agents/services"
@@ -21,6 +23,8 @@ type Runtime struct {
 	// internal
 	protohelper *protohelpers.Proto
 	runner      *golanghelpers.Runner
+
+	EnvironmentVariables *configurations.EnvironmentVariableManager
 }
 
 func NewRuntime() *Runtime {
@@ -43,6 +47,8 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		return s.Base.Runtime.LoadError(err)
 	}
 
+	s.EnvironmentVariables = configurations.NewEnvironmentVariableManager()
+
 	return s.Base.Runtime.LoadResponse(s.Endpoints)
 }
 
@@ -50,12 +56,15 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	s.Wool.Debug("initialize runtime", wool.NullableField("dependency endpoints", req.DependenciesEndpoints))
-
 	var err error
 	s.NetworkMappings, err = s.Network(ctx)
 	if err != nil {
 		return s.Runtime.InitError(err)
+	}
+
+	for _, providerInfo := range req.ProviderInfos {
+		envs := configurations.ProviderInformationAsEnvironmentVariables(providerInfo)
+		s.EnvironmentVariables.Add(envs...)
 	}
 
 	s.runner = &golanghelpers.Runner{
@@ -67,6 +76,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
+
 	err = s.protohelper.Generate(ctx)
 	if err != nil {
 		return s.Runtime.InitError(err)
@@ -92,17 +102,17 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	if err != nil {
 		return s.Runtime.StartError(err)
 	}
-	s.runner.Envs = envs
+
+	s.EnvironmentVariables.Add(envs...)
 
 	others, err := network.ConvertToEnvironmentVariables(req.NetworkMappings)
 	if err != nil {
 		return s.Runtime.StartError(err, wool.Field("in", "convert to environment variables"))
 	}
 
-	s.runner.Envs = append(s.runner.Envs, others...)
+	s.EnvironmentVariables.Add(others...)
 
-	// TODO: put this into core
-	s.runner.Envs = append(s.runner.Envs, "CODEFLY_SDK__LOGLEVEL", "debug")
+	s.runner.Envs = s.EnvironmentVariables.Get()
 
 	if s.Settings.Watch {
 		conf := services.NewWatchConfiguration(requirements)
@@ -161,7 +171,6 @@ func (s *Runtime) Communicate(ctx context.Context, req *agentv0.Engage) (*agentv
  */
 
 func (s *Runtime) EventHandler(event code.Change) error {
-	s.Wool.Info("detected a code change")
 	s.WantRestart()
 	return nil
 }
