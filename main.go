@@ -25,7 +25,7 @@ import (
 // Agent version
 var agent = shared.Must(configurations.LoadFromFs[configurations.Agent](shared.Embed(info)))
 
-var requirements = &builders.Dependency{Components: []string{"pkg", "main.go", "proto"}, Ignore: shared.NewSelect("*.go", "*.proto")}
+var requirements = &builders.Dependency{Components: []string{"pkg", "main.go", "proto"}, Select: shared.NewSelect("*.go", "*.proto")}
 
 type Settings struct {
 	Debug bool `yaml:"debug"` // Developer only
@@ -83,17 +83,19 @@ func NewService() *Service {
 func (s *Service) LoadEndpoints(ctx context.Context) error {
 	defer s.Wool.Catch()
 	var err error
-	for _, ep := range s.Configuration.Endpoints {
-		switch ep.API {
+	for _, endpoint := range s.Configuration.Endpoints {
+		endpoint.Application = s.Configuration.Application
+		endpoint.Service = s.Configuration.Name
+		switch endpoint.API {
 		case standards.GRPC:
-			s.GrpcEndpoint, err = configurations.NewGrpcAPI(ctx, ep, s.Local("proto/api.proto"))
+			s.GrpcEndpoint, err = configurations.NewGrpcAPI(ctx, endpoint, s.Local("proto/api.proto"))
 			if err != nil {
 				return s.Wool.Wrapf(err, "cannot create grpc api")
 			}
 			s.Endpoints = append(s.Endpoints, s.GrpcEndpoint)
 			continue
 		case standards.REST:
-			s.RestEndpoint, err = configurations.NewRestAPIFromOpenAPI(ctx, ep, s.Local("proto/swagger/api.swagger.json"))
+			s.RestEndpoint, err = configurations.NewRestAPIFromOpenAPI(ctx, endpoint, s.Local("proto/swagger/api.swagger.json"))
 			if err != nil {
 				return s.Wool.Wrapf(err, "cannot create openapi api")
 			}

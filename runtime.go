@@ -49,7 +49,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 
 	s.EnvironmentVariables = configurations.NewEnvironmentVariableManager()
 
-	return s.Base.Runtime.LoadResponse(s.Endpoints)
+	return s.Base.Runtime.LoadResponse()
 }
 
 func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtimev0.InitResponse, error) {
@@ -173,26 +173,4 @@ func (s *Runtime) Communicate(ctx context.Context, req *agentv0.Engage) (*agentv
 func (s *Runtime) EventHandler(event code.Change) error {
 	s.WantRestart()
 	return nil
-}
-
-func (s *Runtime) Network(ctx context.Context) ([]*runtimev0.NetworkMapping, error) {
-	pm, err := network.NewServicePortManager(ctx, s.Identity, s.Endpoints...)
-	if err != nil {
-		return nil, s.Wool.Wrapf(err, "cannot create default endpoint")
-	}
-	err = pm.Expose(s.GrpcEndpoint)
-	if err != nil {
-		return nil, s.Wool.Wrapf(err, "cannot add grpc endpoint to network manager")
-	}
-	if s.RestEndpoint != nil {
-		err = pm.Expose(s.RestEndpoint)
-		if err != nil {
-			return nil, s.Wool.Wrapf(err, "cannot add rest to network manager")
-		}
-	}
-	err = pm.Reserve(ctx)
-	if err != nil {
-		return nil, s.Wool.Wrapf(err, "cannot reserve ports")
-	}
-	return pm.NetworkMapping(ctx)
 }

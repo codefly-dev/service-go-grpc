@@ -60,7 +60,7 @@ func (s *Factory) Load(ctx context.Context, req *factoryv0.LoadRequest) (*factor
 	if err != nil {
 		return s.Factory.LoadError(err)
 	}
-	return s.Factory.LoadResponse(s.Endpoints, gettingStarted)
+	return s.Factory.LoadResponse(gettingStarted)
 }
 
 func (s *Factory) Init(ctx context.Context, req *factoryv0.InitRequest) (*factoryv0.InitResponse, error) {
@@ -221,10 +221,12 @@ func (s *Factory) Build(ctx context.Context, req *factoryv0.BuildRequest) (*fact
 	if err != nil {
 		return nil, s.Wool.Wrapf(err, "cannot remove dockerfile")
 	}
+
 	err = s.Templates(ctx, docker, services.WithBuilder(builder))
 	if err != nil {
 		return nil, s.Wool.Wrapf(err, "cannot copy and apply template")
 	}
+
 	image := s.DockerImage()
 	builder, err := dockerhelpers.NewBuilder(dockerhelpers.BuilderConfiguration{
 		Root:        s.Location,
@@ -257,7 +259,7 @@ func (s *Factory) Deploy(ctx context.Context, req *factoryv0.DeploymentRequest) 
 	err := s.Templates(ctx, deploy) //services.WithDeploymentFor(deployment, "kustomize/base", templates.WithOverrideAll()),
 	//services.WithDeploymentFor(deployment, "kustomize/overlays/environment",
 	//	services.WithDestination("kustomize/overlays/%s", req.Environment.Name), templates.WithOverrideAll()),
-
+	//
 	if err != nil {
 		return nil, err
 	}
