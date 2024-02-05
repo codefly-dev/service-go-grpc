@@ -2,18 +2,22 @@ package main
 
 import (
 	"context"
-
+	"github.com/codefly-dev/core/agents/services"
+	"github.com/codefly-dev/core/builders"
 	"github.com/codefly-dev/core/configurations"
+	"github.com/codefly-dev/core/configurations/standards"
+	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
+	"github.com/codefly-dev/core/runners"
+	"github.com/codefly-dev/core/shared"
+	"strings"
 
 	"github.com/codefly-dev/core/wool"
 
-	"github.com/codefly-dev/core/agents/services"
 	agentv0 "github.com/codefly-dev/core/generated/go/services/agent/v0"
 
 	"github.com/codefly-dev/core/agents/helpers/code"
 	golanghelpers "github.com/codefly-dev/core/agents/helpers/go"
 	protohelpers "github.com/codefly-dev/core/agents/helpers/proto"
-	"github.com/codefly-dev/core/agents/network"
 	runtimev0 "github.com/codefly-dev/core/generated/go/services/runtime/v0"
 )
 
@@ -24,7 +28,11 @@ type Runtime struct {
 	protohelper *protohelpers.Proto
 	runner      *golanghelpers.Runner
 
+	Environment          *basev0.Environment
 	EnvironmentVariables *configurations.EnvironmentVariableManager
+
+	NetworkMappings []*basev0.NetworkMapping
+	Port            int
 }
 
 func NewRuntime() *Runtime {
@@ -42,7 +50,28 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		return s.Base.Runtime.LoadError(err)
 	}
 
-	err = s.LoadEndpoints(ctx)
+	requirements.Localize(s.Location)
+
+	s.Environment = req.Environment
+
+	s.EnvironmentVariables = s.LoadEnvironmentVariables(req.Environment)
+
+	if s.Settings.Watch {
+		s.Wool.Debug("setting up code watcher")
+		// Add proto and swagger
+		dependencies := requirements.Clone()
+		dependencies.AddDependencies(
+			builders.NewDependency("proto").WithPathSelect(shared.NewSelect("*.proto")),
+			builders.NewDependency("proto/swagger").WithPathSelect(shared.NewSelect("*.swagger.json")),
+		)
+		conf := services.NewWatchConfiguration(dependencies)
+		err = s.SetupWatcher(ctx, conf, s.EventHandler)
+		if err != nil {
+			s.Wool.Warn("error in watcher", wool.ErrField(err))
+		}
+	}
+
+	err = s.LoadEndpoints(ctx, configurations.IsLocal(s.Environment))
 	if err != nil {
 		return s.Base.Runtime.LoadError(err)
 	}
@@ -56,23 +85,23 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	var err error
-	s.NetworkMappings, err = s.Network(ctx)
+	s.NetworkMappings = req.NetworkMappings
+
+	net, err := configurations.GetMappingInstanceFor(s.NetworkMappings, standards.GRPC)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
+
+	s.Port = net.Port
+
+	s.LogForward("gRPC will run on: %s", net.Address)
 
 	for _, providerInfo := range req.ProviderInfos {
 		envs := configurations.ProviderInformationAsEnvironmentVariables(providerInfo)
 		s.EnvironmentVariables.Add(envs...)
 	}
 
-	s.runner = &golanghelpers.Runner{
-		Dir:   s.Location,
-		Args:  []string{"main.go"},
-		Debug: s.Settings.Debug,
-	}
-	s.protohelper, err = protohelpers.NewProto(ctx, s.Local("proto"))
+	s.protohelper, err = protohelpers.NewProto(ctx, s.Location)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
@@ -82,12 +111,33 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		return s.Runtime.InitError(err)
 	}
 
+	runner, err := golanghelpers.NewRunner(ctx, s.Location)
+	if err != nil {
+		return s.Runtime.InitError(err)
+	}
+
+	// Stop before replacing the runner
+	if s.runner != nil {
+		err = s.runner.Stop()
+		if err != nil {
+			return s.Runtime.InitError(err)
+		}
+	}
+	s.runner = runner
+
+	s.runner.WithDebug(s.Settings.Debug).WithRaceConditionDetection(s.Settings.WithRaceConditionDetectionRun).WithRequirements(requirements)
+	// Output to wool
+	s.runner.WithOut(s.Wool)
+
+	s.Wool.Debug("runner init started")
 	err = s.runner.Init(ctx)
 	if err != nil {
 		s.Wool.Error("cannot init the go runner", wool.ErrField(err))
 		return s.Runtime.InitError(err)
 	}
+	s.Wool.Debug("runner init done")
 	s.Ready()
+
 	s.Wool.Info("successful init of runner")
 
 	return s.Runtime.InitResponse()
@@ -98,46 +148,33 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	ctx = s.Wool.Inject(ctx)
 
 	// Self-mapping
-	envs, err := network.ConvertToEnvironmentVariables(s.NetworkMappings)
+	envs, err := configurations.ExtractEndpointEnvironmentVariables(ctx, s.NetworkMappings)
 	if err != nil {
 		return s.Runtime.StartError(err)
 	}
+	s.Wool.Debug("self network mapping", wool.Field("envs", envs))
 
 	s.EnvironmentVariables.Add(envs...)
 
-	others, err := network.ConvertToEnvironmentVariables(req.NetworkMappings)
+	others, err := configurations.ExtractEndpointEnvironmentVariables(ctx, req.OtherNetworkMappings)
 	if err != nil {
 		return s.Runtime.StartError(err, wool.Field("in", "convert to environment variables"))
 	}
 
+	s.Wool.Debug("other network mappings", wool.Field("envs", others))
+
 	s.EnvironmentVariables.Add(others...)
 
-	s.runner.Envs = s.EnvironmentVariables.Get()
+	s.runner.WithEnvs(s.EnvironmentVariables.Get())
 
-	if s.Settings.Watch {
-		conf := services.NewWatchConfiguration(requirements)
-		err := s.SetupWatcher(ctx, conf, s.EventHandler)
-		if err != nil {
-			s.Wool.Warn("error in watcher", wool.ErrField(err))
-		}
-	}
+	runningContext := s.Wool.Inject(context.Background())
 
-	// Create a new context as the runner will be running in the background
-	runningContext := context.Background()
-	runningContext = s.Wool.Inject(runningContext)
-
-	out, err := s.runner.Start(runningContext)
+	s.Wool.Debug("starting runner")
+	err = s.runner.Start(runningContext)
 	if err != nil {
 		return s.Runtime.StartError(err, wool.Field("in", "runner"))
 	}
-
-	go func() {
-		for event := range out.Events {
-			if event.Err != nil && event.Message != "" {
-				s.Wool.Error("event", wool.Field("event", event))
-			}
-		}
-	}()
+	s.Wool.Debug("runner started successfully")
 
 	return s.Runtime.StartResponse()
 }
@@ -150,16 +187,24 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 	defer s.Wool.Catch()
 
 	s.Wool.Debug("stopping service")
-	err := s.runner.Kill(ctx)
+	err := s.runner.Stop()
 	if err != nil {
-		return nil, s.Wool.Wrapf(err, "cannot kill go")
+		return s.Runtime.StopError(err)
 	}
+
+	// Be nice and wait for Port to be free
+	s.Wool.Debug("waiting for port to be free")
+	err = runners.WaitForPortUnbound(ctx, s.Port)
+	if err != nil {
+		return s.Runtime.StopError(err)
+	}
+	s.Wool.Debug("port is free", wool.Field("port", s.Port))
 
 	err = s.Base.Stop()
 	if err != nil {
-		return nil, err
+		return s.Runtime.StopError(err)
 	}
-	return &runtimev0.StopResponse{}, nil
+	return s.Runtime.StopResponse()
 }
 
 func (s *Runtime) Communicate(ctx context.Context, req *agentv0.Engage) (*agentv0.InformationRequest, error) {
@@ -171,6 +216,15 @@ func (s *Runtime) Communicate(ctx context.Context, req *agentv0.Engage) (*agentv
  */
 
 func (s *Runtime) EventHandler(event code.Change) error {
-	s.WantRestart()
+	// if changes to ".swagger.json":
+	if strings.HasSuffix(event.Path, ".proto") {
+		s.Wool.Debug("proto change detected")
+		// We only re-start when ready
+		//s.protohelper.Valid()
+		s.Runtime.DesiredLoad()
+		return nil
+	}
+	s.Wool.Debug("detected change requiring re-build", wool.Field("path", event.Path))
+	s.Runtime.DesiredInit()
 	return nil
 }

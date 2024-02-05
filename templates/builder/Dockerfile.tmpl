@@ -5,7 +5,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-{{ range .Dependency.Components}}
+{{ range .Components}}
 COPY {{.}} {{.}}
 {{end}}
 
