@@ -7,7 +7,6 @@ import (
 	"github.com/codefly-dev/core/configurations"
 	"github.com/codefly-dev/core/configurations/standards"
 	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
-	"github.com/codefly-dev/core/runners"
 	"github.com/codefly-dev/core/shared"
 	"strings"
 
@@ -50,8 +49,6 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		return s.Base.Runtime.LoadError(err)
 	}
 
-	requirements.Localize(s.Location)
-
 	s.Environment = req.Environment
 
 	s.EnvironmentVariables = s.LoadEnvironmentVariables(req.Environment)
@@ -64,6 +61,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 			builders.NewDependency("proto").WithPathSelect(shared.NewSelect("*.proto")),
 			builders.NewDependency("proto/swagger").WithPathSelect(shared.NewSelect("*.swagger.json")),
 		)
+		dependencies.Localize(s.Location)
 		conf := services.NewWatchConfiguration(dependencies)
 		err = s.SetupWatcher(ctx, conf, s.EventHandler)
 		if err != nil {
@@ -85,7 +83,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	s.NetworkMappings = req.NetworkMappings
+	s.NetworkMappings = req.ProposedNetworkMappings
 
 	net, err := configurations.GetMappingInstanceFor(s.NetworkMappings, standards.GRPC)
 	if err != nil {
@@ -140,7 +138,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 
 	s.Wool.Info("successful init of runner")
 
-	return s.Runtime.InitResponse()
+	return s.Runtime.InitResponse(s.NetworkMappings)
 }
 
 func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runtimev0.StartResponse, error) {
@@ -191,14 +189,6 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 	if err != nil {
 		return s.Runtime.StopError(err)
 	}
-
-	// Be nice and wait for Port to be free
-	s.Wool.Debug("waiting for port to be free")
-	err = runners.WaitForPortUnbound(ctx, s.Port)
-	if err != nil {
-		return s.Runtime.StopError(err)
-	}
-	s.Wool.Debug("port is free", wool.Field("port", s.Port))
 
 	err = s.Base.Stop()
 	if err != nil {
