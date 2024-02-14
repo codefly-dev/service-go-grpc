@@ -44,9 +44,10 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
+	s.Wool.Debug("loading base")
 	err := s.Base.Load(ctx, req.Identity, s.Settings)
 	if err != nil {
-		return s.Base.Runtime.LoadError(err)
+		return s.Base.Runtime.LoadErrorWithDetails(err, "loading base")
 	}
 
 	s.Environment = req.Environment
@@ -71,7 +72,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 
 	err = s.LoadEndpoints(ctx, configurations.IsLocal(s.Environment))
 	if err != nil {
-		return s.Base.Runtime.LoadError(err)
+		return s.Base.Runtime.LoadErrorWithDetails(err, "loading endpoints")
 	}
 
 	s.EnvironmentVariables = configurations.NewEnvironmentVariableManager()
