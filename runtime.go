@@ -16,15 +16,15 @@ import (
 
 	"github.com/codefly-dev/core/agents/helpers/code"
 	golanghelpers "github.com/codefly-dev/core/agents/helpers/go"
-	protohelpers "github.com/codefly-dev/core/agents/helpers/proto"
 	runtimev0 "github.com/codefly-dev/core/generated/go/services/runtime/v0"
+	"github.com/codefly-dev/core/generators"
 )
 
 type Runtime struct {
 	*Service
 
 	// internal
-	protohelper *protohelpers.Proto
+	protohelper *generators.Proto
 	runner      *golanghelpers.Runner
 
 	Environment          *basev0.Environment
@@ -100,16 +100,22 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		s.EnvironmentVariables.Add(envs...)
 	}
 
-	s.protohelper, err = protohelpers.NewProto(ctx, s.Location)
+	s.protohelper, err = generators.NewProto(ctx, s.Location)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
 
+	if s.Watcher != nil {
+		s.Watcher.Pause()
+	}
 	err = s.protohelper.Generate(ctx)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
 
+	if s.Watcher != nil {
+		s.Watcher.Resume()
+	}
 	runner, err := golanghelpers.NewRunner(ctx, s.Location)
 	if err != nil {
 		return s.Runtime.InitError(err)
@@ -187,6 +193,8 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 
 	s.Wool.Debug("stopping service")
 	err := s.runner.Stop()
+	s.Wool.Debug("runner stopped")
+
 	if err != nil {
 		return s.Runtime.StopError(err)
 	}
@@ -195,6 +203,8 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 	if err != nil {
 		return s.Runtime.StopError(err)
 	}
+
+	s.Wool.Debug("base stopped")
 	return s.Runtime.StopResponse()
 }
 
@@ -207,7 +217,10 @@ func (s *Runtime) Communicate(ctx context.Context, req *agentv0.Engage) (*agentv
  */
 
 func (s *Runtime) EventHandler(event code.Change) error {
-	// if changes to ".swagger.json":
+	// ignore changes to ".swagger.json":
+	if strings.HasSuffix(event.Path, ".swagger.json") {
+		return nil
+	}
 	if strings.HasSuffix(event.Path, ".proto") {
 		s.Wool.Debug("proto change detected")
 		// We only re-start when ready

@@ -27,7 +27,7 @@ var agent = shared.Must(configurations.LoadFromFs[configurations.Agent](shared.E
 
 var requirements = builders.NewDependencies(agent.Name,
 	builders.NewDependency("service.codefly.yaml"),
-	builders.NewDependency("pkg", "main.go").WithPathSelect(shared.NewSelect("*.go")),
+	builders.NewDependency(".", "pkg", "cmd").WithPathSelect(shared.NewSelect("*.go")),
 	builders.NewDependency("go.mod"),
 )
 

@@ -48,7 +48,7 @@ func (s *RestServer) Run(ctx context.Context) error {
 	// Create a CORS handler
 	c := Cors()
 
-	gwMux := runtime.NewServeMux()
+	gwMux := runtime.NewServeMux(runtime.WithMetadata(CustomHeaderToGRPCMetadataAnnotator))
 
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 

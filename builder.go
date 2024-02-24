@@ -6,7 +6,7 @@ import (
 	"fmt"
 	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
 
-	protohelpers "github.com/codefly-dev/core/agents/helpers/proto"
+	"github.com/codefly-dev/core/generators"
 
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/templates"
@@ -24,7 +24,7 @@ type Builder struct {
 	*Service
 
 	gohelper        *golanghelpers.Go
-	protohelper     *protohelpers.Proto
+	protohelper     *generators.Proto
 	NetworkMappings []*basev0.NetworkMapping
 }
 
@@ -180,10 +180,6 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 	defer s.Wool.Catch()
 	deploy := DeploymentParameter{Image: s.DockerImage(), Information: s.Information, Deployment: Deployment{Replicas: 1}}
 	err := s.Templates(ctx, deploy)
-	//services.WithDeploymentFor(deployment, "kustomize/base", templates.WithOverrideAll()),
-	//services.WithDeploymentFor(deployment, "kustomize/overlays/environment",
-	//	services.WithDestination("kustomize/overlays/%s", req.Environment.Name), templates.WithOverrideAll()),
-	//
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +272,7 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 		return s.Base.Builder.CreateError(err)
 	}
 
-	s.protohelper, err = protohelpers.NewProto(ctx, s.Location)
+	s.protohelper, err = generators.NewProto(ctx, s.Location)
 	if err != nil {
 		return s.Base.Builder.CreateError(err)
 	}
