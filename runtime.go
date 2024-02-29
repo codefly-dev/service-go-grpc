@@ -23,9 +23,15 @@ import (
 type Runtime struct {
 	*Service
 
-	// internal
+	// Cache
+	CacheLocation string
+
+	// proto
 	protohelper *generators.Proto
-	runner      *golanghelpers.Runner
+
+	// go runner
+	SourceLocation string
+	runner         *golanghelpers.Runner
 
 	Environment          *basev0.Environment
 	EnvironmentVariables *configurations.EnvironmentVariableManager
@@ -50,6 +56,15 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		return s.Base.Runtime.LoadErrorWithDetails(err, "loading base")
 	}
 
+	s.SourceLocation, err = s.LocalDirCreate(ctx, "src")
+	if err != nil {
+		return s.Base.Runtime.LoadErrorWithDetails(err, "creating source location")
+	}
+	s.CacheLocation, err = s.LocalDirCreate(ctx, ".cache")
+	if err != nil {
+		return s.Base.Runtime.LoadErrorWithDetails(err, "creating cache location")
+	}
+
 	s.Environment = req.Environment
 
 	s.EnvironmentVariables = s.LoadEnvironmentVariables(req.Environment)
@@ -60,7 +75,6 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		dependencies := requirements.Clone()
 		dependencies.AddDependencies(
 			builders.NewDependency("proto").WithPathSelect(shared.NewSelect("*.proto")),
-			builders.NewDependency("proto/swagger").WithPathSelect(shared.NewSelect("*.swagger.json")),
 		)
 		dependencies.Localize(s.Location)
 		conf := services.NewWatchConfiguration(dependencies)
@@ -93,7 +107,16 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 
 	s.Port = net.Port
 
-	s.LogForward("gRPC will run on: %s", net.Address)
+	s.Info("gRPC will run on", wool.Field("address", net.Address))
+
+	if s.WithRestEndpoint {
+		net, err = configurations.GetMappingInstanceFor(s.NetworkMappings, standards.REST)
+		if err != nil {
+			return s.Runtime.InitError(err)
+		}
+		s.Info("REST will run on", wool.Field("address", net.Address))
+
+	}
 
 	for _, providerInfo := range req.ProviderInfos {
 		envs := configurations.ProviderInformationAsEnvironmentVariables(providerInfo)
@@ -105,6 +128,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		return s.Runtime.InitError(err)
 	}
 
+	s.protohelper.WithCache(s.CacheLocation)
 	if s.Watcher != nil {
 		s.Watcher.Pause()
 	}
@@ -116,7 +140,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	if s.Watcher != nil {
 		s.Watcher.Resume()
 	}
-	runner, err := golanghelpers.NewRunner(ctx, s.Location)
+	runner, err := golanghelpers.NewRunner(ctx, s.SourceLocation)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
@@ -130,7 +154,10 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	}
 	s.runner = runner
 
-	s.runner.WithDebug(s.Settings.Debug).WithRaceConditionDetection(s.Settings.WithRaceConditionDetectionRun).WithRequirements(requirements)
+	s.runner.WithDebug(s.Settings.Debug)
+	s.runner.WithRaceConditionDetection(s.Settings.WithRaceConditionDetectionRun)
+	s.runner.WithRequirements(requirements)
+	s.runner.WithCache(s.CacheLocation)
 	// Output to wool
 	s.runner.WithOut(s.Wool)
 
@@ -193,11 +220,11 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 
 	s.Wool.Debug("stopping service")
 	err := s.runner.Stop()
-	s.Wool.Debug("runner stopped")
 
 	if err != nil {
 		return s.Runtime.StopError(err)
 	}
+	s.Wool.Debug("runner stopped")
 
 	err = s.Base.Stop()
 	if err != nil {
@@ -224,8 +251,7 @@ func (s *Runtime) EventHandler(event code.Change) error {
 	if strings.HasSuffix(event.Path, ".proto") {
 		s.Wool.Debug("proto change detected")
 		// We only re-start when ready
-		//s.protohelper.Valid()
-		s.Runtime.DesiredLoad()
+		s.Runtime.DesiredInit()
 		return nil
 	}
 	s.Wool.Debug("detected change requiring re-build", wool.Field("path", event.Path))

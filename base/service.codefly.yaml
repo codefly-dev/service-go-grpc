@@ -1,6 +1,7 @@
 kind: service
 name: base
 application: base
+project: base
 namespace: default
 version: 0.0.0
 plugin:

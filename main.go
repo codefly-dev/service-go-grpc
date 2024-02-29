@@ -23,23 +23,23 @@ import (
 )
 
 // Agent version
-var agent = shared.Must(configurations.LoadFromFs[configurations.Agent](shared.Embed(info)))
+var agent = shared.Must(configurations.LoadFromFs[configurations.Agent](shared.Embed(infoFS)))
 
 var requirements = builders.NewDependencies(agent.Name,
 	builders.NewDependency("service.codefly.yaml"),
-	builders.NewDependency(".", "pkg", "cmd").WithPathSelect(shared.NewSelect("*.go")),
-	builders.NewDependency("go.mod"),
+	builders.NewDependency("src").WithPathSelect(shared.NewSelect("*.go")),
+	builders.NewDependency("src/go.mod"),
 )
 
 type Settings struct {
 	Debug bool `yaml:"debug"` // Developer only
 
-	WithRestEndpoint bool `yaml:"with-rest-endpoint"`
-
 	Watch bool `yaml:"watch"`
 
 	WithDebugSymbols              bool `yaml:"with-debug-symbols"`
 	WithRaceConditionDetectionRun bool `yaml:"with-race-condition-detection-run"`
+	WithGRPCUnimplemented         bool `yaml:"with-grpc-unimplemented"`
+	WithRestEndpoint              bool `yaml:"with-rest-endpoint"`
 }
 
 type Service struct {
@@ -56,7 +56,7 @@ type Service struct {
 func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInformationRequest) (*agentv0.AgentInformation, error) {
 	defer s.Wool.Catch()
 
-	readme, err := templates.ApplyTemplateFrom(ctx, shared.Embed(readme), "templates/agent/README.md", s.Information)
+	readme, err := templates.ApplyTemplateFrom(ctx, shared.Embed(readmeFS), "templates/agent/README.md", s.Information)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -107,7 +107,7 @@ func (s *Service) LoadEndpoints(ctx context.Context, makePublic bool) error {
 			if makePublic {
 				endpoint.Visibility = configurations.VisibilityPublic
 			}
-			s.RestEndpoint, err = configurations.NewRestAPIFromOpenAPI(ctx, endpoint, s.Local("proto/swagger/api.swagger.json"))
+			s.RestEndpoint, err = configurations.NewRestAPIFromOpenAPI(ctx, endpoint, s.Local("openapi/api.swagger.json"))
 			if err != nil {
 				return s.Wool.Wrapf(err, "cannot create openapi api")
 			}
@@ -131,7 +131,7 @@ func main() {
 }
 
 //go:embed agent.codefly.yaml
-var info embed.FS
+var infoFS embed.FS
 
 //go:embed templates/agent
-var readme embed.FS
+var readmeFS embed.FS

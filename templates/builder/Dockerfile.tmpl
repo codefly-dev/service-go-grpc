@@ -1,14 +1,15 @@
-FROM golang:1.21.5 AS builder
+FROM golang:alpine AS builder
 WORKDIR /app
 
 # Copy go mod and sum files to cache download
-COPY go.mod go.sum ./
+COPY src/go.mod src/go.sum ./
 RUN go mod download
 
 {{ range .Components}}
 COPY {{.}} {{.}}
 {{end}}
 
+WORKDIR /app/src
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o app
 
@@ -21,7 +22,7 @@ ENV {{.Key}} {{.Value}}
 RUN adduser -D appuser
 USER appuser
 COPY --chown=appuser service.codefly.yaml .
-COPY --chown=appuser --from=builder /app/app .
+COPY --chown=appuser --from=builder /app/src/app .
 EXPOSE 8080
 EXPOSE 9090
 

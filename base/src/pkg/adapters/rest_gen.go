@@ -10,13 +10,13 @@ import (
 	"context"
 	"fmt"
 	"github.com/codefly-dev/core/configurations/headers"
+	"github.com/codefly-dev/go-grpc/base/pkg/gen"
 	"net/http"
 
 	"github.com/codefly-dev/core/wool"
 
 	"google.golang.org/grpc/metadata"
 
-	"{{.Domain}}/pkg/gen"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -48,11 +48,11 @@ func (s *RestServer) Run(ctx context.Context) error {
 	// Create a CORS handler
 	c := Cors()
 
-	gwMux := runtime.NewServeMux()
+	gwMux := runtime.NewServeMux(runtime.WithMetadata(CustomHeaderToGRPCMetadataAnnotator))
 
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 
-	err := gen.Register{{.Service.Name.Title}}ServiceHandlerFromEndpoint(ctx, gwMux, s.config.EndpointGrpc, opts)
+	err := gen.RegisterWebServiceHandlerFromEndpoint(ctx, gwMux, s.config.EndpointGrpc, opts)
 	if err != nil {
 		return err
 	}

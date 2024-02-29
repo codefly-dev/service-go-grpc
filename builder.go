@@ -5,7 +5,6 @@ import (
 	"embed"
 	"fmt"
 	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
-
 	"github.com/codefly-dev/core/generators"
 
 	"github.com/codefly-dev/core/shared"
@@ -23,8 +22,11 @@ import (
 type Builder struct {
 	*Service
 
-	gohelper        *golanghelpers.Go
-	protohelper     *generators.Proto
+	gohelper       *golanghelpers.Go
+	SourceLocation string
+
+	protohelper *generators.Proto
+
 	NetworkMappings []*basev0.NetworkMapping
 }
 
@@ -40,6 +42,8 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 	if err != nil {
 		return nil, err
 	}
+
+	s.SourceLocation = s.Local("src")
 
 	requirements.Localize(s.Location)
 
@@ -125,6 +129,10 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	s.Wool.Debug("building docker image")
 	ctx = s.WoolAgent.Inject(ctx)
 
+	if !dockerhelpers.IsValidDockerImageName(s.DockerImage().Name) {
+		return s.Builder.BuildError(fmt.Errorf("invalid docker image name: %s", s.DockerImage().Name))
+	}
+
 	docker := DockerTemplating{
 		Components: requirements.All(),
 	}
@@ -139,7 +147,7 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 		docker.Envs = append(docker.Envs, Env{Key: rest, Value: "localhost:8080"})
 	}
 
-	err := shared.DeleteFile(ctx, s.Local("codefly/builder/Dockerfile"))
+	err := shared.DeleteFile(ctx, s.Local("builder/Dockerfile"))
 	if err != nil {
 		return s.Builder.BuildError(err)
 	}
@@ -152,7 +160,7 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	image := s.DockerImage()
 	builder, err := dockerhelpers.NewBuilder(dockerhelpers.BuilderConfiguration{
 		Root:        s.Location,
-		Dockerfile:  "codefly/builder/Dockerfile",
+		Dockerfile:  "builder/Dockerfile",
 		Destination: image,
 		Output:      s.Wool,
 	})
@@ -194,7 +202,7 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 	s.Endpoints = append(s.Endpoints, grpc)
 
 	if s.Settings.WithRestEndpoint {
-		rest, err := configurations.NewRestAPIFromOpenAPI(ctx, &configurations.Endpoint{Name: "rest", Visibility: "private"}, s.Local("proto/swagger/api.swagger.json"))
+		rest, err := configurations.NewRestAPIFromOpenAPI(ctx, &configurations.Endpoint{Name: "rest", Visibility: "private"}, s.Local("openapi/api.swagger.json"))
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create openapi api")
 		}
@@ -203,17 +211,19 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 	return nil
 }
 
-const WithRestEndpoint = "with-rest-endpoint"
 const Watch = "with-hot-reload"
+const WithGrpcUnimplemented = "with-grpc-unimplemented"
 const WithDebugSymbols = "with-debug-symbols"
 const WithRaceConditionDetectionRun = "with-race-condition-detection-run"
+const WithRestEndpoint = "with-rest-endpoint"
 
 func createCommunicate() *communicate.Sequence {
 	return communicate.NewSequence(
 		communicate.NewConfirm(&agentv0.Message{Name: Watch, Message: "Code hot-reload (Recommended)?", Description: "codefly can restart your service when code changes are detected 🔎"}, true),
+		communicate.NewConfirm(&agentv0.Message{Name: WithDebugSymbols, Message: "Start with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, false),
+		communicate.NewConfirm(&agentv0.Message{Name: WithRaceConditionDetectionRun, Message: "Start with race condition detection?", Description: "Build the go binary with race condition detection"}, false),
 		communicate.NewConfirm(&agentv0.Message{Name: WithRestEndpoint, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC definition -- the easiest way to do REST"}, true),
-		communicate.NewConfirm(&agentv0.Message{Name: WithDebugSymbols, Message: "Start with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, true),
-		communicate.NewConfirm(&agentv0.Message{Name: WithRaceConditionDetectionRun, Message: "Start with race condition detection?", Description: "Build the go binary with race condition detection"}, true),
+		communicate.NewConfirm(&agentv0.Message{Name: WithGrpcUnimplemented, Message: "Compile error on non-implemented methods?", Description: "Recommended behavior to know what to implement"}, true),
 	)
 }
 
@@ -233,11 +243,6 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 		return s.Builder.CreateError(err)
 	}
 
-	s.Settings.WithRestEndpoint, err = session.Confirm(WithRestEndpoint)
-	if err != nil {
-		return s.Builder.CreateError(err)
-	}
-
 	s.Settings.Watch, err = session.Confirm(Watch)
 	if err != nil {
 		return s.Builder.CreateError(err)
@@ -253,6 +258,15 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 		return s.Builder.CreateError(err)
 	}
 
+	s.Settings.WithRestEndpoint, err = session.Confirm(WithRestEndpoint)
+	if err != nil {
+		return s.Builder.CreateError(err)
+	}
+
+	s.Settings.WithGRPCUnimplemented, err = session.Confirm(WithGrpcUnimplemented)
+	if err != nil {
+		return s.Builder.CreateError(err)
+	}
 	create := CreateConfiguration{
 		Information: s.Information,
 		Image:       s.DockerImage(),
@@ -266,7 +280,7 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 		return s.Base.Builder.CreateError(err)
 	}
 
-	s.gohelper = &golanghelpers.Go{Dir: s.Location}
+	s.gohelper = &golanghelpers.Go{Dir: s.SourceLocation}
 	err = s.gohelper.ModTidy(ctx)
 	if err != nil {
 		return s.Base.Builder.CreateError(err)

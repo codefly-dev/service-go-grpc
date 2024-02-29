@@ -22,10 +22,10 @@ func doWork(ctx context.Context) (Clean, error) {
 import (
 	"context"
 	"fmt"
+	"github.com/codefly-dev/go-grpc/base/pkg/adapters"
 	"os/signal"
 	"syscall"
 
-	"github.com/codefly-dev/go-grpc/base/pkg/adapters"
 	codefly "github.com/codefly-dev/sdk-go"
 )
 

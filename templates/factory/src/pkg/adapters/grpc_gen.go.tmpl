@@ -12,6 +12,8 @@ implement your APIs there.
 import (
 	"context"
 	"fmt"
+	"github.com/bufbuild/protovalidate-go"
+	gen2 "{{.SourceVersionControl}}/pkg/gen"
 	"net"
 
 	"google.golang.org/grpc/codes"
@@ -19,10 +21,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/bufbuild/protovalidate-go"
 	"google.golang.org/grpc/reflection"
-
-	"{{.Domain}}/pkg/gen"
 
 	codefly "github.com/codefly-dev/sdk-go"
 	"google.golang.org/grpc"
@@ -46,11 +45,11 @@ func Validate(req proto.Message) error {
 	return nil
 }
 
-func (s *GrpcServer) Version(ctx context.Context, req *gen.VersionRequest) (*gen.VersionResponse, error) {
+func (s *GrpcServer) Version(ctx context.Context, req *gen2.VersionRequest) (*gen2.VersionResponse, error) {
 	if err := Validate(req); err != nil {
 		return nil, err
 	}
-	return &gen.VersionResponse{
+	return &gen2.VersionResponse{
 		Version: codefly.Version(),
 	}, nil
 }
@@ -61,7 +60,7 @@ type Configuration struct {
 }
 
 type GrpcServer struct {
-	gen.Unimplemented{{.Service.Name.Title}}ServiceServer
+	gen2.Unimplemented{{.Service.Name.Title}}ServiceServer
 	configuration *Configuration
 	gRPC          *grpc.Server
 	validator     *protovalidate.Validator
@@ -79,7 +78,7 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 		gRPC:          grpcServer,
 		validator:     v,
 	}
-	gen.Register{{.Service.Name.Title}}ServiceServer(grpcServer, &s)
+	gen2.Register{{.Service.Name.Title}}ServiceServer(grpcServer, &s)
 	reflection.Register(grpcServer)
 	return &s, nil
 }
