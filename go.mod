@@ -3,7 +3,7 @@ module github.com/codefly-dev/service-go-grpc
 go 1.21.5
 
 require (
-	github.com/codefly-dev/core v0.1.40
+	github.com/codefly-dev/core v0.1.41
 	github.com/stretchr/testify v1.8.4
 	google.golang.org/grpc v1.62.0
 )
@@ -70,7 +70,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/shirou/gopsutil/v3 v3.24.1 // indirect
+	github.com/shirou/gopsutil/v3 v3.24.2 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/stoewer/go-strcase v1.3.0 // indirect

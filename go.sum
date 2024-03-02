@@ -24,6 +24,8 @@ github.com/codefly-dev/core v0.1.39 h1:dDQydb0+qMvGHC5GxkD6Y7UjIopim9P2e/pvgpqWU
 github.com/codefly-dev/core v0.1.39/go.mod h1:rsJuwLl556F9SF4LptPLD79JbyEkhn8PBHQL7Bs337E=
 github.com/codefly-dev/core v0.1.40 h1:7vFMTt3NzZ61vy8NXCa/I3FZk/UNcSmBYAYGiAyscBY=
 github.com/codefly-dev/core v0.1.40/go.mod h1:rsJuwLl556F9SF4LptPLD79JbyEkhn8PBHQL7Bs337E=
+github.com/codefly-dev/core v0.1.41 h1:UVleBGT+aTV5oY8MAgltolA4KpWn8pu8cR1UK3eWDQM=
+github.com/codefly-dev/core v0.1.41/go.mod h1:rsJuwLl556F9SF4LptPLD79JbyEkhn8PBHQL7Bs337E=
 github.com/containerd/log v0.1.0 h1:TCJt7ioM2cr/tfR8GPbGf9/VRAX8D2B4PjzCpfX540I=
 github.com/containerd/log v0.1.0/go.mod h1:VRRf09a7mHDIRezVKTRCrOq78v577GXq3bSa3EhrzVo=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
@@ -177,6 +179,8 @@ github.com/rogpeppe/go-internal v1.11.0 h1:cWPaGQEPrBb5/AsnsZesgZZ9yb1OQ+GOISoDN
 github.com/rogpeppe/go-internal v1.11.0/go.mod h1:ddIwULY96R17DhadqLgMfk9H9tvdUzkipdSkR5nkCZA=
 github.com/shirou/gopsutil/v3 v3.24.1 h1:R3t6ondCEvmARp3wxODhXMTLC/klMa87h2PHUw5m7QI=
 github.com/shirou/gopsutil/v3 v3.24.1/go.mod h1:UU7a2MSBQa+kW1uuDq8DeEBS8kmrnQwsv2b5O513rwU=
+github.com/shirou/gopsutil/v3 v3.24.2 h1:kcR0erMbLg5/3LcInpw0X/rrPSqq4CDPyI6A6ZRC18Y=
+github.com/shirou/gopsutil/v3 v3.24.2/go.mod h1:tSg/594BcA+8UdQU2XcW803GWYgdtauFFPgJCJKZlVk=
 github.com/shoenig/go-m1cpu v0.1.6 h1:nxdKQNcEB6vzgA2E2bvzKIYRuNj7XNJ4S/aRSwKzFtM=
 github.com/shoenig/go-m1cpu v0.1.6/go.mod h1:1JJMcUBvfNwpq05QDQVAnx3gUHr9IYF7GNg9SUEw2VQ=
 github.com/shoenig/test v0.6.4 h1:kVTaSd7WLz5WZ2IaoM0RSzRsUD+m8wRR+5qvntpn4LU=
