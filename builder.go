@@ -181,17 +181,31 @@ type Deployment struct {
 type DeploymentParameter struct {
 	Image *configurations.DockerImage
 	*services.Information
+	ConfigMap services.EnvironmentMap
 	Deployment
 }
 
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
-	deploy := DeploymentParameter{Image: s.DockerImage(), Information: s.Information, Deployment: Deployment{Replicas: 1}}
-	err := s.Templates(ctx, deploy)
+
+	envs, err := configurations.ExtractEndpointEnvironmentVariables(ctx, req.NetworkMappings)
 	if err != nil {
-		return nil, err
+		return s.Builder.DeployError(err)
 	}
-	return &builderv0.DeploymentResponse{}, nil
+
+	endpoints := services.EnvsAsConfigMapData(envs)
+
+	params := DeploymentParameter{
+		Image:       s.DockerImage(),
+		Information: s.Information,
+		Deployment:  Deployment{Replicas: 1},
+		ConfigMap:   endpoints}
+
+	err = s.Builder.Deploy(ctx, req, deploymentFS, params)
+	if err != nil {
+		return s.Builder.DeployError(err)
+	}
+	return s.Builder.DeployResponse()
 }
 
 func (s *Builder) CreateEndpoints(ctx context.Context) error {

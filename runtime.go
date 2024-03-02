@@ -250,8 +250,8 @@ func (s *Runtime) EventHandler(event code.Change) error {
 	}
 	if strings.HasSuffix(event.Path, ".proto") {
 		s.Wool.Debug("proto change detected")
-		// We only re-start when ready
-		s.Runtime.DesiredInit()
+		// Because we read endpoints in Load
+		s.Runtime.DesiredLoad()
 		return nil
 	}
 	s.Wool.Debug("detected change requiring re-build", wool.Field("path", event.Path))
