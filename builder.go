@@ -128,9 +128,10 @@ type DockerTemplating struct {
 func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*builderv0.BuildResponse, error) {
 	s.Wool.Debug("building docker image")
 	ctx = s.WoolAgent.Inject(ctx)
+	image := s.DockerImage(req.BuildContext)
 
-	if !dockerhelpers.IsValidDockerImageName(s.DockerImage().Name) {
-		return s.Builder.BuildError(fmt.Errorf("invalid docker image name: %s", s.DockerImage().Name))
+	if !dockerhelpers.IsValidDockerImageName(image.Name) {
+		return s.Builder.BuildError(fmt.Errorf("invalid docker image name: %s", image.Name))
 	}
 
 	docker := DockerTemplating{
@@ -157,7 +158,6 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 		return s.Builder.BuildError(err)
 	}
 
-	image := s.DockerImage()
 	builder, err := dockerhelpers.NewBuilder(dockerhelpers.BuilderConfiguration{
 		Root:        s.Location,
 		Dockerfile:  "builder/Dockerfile",
@@ -188,6 +188,8 @@ type DeploymentParameter struct {
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 
+	image := s.DockerImage(req.BuildContext)
+
 	envs, err := configurations.ExtractEndpointEnvironmentVariables(ctx, req.NetworkMappings)
 	if err != nil {
 		return s.Builder.DeployError(err)
@@ -196,7 +198,7 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 	endpoints := services.EnvsAsConfigMapData(envs)
 
 	params := DeploymentParameter{
-		Image:       s.DockerImage(),
+		Image:       image,
 		Information: s.Information,
 		Deployment:  Deployment{Replicas: 1},
 		ConfigMap:   endpoints}
@@ -226,7 +228,6 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 }
 
 const Watch = "with-hot-reload"
-const WithGrpcUnimplemented = "with-grpc-unimplemented"
 const WithDebugSymbols = "with-debug-symbols"
 const WithRaceConditionDetectionRun = "with-race-condition-detection-run"
 const WithRestEndpoint = "with-rest-endpoint"
@@ -237,14 +238,12 @@ func createCommunicate() *communicate.Sequence {
 		communicate.NewConfirm(&agentv0.Message{Name: WithDebugSymbols, Message: "Start with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, false),
 		communicate.NewConfirm(&agentv0.Message{Name: WithRaceConditionDetectionRun, Message: "Start with race condition detection?", Description: "Build the go binary with race condition detection"}, false),
 		communicate.NewConfirm(&agentv0.Message{Name: WithRestEndpoint, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC definition -- the easiest way to do REST"}, true),
-		communicate.NewConfirm(&agentv0.Message{Name: WithGrpcUnimplemented, Message: "Compile error on non-implemented methods?", Description: "Recommended behavior to know what to implement"}, true),
 	)
 }
 
 type CreateConfiguration struct {
 	*services.Information
-	Image *configurations.DockerImage
-	Envs  []string
+	Envs []string
 }
 
 func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*builderv0.CreateResponse, error) {
@@ -277,13 +276,8 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 		return s.Builder.CreateError(err)
 	}
 
-	s.Settings.WithGRPCUnimplemented, err = session.Confirm(WithGrpcUnimplemented)
-	if err != nil {
-		return s.Builder.CreateError(err)
-	}
 	create := CreateConfiguration{
 		Information: s.Information,
-		Image:       s.DockerImage(),
 		Envs:        []string{},
 	}
 	ignore := shared.NewIgnore("go.work*", "service.generation.codefly.yaml")

@@ -60,7 +60,7 @@ type Configuration struct {
 }
 
 type GrpcServer struct {
-	gen.UnimplementedWebServiceServer
+	gen.UnsafeWebServiceServer
 	configuration *Configuration
 	gRPC          *grpc.Server
 	validator     *protovalidate.Validator

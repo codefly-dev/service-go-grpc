@@ -38,7 +38,6 @@ type Settings struct {
 
 	WithDebugSymbols              bool `yaml:"with-debug-symbols"`
 	WithRaceConditionDetectionRun bool `yaml:"with-race-condition-detection-run"`
-	WithGRPCUnimplemented         bool `yaml:"with-grpc-unimplemented"`
 	WithRestEndpoint              bool `yaml:"with-rest-endpoint"`
 }
 
