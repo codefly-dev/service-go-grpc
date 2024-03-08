@@ -128,6 +128,7 @@ type DockerTemplating struct {
 func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*builderv0.BuildResponse, error) {
 	s.Wool.Debug("building docker image")
 	ctx = s.WoolAgent.Inject(ctx)
+
 	image := s.DockerImage(req.BuildContext)
 
 	if !dockerhelpers.IsValidDockerImageName(image.Name) {
