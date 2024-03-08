@@ -199,13 +199,14 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 
 	s.runner.WithEnvs(s.EnvironmentVariables.Get())
 
-	runningContext := s.Wool.Inject(context.Background())
-
 	s.Wool.Debug("starting runner")
+
+	runningContext := s.Wool.Inject(context.Background())
 	err = s.runner.Start(runningContext)
 	if err != nil {
 		return s.Runtime.StartError(err, wool.Field("in", "runner"))
 	}
+
 	s.Wool.Debug("runner started successfully")
 
 	return s.Runtime.StartResponse()
@@ -218,20 +219,20 @@ func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationReq
 func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtimev0.StopResponse, error) {
 	defer s.Wool.Catch()
 
-	s.Wool.Debug("stopping service")
+	s.Wool.Focus("stopping service")
 	err := s.runner.Stop()
 
 	if err != nil {
 		return s.Runtime.StopError(err)
 	}
-	s.Wool.Debug("runner stopped")
+	s.Wool.Focus("runner stopped")
 
 	err = s.Base.Stop()
 	if err != nil {
 		return s.Runtime.StopError(err)
 	}
 
-	s.Wool.Debug("base stopped")
+	s.Wool.Focus("base stopped")
 	return s.Runtime.StopResponse()
 }
 
