@@ -45,11 +45,13 @@ type Service struct {
 	*services.Base
 
 	// Endpoints
-	GrpcEndpoint *basev0.Endpoint
-	RestEndpoint *basev0.Endpoint
+	grpcEndpoint *basev0.Endpoint
+	restEndpoint *basev0.Endpoint
 
 	// Settings
 	*Settings
+
+	sourceLocation string
 }
 
 func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInformationRequest) (*agentv0.AgentInformation, error) {
@@ -95,29 +97,29 @@ func (s *Service) LoadEndpoints(ctx context.Context, makePublic bool) error {
 		endpoint.Service = s.Configuration.Name
 		switch endpoint.API {
 		case standards.GRPC:
-			s.GrpcEndpoint, err = configurations.NewGrpcAPI(ctx, endpoint, s.Local("proto/api.proto"))
+			s.grpcEndpoint, err = configurations.NewGrpcAPI(ctx, endpoint, s.Local("proto/api.proto"))
 			if err != nil {
 				return s.Wool.Wrapf(err, "cannot create grpc api")
 			}
-			s.Endpoints = append(s.Endpoints, s.GrpcEndpoint)
+			s.Endpoints = append(s.Endpoints, s.grpcEndpoint)
 			continue
 		case standards.REST:
 			// Useful when running locally
 			if makePublic {
 				endpoint.Visibility = configurations.VisibilityPublic
 			}
-			s.RestEndpoint, err = configurations.NewRestAPIFromOpenAPI(ctx, endpoint, s.Local("openapi/api.swagger.json"))
+			s.restEndpoint, err = configurations.NewRestAPIFromOpenAPI(ctx, endpoint, s.Local("openapi/api.swagger.json"))
 			if err != nil {
 				return s.Wool.Wrapf(err, "cannot create openapi api")
 			}
-			s.Endpoints = append(s.Endpoints, s.RestEndpoint)
+			s.Endpoints = append(s.Endpoints, s.restEndpoint)
 		}
 	}
 	return nil
 }
 
 func (s *Service) AddPublicRestEndpoint(ctx context.Context) {
-	endpoint := configurations.CloneEndpoint(ctx, s.RestEndpoint)
+	endpoint := configurations.CloneEndpoint(ctx, s.restEndpoint)
 	endpoint.Visibility = configurations.VisibilityPublic
 	s.Endpoints = append(s.Endpoints, endpoint)
 }

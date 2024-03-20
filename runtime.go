@@ -5,8 +5,6 @@ import (
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/builders"
 	"github.com/codefly-dev/core/configurations"
-	"github.com/codefly-dev/core/configurations/standards"
-	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
 	"github.com/codefly-dev/core/shared"
 	"strings"
 
@@ -23,21 +21,14 @@ import (
 type Runtime struct {
 	*Service
 
-	// Cache
-	CacheLocation string
+	// cache
+	cacheLocation string
 
 	// proto
 	protohelper *generators.Proto
 
 	// go runner
-	SourceLocation string
-	runner         *golanghelpers.Runner
-
-	Environment          *basev0.Environment
-	EnvironmentVariables *configurations.EnvironmentVariableManager
-
-	NetworkMappings []*basev0.NetworkMapping
-	Port            int
+	runner *golanghelpers.Runner
 }
 
 func NewRuntime() *Runtime {
@@ -56,11 +47,12 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		return s.Base.Runtime.LoadErrorWithDetails(err, "loading base")
 	}
 
-	s.SourceLocation, err = s.LocalDirCreate(ctx, "src")
+	s.sourceLocation, err = s.LocalDirCreate(ctx, "src")
 	if err != nil {
 		return s.Base.Runtime.LoadErrorWithDetails(err, "creating source location")
 	}
-	s.CacheLocation, err = s.LocalDirCreate(ctx, ".cache")
+
+	s.cacheLocation, err = s.LocalDirCreate(ctx, ".cache")
 	if err != nil {
 		return s.Base.Runtime.LoadErrorWithDetails(err, "creating cache location")
 	}
@@ -100,22 +92,19 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 
 	s.NetworkMappings = req.ProposedNetworkMappings
 
-	net, err := configurations.GetMappingInstanceFor(s.NetworkMappings, standards.GRPC)
+	net, err := configurations.FindNetworkMapping(s.grpcEndpoint, s.NetworkMappings)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
 
-	s.Port = net.Port
-
 	s.Info("gRPC will run on", wool.Field("address", net.Address))
 
 	if s.WithRestEndpoint {
-		net, err = configurations.GetMappingInstanceFor(s.NetworkMappings, standards.REST)
+		net, err = configurations.FindNetworkMapping(s.restEndpoint, s.NetworkMappings)
 		if err != nil {
 			return s.Runtime.InitError(err)
 		}
 		s.Info("REST will run on", wool.Field("address", net.Address))
-
 	}
 
 	for _, providerInfo := range req.ProviderInfos {
@@ -128,7 +117,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		return s.Runtime.InitError(err)
 	}
 
-	s.protohelper.WithCache(s.CacheLocation)
+	s.protohelper.WithCache(s.cacheLocation)
 	if s.Watcher != nil {
 		s.Watcher.Pause()
 	}
@@ -140,7 +129,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	if s.Watcher != nil {
 		s.Watcher.Resume()
 	}
-	runner, err := golanghelpers.NewRunner(ctx, s.SourceLocation)
+	runner, err := golanghelpers.NewRunner(ctx, s.sourceLocation)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
@@ -157,7 +146,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	s.runner.WithDebug(s.Settings.Debug)
 	s.runner.WithRaceConditionDetection(s.Settings.WithRaceConditionDetectionRun)
 	s.runner.WithRequirements(requirements)
-	s.runner.WithCache(s.CacheLocation)
+	s.runner.WithCache(s.cacheLocation)
 	// Output to wool
 	s.runner.WithOut(s.Wool)
 
@@ -172,7 +161,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 
 	s.Wool.Info("successful init of runner")
 
-	return s.Runtime.InitResponse(s.NetworkMappings)
+	return s.Runtime.InitResponse()
 }
 
 func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runtimev0.StartResponse, error) {

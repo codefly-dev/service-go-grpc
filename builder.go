@@ -4,7 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
+	"github.com/codefly-dev/core/configurations/standards"
 	"github.com/codefly-dev/core/generators"
 
 	"github.com/codefly-dev/core/shared"
@@ -22,12 +22,9 @@ import (
 type Builder struct {
 	*Service
 
-	gohelper       *golanghelpers.Go
-	SourceLocation string
+	gohelper *golanghelpers.Go
 
 	protohelper *generators.Proto
-
-	NetworkMappings []*basev0.NetworkMapping
 }
 
 func NewBuilder() *Builder {
@@ -43,7 +40,7 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 		return nil, err
 	}
 
-	s.SourceLocation = s.Local("src")
+	s.sourceLocation = s.Local("src")
 
 	requirements.Localize(s.Location)
 
@@ -74,12 +71,7 @@ func (s *Builder) Init(ctx context.Context, req *builderv0.InitRequest) (*builde
 
 	s.NetworkMappings = req.ProposedNetworkMappings
 
-	hash, err := requirements.Hash(ctx)
-	if err != nil {
-		return s.Builder.InitError(err)
-	}
-
-	return s.Builder.InitResponse(s.NetworkMappings, hash)
+	return s.Builder.InitResponse()
 }
 
 func (s *Builder) Update(ctx context.Context, req *builderv0.UpdateRequest) (*builderv0.UpdateResponse, error) {
@@ -139,14 +131,14 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 		Components: requirements.All(),
 	}
 
-	endpoint := configurations.EndpointFromProto(s.GrpcEndpoint)
-	gRPC := configurations.EndpointEnvironmentVariableKey(endpoint)
-	docker.Envs = append(docker.Envs, Env{Key: gRPC, Value: "localhost:9090"})
+	endpoint := configurations.EndpointFromProto(s.grpcEndpoint)
+	gRPC := configurations.EndpointEnvironmentVariableKey(endpoint.Information())
+	docker.Envs = append(docker.Envs, Env{Key: gRPC, Value: standards.LocalhostAddress(standards.GRPC)})
 
-	if s.RestEndpoint != nil {
-		endpoint = configurations.EndpointFromProto(s.RestEndpoint)
-		rest := configurations.EndpointEnvironmentVariableKey(endpoint)
-		docker.Envs = append(docker.Envs, Env{Key: rest, Value: "localhost:8080"})
+	if s.restEndpoint != nil {
+		endpoint = configurations.EndpointFromProto(s.restEndpoint)
+		rest := configurations.EndpointEnvironmentVariableKey(endpoint.Information())
+		docker.Envs = append(docker.Envs, Env{Key: rest, Value: standards.LocalhostAddress(standards.REST)})
 	}
 
 	err := shared.DeleteFile(ctx, s.Local("builder/Dockerfile"))
@@ -175,17 +167,6 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	return s.Builder.BuildResponse()
 }
 
-type Deployment struct {
-	Replicas int
-}
-
-type DeploymentParameter struct {
-	Image *configurations.DockerImage
-	*services.Information
-	ConfigMap services.EnvironmentMap
-	Deployment
-}
-
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 
@@ -196,13 +177,18 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		return s.Builder.DeployError(err)
 	}
 
-	endpoints := services.EnvsAsConfigMapData(envs)
+	cfMap, err := services.EnvsAsConfigMapData(envs)
+	if err != nil {
+		return s.Builder.DeployError(err)
+	}
 
-	params := DeploymentParameter{
+	params := services.DeploymentTemplateInput{
 		Image:       image,
 		Information: s.Information,
-		Deployment:  Deployment{Replicas: 1},
-		ConfigMap:   endpoints}
+		DeploymentConfiguration: services.DeploymentConfiguration{
+			Replicas: 1,
+		},
+		ConfigMap: cfMap}
 
 	err = s.Builder.Deploy(ctx, req, deploymentFS, params)
 	if err != nil {
@@ -212,17 +198,19 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 }
 
 func (s *Builder) CreateEndpoints(ctx context.Context) error {
-	grpc, err := configurations.NewGrpcAPI(ctx, &configurations.Endpoint{Name: "grpc"}, s.Local("proto/api.proto"))
+	grpc, err := configurations.NewGrpcAPI(ctx, s.Configuration.BaseEndpoint(standards.GRPC), s.Local("proto/api.proto"))
 	if err != nil {
 		return s.Wool.Wrapf(err, "cannot create grpc api")
 	}
+	s.grpcEndpoint = grpc
 	s.Endpoints = append(s.Endpoints, grpc)
 
 	if s.Settings.WithRestEndpoint {
-		rest, err := configurations.NewRestAPIFromOpenAPI(ctx, &configurations.Endpoint{Name: "rest", Visibility: "private"}, s.Local("openapi/api.swagger.json"))
+		rest, err := configurations.NewRestAPIFromOpenAPI(ctx, s.Configuration.BaseEndpoint(standards.REST), s.Local("openapi/api.swagger.json"))
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create openapi api")
 		}
+		s.restEndpoint = rest
 		s.Endpoints = append(s.Endpoints, rest)
 	}
 	return nil
@@ -289,7 +277,7 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 		return s.Base.Builder.CreateError(err)
 	}
 
-	s.gohelper = &golanghelpers.Go{Dir: s.SourceLocation}
+	s.gohelper = &golanghelpers.Go{Dir: s.sourceLocation}
 	err = s.gohelper.ModTidy(ctx)
 	if err != nil {
 		return s.Base.Builder.CreateError(err)
