@@ -3,7 +3,7 @@ module github.com/codefly-dev/service-go-grpc
 go 1.22.0
 
 require (
-	github.com/codefly-dev/core v0.1.57
+	github.com/codefly-dev/core v0.1.58
 	github.com/stretchr/testify v1.9.0
 	google.golang.org/grpc v1.62.1
 )
@@ -21,7 +21,7 @@ require (
 	github.com/cheggaaa/pb/v3 v3.1.5 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.5.0 // indirect
-	github.com/docker/docker v25.0.5+incompatible // indirect
+	github.com/docker/docker v26.0.0+incompatible // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dsnet/compress v0.0.1 // indirect
@@ -60,6 +60,7 @@ require (
 	github.com/mholt/archiver v3.1.1+incompatible // indirect
 	github.com/mitchellh/go-testing-interface v1.14.1 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/nwaples/rardecode v1.1.3 // indirect
 	github.com/oklog/run v1.1.0 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
