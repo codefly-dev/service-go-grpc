@@ -170,8 +170,6 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 
-	image := s.DockerImage(req.BuildContext)
-
 	envs, err := configurations.ExtractEndpointEnvironmentVariables(ctx, req.NetworkMappings)
 	if err != nil {
 		return s.Builder.DeployError(err)
@@ -182,15 +180,11 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		return s.Builder.DeployError(err)
 	}
 
-	params := services.DeploymentTemplateInput{
-		Image:       image,
-		Information: s.Information,
-		DeploymentConfiguration: services.DeploymentConfiguration{
-			Replicas: 1,
-		},
-		ConfigMap: cfMap}
+	params := services.DeploymentParameters{
+		ConfigMap: cfMap,
+	}
 
-	err = s.Builder.Deploy(ctx, req, deploymentFS, params)
+	err = s.Builder.GenericServiceDeploy(ctx, req, deploymentFS, params)
 	if err != nil {
 		return s.Builder.DeployError(err)
 	}
