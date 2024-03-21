@@ -278,7 +278,7 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 	}
 
 	s.gohelper = &golanghelpers.Go{Dir: s.sourceLocation}
-	err = s.gohelper.ModTidy(ctx)
+	_, err = s.gohelper.ModTidy(ctx)
 	if err != nil {
 		return s.Base.Builder.CreateError(err)
 	}
