@@ -18,6 +18,8 @@ github.com/codefly-dev/core v0.1.38 h1:Yk8OmeKvOsWEWxFR9Qv0tym6yOSYeduKiQLJT6bef
 github.com/codefly-dev/core v0.1.38/go.mod h1:rsJuwLl556F9SF4LptPLD79JbyEkhn8PBHQL7Bs337E=
 github.com/codefly-dev/core v0.1.52 h1:6cP9GBKCDujVgp72wdHqeFDyNdVcwEQdoDY5HdCbNa4=
 github.com/codefly-dev/core v0.1.52/go.mod h1:Ol7Piz5f1P4EYcnZrGUaX1tKt6SEXcEMXYawaY4pbzg=
+github.com/codefly-dev/core v0.1.58 h1:d763Aps7TsX42Ma8FC6a9kayMUpmjYDylKD6SFSZLXU=
+github.com/codefly-dev/core v0.1.58/go.mod h1:syWTswKGbtTS58XSTuMPdaQxuH1RWEqOjfv17VBmtcE=
 github.com/codefly-dev/sdk-go v0.1.17 h1:xwYnJkIRb35KpBK5A5uTOt5fYVMgccM+NCD8azacmgg=
 github.com/codefly-dev/sdk-go v0.1.17/go.mod h1:ywhXbb1OFoUL6Ui68jMMF7bgHZJ+IbynbBXUGLDVlY4=
 github.com/codefly-dev/sdk-go v0.1.18 h1:6rPQbNUq0kSOrDQvPqBWE9TmibplLDTXXecmrEe0nf4=
@@ -26,6 +28,8 @@ github.com/codefly-dev/sdk-go v0.1.19 h1:y28A/6qKL6/WYMn4xrqoDk8HJh10ZM2ynPIJhYC
 github.com/codefly-dev/sdk-go v0.1.19/go.mod h1:ZUczf9fBjYThq86OwCQnp6S/EgPF7PchICh6Z5AMu80=
 github.com/codefly-dev/sdk-go v0.1.20 h1:1zBCRwg7X50r7rvA7MrifEUzRBFc90iZGNBGgcm+vEM=
 github.com/codefly-dev/sdk-go v0.1.20/go.mod h1:ZUczf9fBjYThq86OwCQnp6S/EgPF7PchICh6Z5AMu80=
+github.com/codefly-dev/sdk-go v0.1.22 h1:VsnFwVkvMihZR7cCSaU5cynN1dWD/xB1mopPhXSJEA0=
+github.com/codefly-dev/sdk-go v0.1.22/go.mod h1:ypAWp5QOo859PnFZpeqMkQlF4nNLpb7UcqxxLTcZTII=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
@@ -137,6 +141,8 @@ go.opentelemetry.io/otel/trace v1.24.0 h1:CsKnnL4dUAr/0llH9FKuc698G04IrpWV0MQA/Y
 go.opentelemetry.io/otel/trace v1.24.0/go.mod h1:HPc3Xr/cOApsBI154IU0OI0HJexz+aw5uPdbs3UCjNU=
 golang.org/x/exp v0.0.0-20240222234643-814bf88cf225 h1:LfspQV/FYTatPTr/3HzIcmiUFH7PGP+OQ6mgDYo3yuQ=
 golang.org/x/exp v0.0.0-20240222234643-814bf88cf225/go.mod h1:CxmFvTBINI24O/j8iY7H1xHzx2i4OsyguNBmN/uPtqc=
+golang.org/x/exp v0.0.0-20240318143956-a85f2c67cd81 h1:6R2FC06FonbXQ8pK11/PDFY6N6LWlf9KlzibaCapmqc=
+golang.org/x/exp v0.0.0-20240318143956-a85f2c67cd81/go.mod h1:CQ1k9gNrJ50XIzaKCRR2hssIjF07kZFEiieALBM/ARQ=
 golang.org/x/net v0.21.0 h1:AQyQV4dYCvJ7vGmJyKki9+PBdyvhkSd8EIx/qb0AYv4=
 golang.org/x/net v0.21.0/go.mod h1:bIjVDfnllIU7BJ2DNgfnXvpSvtn8VRwhlsaeUTyUS44=
 golang.org/x/net v0.22.0 h1:9sGLhx7iRIHEiX0oAJ3MRZMUCElJgy7Br1nO+AMN3Tc=
@@ -156,10 +162,14 @@ google.golang.org/genproto/googleapis/api v0.0.0-20240227224415-6ceb2ff114de h1:
 google.golang.org/genproto/googleapis/api v0.0.0-20240227224415-6ceb2ff114de/go.mod h1:5iCWqnniDlqZHrd3neWVTOwvh/v6s3232omMecelax8=
 google.golang.org/genproto/googleapis/api v0.0.0-20240311173647-c811ad7063a7 h1:oqta3O3AnlWbmIE3bFnWbu4bRxZjfbWCp0cKSuZh01E=
 google.golang.org/genproto/googleapis/api v0.0.0-20240311173647-c811ad7063a7/go.mod h1:VQW3tUculP/D4B+xVCo+VgSq8As6wA9ZjHl//pmk+6s=
+google.golang.org/genproto/googleapis/api v0.0.0-20240318140521-94a12d6c2237 h1:RFiFrvy37/mpSpdySBDrUdipW/dHwsRwh3J3+A9VgT4=
+google.golang.org/genproto/googleapis/api v0.0.0-20240318140521-94a12d6c2237/go.mod h1:Z5Iiy3jtmioajWHDGFk7CeugTyHtPvMHA4UTmUkyalE=
 google.golang.org/genproto/googleapis/rpc v0.0.0-20240221002015-b0ce06bbee7c h1:NUsgEN92SQQqzfA+YtqYNqYmB3DMMYLlIwUZAQFVFbo=
 google.golang.org/genproto/googleapis/rpc v0.0.0-20240221002015-b0ce06bbee7c/go.mod h1:H4O17MA/PE9BsGx3w+a+W2VOLLD1Qf7oJneAoU6WktY=
 google.golang.org/genproto/googleapis/rpc v0.0.0-20240311173647-c811ad7063a7 h1:8EeVk1VKMD+GD/neyEHGmz7pFblqPjHoi+PGQIlLx2s=
 google.golang.org/genproto/googleapis/rpc v0.0.0-20240311173647-c811ad7063a7/go.mod h1:WtryC6hu0hhx87FDGxWCDptyssuo68sk10vYjF+T9fY=
+google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 h1:NnYq6UN9ReLM9/Y01KWNOWyI5xQ9kbIms5GGJVwS/Yc=
+google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237/go.mod h1:WtryC6hu0hhx87FDGxWCDptyssuo68sk10vYjF+T9fY=
 google.golang.org/grpc v1.62.0 h1:HQKZ/fa1bXkX1oFOvSjmZEUL8wLSaZTjCcLAlmZRtdk=
 google.golang.org/grpc v1.62.0/go.mod h1:IWTG0VlJLCh1SkC58F7np9ka9mx/WNkjl4PGJaiq+QE=
 google.golang.org/grpc v1.62.1 h1:B4n+nfKzOICUXMgyrNd19h/I9oH0L1pizfk1d4zSgTk=

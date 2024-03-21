@@ -1,6 +1,6 @@
 base:
   name: Web
-  domain: github.com/codefly-dev/go-grpc/base
+  domain: github.com/codefly-dev/go-grpc/base/
 ignores:
   - .codefly.yaml
   - service.generation.codefly.yaml
