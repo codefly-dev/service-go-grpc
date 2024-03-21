@@ -58,10 +58,10 @@ func main() {
 	defer codefly.CatchPanic(ctx)
 
 	config := &adapters.Configuration{
-		EndpointGrpc: Must(Must(codefly.GetEndpoint(ctx, "self::grpc")).PortAddress()),
+		EndpointGrpc: Must(codefly.GetEndpoint(ctx, "self::grpc")).PortAddress,
 	}
 	if endpoint, err := codefly.GetEndpoint(ctx, "self::rest"); err == nil {
-		config.EndpointHttp = Must(endpoint.PortAddress())
+		config.EndpointHttp = endpoint.PortAddress
 	}
 
 	server, err := adapters.NewServer(config)
