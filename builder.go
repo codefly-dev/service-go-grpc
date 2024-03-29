@@ -175,7 +175,7 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		return s.Builder.DeployError(err)
 	}
 
-	cfMap, err := services.EnvsAsConfigMapData(envs)
+	cfMap, err := services.EnvsAsConfigMapData(envs...)
 	if err != nil {
 		return s.Builder.DeployError(err)
 	}
