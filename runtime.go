@@ -4,7 +4,10 @@ import (
 	"context"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/builders"
+	"github.com/codefly-dev/core/companions/proto"
 	"github.com/codefly-dev/core/configurations"
+	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
+	"github.com/codefly-dev/core/runners"
 	"github.com/codefly-dev/core/shared"
 	"strings"
 
@@ -15,7 +18,6 @@ import (
 	"github.com/codefly-dev/core/agents/helpers/code"
 	golanghelpers "github.com/codefly-dev/core/agents/helpers/go"
 	runtimev0 "github.com/codefly-dev/core/generated/go/services/runtime/v0"
-	"github.com/codefly-dev/core/generators"
 )
 
 type Runtime struct {
@@ -25,10 +27,11 @@ type Runtime struct {
 	cacheLocation string
 
 	// proto
-	protohelper *generators.Proto
+	protohelper *proto.Proto
 
 	// go runner
-	runner *golanghelpers.Runner
+	runner      runners.Runner
+	Environment *basev0.Environment
 }
 
 func NewRuntime() *Runtime {
@@ -47,6 +50,15 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		return s.Base.Runtime.LoadErrorWithDetails(err, "loading base")
 	}
 
+	s.Runtime.Scope = req.Scope
+
+	s.LogForward("running in %s mode", s.Runtime.Scope)
+
+	s.Environment = req.Environment
+
+	s.EnvironmentVariables.SetEnvironment(s.Environment)
+	s.EnvironmentVariables.SetNetworkScope(s.Runtime.Scope)
+
 	s.sourceLocation, err = s.LocalDirCreate(ctx, "src")
 	if err != nil {
 		return s.Base.Runtime.LoadErrorWithDetails(err, "creating source location")
@@ -56,10 +68,6 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	if err != nil {
 		return s.Base.Runtime.LoadErrorWithDetails(err, "creating cache location")
 	}
-
-	s.Environment = req.Environment
-
-	s.EnvironmentVariables = s.LoadEnvironmentVariables(req.Environment)
 
 	if s.Settings.Watch {
 		s.Wool.Debug("setting up code watcher")
@@ -76,43 +84,119 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		}
 	}
 
-	err = s.LoadEndpoints(ctx, configurations.IsLocal(s.Environment))
+	s.Endpoints, err = s.Base.Service.LoadEndpoints(ctx)
 	if err != nil {
 		return s.Base.Runtime.LoadErrorWithDetails(err, "loading endpoints")
 	}
 
-	s.EnvironmentVariables = configurations.NewEnvironmentVariableManager()
+	s.grpcEndpoint, err = configurations.FindGRPCEndpoint(ctx, s.Endpoints)
+	if err != nil {
+		return s.Base.Runtime.LoadErrorWithDetails(err, "finding grpc endpoint")
+	}
+
+	if s.Settings.WithRestEndpoint {
+		s.restEndpoint, err = configurations.FindRestEndpoint(ctx, s.Endpoints)
+		if err != nil {
+			return s.Base.Runtime.LoadErrorWithDetails(err, "finding rest endpoint")
+		}
+	}
 
 	return s.Base.Runtime.LoadResponse()
+}
+
+func (s *Runtime) dockerInitRunner(ctx context.Context) (runners.Runner, error) {
+	//runner, err := runners.NewDocker(ctx, runtimeImage)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//
+	//_, err = shared.CheckDirectoryOrCreate(ctx, s.DockerEnvPath())
+	//if err != nil {
+	//	return nil, err
+	//}
+	//
+	//err = runner.Init(ctx)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//
+	//runner.WithMount(s.sourceLocation, "/app")
+	//runner.WithMount(s.DockerEnvPath(), "/venv")
+	//runner.WithWorkDir("/app")
+	//runner.WithCommand("poetry", "install", "--no-root")
+	//runner.WithOut(s.Wool)
+	//return runner, nil
+	return nil, nil
+}
+
+func (s *Runtime) nativeInitRunner(ctx context.Context) (runners.Runner, error) {
+	runner, err := golanghelpers.NewRunner(ctx, s.sourceLocation)
+	if err != nil {
+		return nil, err
+	}
+
+	// Stop before replacing the runner
+	if s.runner != nil {
+		err = s.runner.Stop()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	runner.WithDebug(s.Settings.Debug)
+	runner.WithRaceConditionDetection(s.Settings.WithRaceConditionDetectionRun)
+	runner.WithRequirements(requirements)
+	runner.WithCache(s.cacheLocation)
+	// Output to wool
+	runner.WithOut(s.Wool)
+	return runner, nil
 }
 
 func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtimev0.InitResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
+	s.Runtime.LogInitRequest(req)
+
 	s.NetworkMappings = req.ProposedNetworkMappings
 
-	net, err := configurations.FindNetworkMapping(s.grpcEndpoint, s.NetworkMappings)
+	// Add to environment variables
+	// Filter configurations for the scope
+
+	confs := configurations.FilterConfigurations(req.DependenciesConfigurations, s.Runtime.Scope)
+	err := s.EnvironmentVariables.AddConfigurations(confs...)
+
+	// Networking
+	net, err := s.Runtime.NetworkInstance(ctx, s.NetworkMappings, s.grpcEndpoint)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
 
-	s.Info("gRPC will run on", wool.Field("address", net.Address))
+	s.LogForward("gPRC will run on localhost:%d", net.Port)
+
+	// Only add gRPC for now
+	nm, err := configurations.FindNetworkMapping(ctx, s.NetworkMappings, s.grpcEndpoint)
+	if err != nil {
+		return s.Runtime.InitError(err)
+	}
+	err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, s.Runtime.Scope)
 
 	if s.WithRestEndpoint {
-		net, err = configurations.FindNetworkMapping(s.restEndpoint, s.NetworkMappings)
+		// Networking
+		restNet, err := s.Runtime.NetworkInstance(ctx, s.NetworkMappings, s.restEndpoint)
 		if err != nil {
 			return s.Runtime.InitError(err)
 		}
-		s.Info("REST will run on", wool.Field("address", net.Address))
+		restNm, err := configurations.FindNetworkMapping(ctx, s.NetworkMappings, s.restEndpoint)
+		if err != nil {
+			return s.Runtime.InitError(err)
+		}
+		err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{restNm}, s.Runtime.Scope)
+
+		s.LogForward("REST will run on http://localhost:%d", restNet.Port)
 	}
 
-	for _, providerInfo := range req.ProviderInfos {
-		envs := configurations.ProviderInformationAsEnvironmentVariables(providerInfo)
-		s.EnvironmentVariables.Add(envs...)
-	}
-
-	s.protohelper, err = generators.NewProto(ctx, s.Location)
+	s.protohelper, err = proto.NewProto(ctx, s.Location)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
@@ -129,26 +213,18 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	if s.Watcher != nil {
 		s.Watcher.Resume()
 	}
-	runner, err := golanghelpers.NewRunner(ctx, s.sourceLocation)
-	if err != nil {
-		return s.Runtime.InitError(err)
-	}
 
-	// Stop before replacing the runner
-	if s.runner != nil {
-		err = s.runner.Stop()
-		if err != nil {
-			return s.Runtime.InitError(err)
-		}
+	var runner runners.Runner
+	if s.Runtime.Container() {
+		runner, err = s.dockerInitRunner(ctx)
+	}
+	if s.Runtime.Native() {
+		runner, err = s.nativeInitRunner(ctx)
+	}
+	if runner == nil {
+		return s.Runtime.InitError(s.Wool.NewError("no runner found"))
 	}
 	s.runner = runner
-
-	s.runner.WithDebug(s.Settings.Debug)
-	s.runner.WithRaceConditionDetection(s.Settings.WithRaceConditionDetectionRun)
-	s.runner.WithRequirements(requirements)
-	s.runner.WithCache(s.cacheLocation)
-	// Output to wool
-	s.runner.WithOut(s.Wool)
 
 	s.Wool.Debug("runner init started")
 	err = s.runner.Init(ctx)
@@ -168,30 +244,8 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	// Self-mapping
-	envs, err := configurations.ExtractEndpointEnvironmentVariables(ctx, s.NetworkMappings)
-	if err != nil {
-		return s.Runtime.StartError(err)
-	}
-	s.Wool.Debug("self network mapping", wool.Field("envs", envs))
-
-	s.EnvironmentVariables.Add(envs...)
-
-	others, err := configurations.ExtractEndpointEnvironmentVariables(ctx, req.OtherNetworkMappings)
-	if err != nil {
-		return s.Runtime.StartError(err, wool.Field("in", "convert to environment variables"))
-	}
-
-	s.Wool.Debug("other network mappings", wool.Field("envs", others))
-
-	s.EnvironmentVariables.Add(others...)
-
-	s.runner.WithEnvs(s.EnvironmentVariables.Get())
-
-	s.Wool.Debug("starting runner")
-
 	runningContext := s.Wool.Inject(context.Background())
-	err = s.runner.Start(runningContext)
+	err := s.runner.Start(runningContext)
 	if err != nil {
 		return s.Runtime.StartError(err, wool.Field("in", "runner"))
 	}
@@ -208,21 +262,29 @@ func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationReq
 func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtimev0.StopResponse, error) {
 	defer s.Wool.Catch()
 
-	s.Wool.Focus("stopping service")
+	s.Wool.Debug("stopping service")
+	if s.runner == nil {
+		return s.Runtime.StopResponse()
+	}
 	err := s.runner.Stop()
 
 	if err != nil {
 		return s.Runtime.StopError(err)
 	}
-	s.Wool.Focus("runner stopped")
+	s.Wool.Debug("runner stopped")
 
 	err = s.Base.Stop()
 	if err != nil {
 		return s.Runtime.StopError(err)
 	}
 
-	s.Wool.Focus("base stopped")
+	s.Wool.Debug("base stopped")
 	return s.Runtime.StopResponse()
+}
+
+func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (s *Runtime) Communicate(ctx context.Context, req *agentv0.Engage) (*agentv0.InformationRequest, error) {

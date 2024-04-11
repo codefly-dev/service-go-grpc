@@ -6,8 +6,6 @@ import (
 
 	"github.com/codefly-dev/core/builders"
 
-	"github.com/codefly-dev/core/configurations/standards"
-
 	"google.golang.org/grpc/codes"
 
 	"google.golang.org/grpc/status"
@@ -88,41 +86,7 @@ func NewService() *Service {
 	}
 }
 
-func (s *Service) LoadEndpoints(ctx context.Context, makePublic bool) error {
-	defer s.Wool.Catch()
-	s.Endpoints = []*basev0.Endpoint{}
-	var err error
-	for _, endpoint := range s.Configuration.Endpoints {
-		endpoint.Application = s.Configuration.Application
-		endpoint.Service = s.Configuration.Name
-		switch endpoint.API {
-		case standards.GRPC:
-			s.grpcEndpoint, err = configurations.NewGrpcAPI(ctx, endpoint, s.Local("proto/api.proto"))
-			if err != nil {
-				return s.Wool.Wrapf(err, "cannot create grpc api")
-			}
-			s.Endpoints = append(s.Endpoints, s.grpcEndpoint)
-			continue
-		case standards.REST:
-			// Useful when running locally
-			if makePublic {
-				endpoint.Visibility = configurations.VisibilityPublic
-			}
-			s.restEndpoint, err = configurations.NewRestAPIFromOpenAPI(ctx, endpoint, s.Local("openapi/api.swagger.json"))
-			if err != nil {
-				return s.Wool.Wrapf(err, "cannot create openapi api")
-			}
-			s.Endpoints = append(s.Endpoints, s.restEndpoint)
-		}
-	}
-	return nil
-}
-
-func (s *Service) AddPublicRestEndpoint(ctx context.Context) {
-	endpoint := configurations.CloneEndpoint(ctx, s.restEndpoint)
-	endpoint.Visibility = configurations.VisibilityPublic
-	s.Endpoints = append(s.Endpoints, endpoint)
-}
+var runtimeImage = &configurations.DockerImage{Name: "golang:alpine", Tag: "0.0.1"}
 
 func main() {
 	agents.Register(
