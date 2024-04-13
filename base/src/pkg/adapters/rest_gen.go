@@ -43,7 +43,7 @@ func CustomHeaderToGRPCMetadataAnnotator(ctx context.Context, req *http.Request)
 }
 
 func (s *RestServer) Run(ctx context.Context) error {
-	fmt.Println("Starting Rest server at", s.config.EndpointHttp)
+	fmt.Println("Starting Rest server at", *s.config.EndpointHttpPort)
 
 	// Create a CORS handler
 	c := Cors()
@@ -52,7 +52,7 @@ func (s *RestServer) Run(ctx context.Context) error {
 
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 
-	err := gen.RegisterWebServiceHandlerFromEndpoint(ctx, gwMux, s.config.EndpointGrpc, opts)
+	err := gen.RegisterWebServiceHandlerFromEndpoint(ctx, gwMux, fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts)
 	if err != nil {
 		return err
 	}
@@ -60,5 +60,5 @@ func (s *RestServer) Run(ctx context.Context) error {
 	// Wrap your mux with the CORS handler
 	handler := c.Handler(gwMux)
 
-	return http.ListenAndServe(s.config.EndpointHttp, handler)
+	return http.ListenAndServe(fmt.Sprintf(":%d", *s.config.EndpointHttpPort), handler)
 }

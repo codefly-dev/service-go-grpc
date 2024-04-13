@@ -55,8 +55,8 @@ func (s *GrpcServer) Version(ctx context.Context, req *gen.VersionRequest) (*gen
 }
 
 type Configuration struct {
-	EndpointGrpc string
-	EndpointHttp string
+	EndpointGrpcPort uint16
+	EndpointHttpPort *uint16
 }
 
 type GrpcServer struct {
@@ -84,8 +84,8 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 }
 
 func (s *GrpcServer) Run(ctx context.Context) error {
-	fmt.Println("Starting gRPC server at", s.configuration.EndpointGrpc)
-	lis, err := net.Listen("tcp", s.configuration.EndpointGrpc)
+	fmt.Println("Starting gRPC server at", s.configuration.EndpointGrpcPort)
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.configuration.EndpointGrpcPort))
 	if err != nil {
 		return fmt.Errorf("failed to listen: %v", err)
 	}

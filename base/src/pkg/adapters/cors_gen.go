@@ -2,7 +2,6 @@ package adapters
 
 import (
 	"fmt"
-	codefly "github.com/codefly-dev/sdk-go"
 	"github.com/rs/cors"
 )
 
@@ -13,14 +12,7 @@ import (
 ----------------------------------------------------------------- */
 
 func Cors() *cors.Cors {
-	if codefly.IsLocalEnvironment() {
-		fmt.Println("setting up cors for local environment")
-		return cors.New(cors.Options{
-			AllowedOrigins: []string{"*"},
-			AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
-			AllowedHeaders: []string{"*"},
-		})
-	}
+	fmt.Println("setting up cors: TODO")
 	return cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},

@@ -24,7 +24,7 @@ func NewServer(config *Configuration) (*Server, error) {
 		return nil, err
 	}
 	var rest *RestServer
-	if config.EndpointHttp != "" {
+	if config.EndpointHttpPort != nil {
 		rest, err = NewRestServer(config)
 		if err != nil {
 			return nil, err

@@ -22,6 +22,8 @@ func doWork(ctx context.Context) (Clean, error) {
 import (
 	"context"
 	"fmt"
+	"github.com/codefly-dev/core/configurations/standards"
+	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/go-grpc/base/pkg/adapters"
 	"os/signal"
 	"syscall"
@@ -58,10 +60,10 @@ func main() {
 	defer codefly.CatchPanic(ctx)
 
 	config := &adapters.Configuration{
-		EndpointGrpc: Must(codefly.GetEndpoint(ctx, "self::grpc")).PortAddress,
+		EndpointGrpcPort: codefly.For(ctx).API(standards.GRPC).NetworkInstance().Port,
 	}
-	if endpoint, err := codefly.GetEndpoint(ctx, "self::rest"); err == nil {
-		config.EndpointHttp = endpoint.PortAddress
+	if net := codefly.For(ctx).API(standards.REST).NetworkInstance(); net != nil {
+		config.EndpointHttpPort = shared.Pointer(net.Port)
 	}
 
 	server, err := adapters.NewServer(config)
@@ -70,7 +72,7 @@ func main() {
 	}
 
 	go func() {
-		err = server.Start(context.Background())
+		err = server.Start(ctx)
 		if err != nil {
 			panic(err)
 		}

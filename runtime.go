@@ -6,6 +6,7 @@ import (
 	"github.com/codefly-dev/core/builders"
 	"github.com/codefly-dev/core/companions/proto"
 	"github.com/codefly-dev/core/configurations"
+	"github.com/codefly-dev/core/configurations/standards"
 	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
 	"github.com/codefly-dev/core/runners"
 	"github.com/codefly-dev/core/shared"
@@ -27,7 +28,7 @@ type Runtime struct {
 	cacheLocation string
 
 	// proto
-	protohelper *proto.Proto
+	buf *proto.Buf
 
 	// go runner
 	runner      runners.Runner
@@ -81,6 +82,23 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		err = s.SetupWatcher(ctx, conf, s.EventHandler)
 		if err != nil {
 			s.Wool.Warn("error in watcher", wool.ErrField(err))
+		}
+	}
+
+	s.buf, err = proto.NewBuf(ctx, s.Location)
+	if err != nil {
+		return s.Runtime.LoadError(err)
+	}
+
+	s.buf.WithCache(s.cacheLocation)
+	if s.Watcher != nil {
+		s.Watcher.Pause()
+	}
+
+	if !shared.FileExists(s.Local(standards.OpenAPIPath)) {
+		err = s.buf.Generate(ctx)
+		if err != nil {
+			return s.Runtime.LoadError(err)
 		}
 	}
 
@@ -147,8 +165,9 @@ func (s *Runtime) nativeInitRunner(ctx context.Context) (runners.Runner, error) 
 	runner.WithRaceConditionDetection(s.Settings.WithRaceConditionDetectionRun)
 	runner.WithRequirements(requirements)
 	runner.WithCache(s.cacheLocation)
+	runner.WithEnvs(s.EnvironmentVariables.All())
 	// Output to wool
-	runner.WithOut(s.Wool)
+	runner.WithOut(s.Logger)
 	return runner, nil
 }
 
@@ -160,9 +179,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 
 	s.NetworkMappings = req.ProposedNetworkMappings
 
-	// Add to environment variables
 	// Filter configurations for the scope
-
 	confs := configurations.FilterConfigurations(req.DependenciesConfigurations, s.Runtime.Scope)
 	err := s.EnvironmentVariables.AddConfigurations(confs...)
 
@@ -196,16 +213,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		s.LogForward("REST will run on http://localhost:%d", restNet.Port)
 	}
 
-	s.protohelper, err = proto.NewProto(ctx, s.Location)
-	if err != nil {
-		return s.Runtime.InitError(err)
-	}
-
-	s.protohelper.WithCache(s.cacheLocation)
-	if s.Watcher != nil {
-		s.Watcher.Pause()
-	}
-	err = s.protohelper.Generate(ctx)
+	err = s.buf.Generate(ctx)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
@@ -299,6 +307,11 @@ func (s *Runtime) EventHandler(event code.Change) error {
 	// ignore changes to ".swagger.json":
 	if strings.HasSuffix(event.Path, ".swagger.json") {
 		return nil
+	}
+	s.Wool.Focus("stopping service")
+	err := s.runner.Stop()
+	if err != nil {
+		return s.Wool.Wrapf(err, "cannot stop runner")
 	}
 	if strings.HasSuffix(event.Path, ".proto") {
 		s.Wool.Debug("proto change detected")
