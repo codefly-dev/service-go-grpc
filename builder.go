@@ -14,7 +14,6 @@ import (
 
 	"github.com/codefly-dev/core/agents/communicate"
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
-	golanghelpers "github.com/codefly-dev/core/agents/helpers/go"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/configurations"
 	agentv0 "github.com/codefly-dev/core/generated/go/services/agent/v0"
@@ -23,8 +22,6 @@ import (
 
 type Builder struct {
 	*Service
-
-	gohelper *golanghelpers.Go
 
 	buf *proto.Buf
 
@@ -92,32 +89,11 @@ func (s *Builder) Init(ctx context.Context, req *builderv0.InitRequest) (*builde
 func (s *Builder) Update(ctx context.Context, req *builderv0.UpdateRequest) (*builderv0.UpdateResponse, error) {
 	defer s.Wool.Catch()
 
-	err := s.gohelper.Update(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("builder>update: go helper: cannot run update: %v", err)
-	}
 	return &builderv0.UpdateResponse{}, nil
 }
 
 func (s *Builder) Sync(ctx context.Context, req *builderv0.SyncRequest) (*builderv0.SyncResponse, error) {
 	defer s.Wool.Catch()
-
-	// err := os.RemoveAll(s.Local("adapters/servicev0"))
-	// if err != nil {
-	// 	return nil, s.Wool.Wrapf(err, "cannot remove adapters")
-	// }
-	// // Re-generate
-	// s.Wool.TODO("change buf to use openapi or not depending on things...")
-
-	// err = s.buf.Generate(ctx)
-	// if err != nil {
-	// 	return nil, s.Wool.Wrapf(err, "cannot generate proto")
-	// }
-
-	// err = s.gohelper.ModTidy(ctx)
-	// if err != nil {
-	// 	return nil, s.Wool.Wrapf(err, "cannot tidy go.mod")
-	// }
 
 	return s.Builder.SyncResponse()
 }
@@ -325,23 +301,6 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 	override := shared.OverrideException(shared.NewIgnore("*.proto")) // Don't override proto
 
 	err = s.Templates(ctx, create, services.WithFactory(factoryFS).WithPathSelect(ignore).WithOverride(override))
-	if err != nil {
-		return s.Base.Builder.CreateError(err)
-	}
-
-	s.gohelper = &golanghelpers.Go{Dir: s.sourceLocation}
-	_, err = s.gohelper.ModTidy(ctx)
-	if err != nil {
-		return s.Base.Builder.CreateError(err)
-	}
-
-	s.buf, err = proto.NewBuf(ctx, s.Local("proto"))
-	if err != nil {
-		return s.Base.Builder.CreateError(err)
-	}
-	s.buf.WithCache(s.cacheLocation)
-
-	err = s.buf.Generate(ctx)
 	if err != nil {
 		return s.Base.Builder.CreateError(err)
 	}
