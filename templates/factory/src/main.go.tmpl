@@ -72,7 +72,7 @@ func main() {
 	}
 
 	go func() {
-		err = server.Start(context.Background())
+		err = server.Start(ctx)
 		if err != nil {
 			panic(err)
 		}
