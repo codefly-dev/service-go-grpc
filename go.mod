@@ -19,7 +19,6 @@ require (
 	github.com/bufbuild/protovalidate-go v0.6.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/cheggaaa/pb/v3 v3.1.5 // indirect
-	github.com/codefly-dev/sdk-go v0.1.25 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/docker v26.0.1+incompatible // indirect
