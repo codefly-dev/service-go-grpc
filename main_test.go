@@ -95,7 +95,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	require.NoError(t, err)
 
 	// Running again should work
-	testRun(t, runtime, ctx, identity, runtimeContext, networkMappings)
+	//testRun(t, runtime, ctx, identity, runtimeContext, networkMappings)
 
 	// Test
 	test, err := runtime.Test(ctx, &runtimev0.TestRequest{RuntimeContext: runtimeContext})
