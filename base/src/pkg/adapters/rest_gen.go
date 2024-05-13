@@ -9,7 +9,7 @@ package adapters
 import (
 	"context"
 	"fmt"
-	"github.com/codefly-dev/core/configurations/headers"
+	"github.com/codefly-dev/core/standards/headers"
 	"github.com/codefly-dev/go-grpc/base/pkg/gen"
 	"net/http"
 

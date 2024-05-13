@@ -22,8 +22,8 @@ func doWork(ctx context.Context) (Clean, error) {
 import (
 	"context"
 	"fmt"
-	"github.com/codefly-dev/core/configurations/standards"
 	"github.com/codefly-dev/core/shared"
+	"github.com/codefly-dev/core/standards"
 	"github.com/codefly-dev/go-grpc/base/pkg/adapters"
 	"os/signal"
 	"syscall"
@@ -60,9 +60,9 @@ func main() {
 	defer codefly.CatchPanic(ctx)
 
 	config := &adapters.Configuration{
-		EndpointGrpcPort: codefly.For(ctx).API(standards.GRPC).NetworkInstance().Port,
+		EndpointGrpcPort: codefly.For(ctx).WithDefaultNetwork().API(standards.GRPC).NetworkInstance().Port,
 	}
-	if net := codefly.For(ctx).API(standards.REST).NetworkInstance(); net != nil {
+	if net := codefly.For(ctx).WithDefaultNetwork().API(standards.REST).NetworkInstance(); net != nil {
 		config.EndpointHttpPort = shared.Pointer(net.Port)
 	}
 
