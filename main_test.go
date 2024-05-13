@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/codefly-dev/core/agents"
 	runtimev0 "github.com/codefly-dev/core/generated/go/services/runtime/v0"
+	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/network"
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/wool"
@@ -22,7 +24,17 @@ import (
 	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
 )
 
-func TestCreateToRun(t *testing.T) {
+func TestCreateToRunNative(t *testing.T) {
+	if languages.HasGoRuntime(nil) {
+		testCreateToRun(t, resources.NewRuntimeContextNative())
+	}
+}
+
+func TestCreateToRunDocker(t *testing.T) {
+	testCreateToRun(t, resources.NewRuntimeContextContainer())
+}
+
+func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	wool.SetGlobalLogLevel(wool.DEBUG)
 	agents.LogToConsole()
 
@@ -35,14 +47,21 @@ func TestCreateToRun(t *testing.T) {
 		}
 	}(tmpDir)
 
-	service := resources.Service{Name: "svc", Application: "app", Project: "project"}
+	workspace := &resources.Workspace{Name: "test"}
+
+	service := &resources.Service{Name: "svc", Module: "mod", Version: "0.0.0"}
 	err := service.SaveAtDir(ctx, tmpDir)
 	require.NoError(t, err)
+
 	identity := &basev0.ServiceIdentity{
-		Name:        "svc",
-		Application: "app",
-		Location:    tmpDir,
+		Name:      service.Name,
+		Version:   service.Version,
+		Module:    service.Module,
+		Workspace: workspace.Name,
+		Location:  tmpDir,
 	}
+	env := resources.LocalEnvironment()
+
 	builder := NewBuilder()
 
 	resp, err := builder.Load(ctx, &builderv0.LoadRequest{Identity: identity, CreationMode: &builderv0.CreationMode{Communicate: false}})
@@ -55,7 +74,7 @@ func TestCreateToRun(t *testing.T) {
 	// Now run it
 	runtime := NewRuntime()
 
-	_, err = runtime.Load(ctx, &runtimev0.LoadRequest{Identity: identity, Environment: shared.Must(resources.LocalEnvironment().Proto()), DisableCatch: true})
+	_, err = runtime.Load(ctx, &runtimev0.LoadRequest{Identity: identity, Environment: shared.Must(env.Proto()), DisableCatch: true})
 	require.NoError(t, err)
 
 	require.Equal(t, 2, len(runtime.Endpoints))
@@ -65,16 +84,38 @@ func TestCreateToRun(t *testing.T) {
 	require.NoError(t, err)
 	networkManager.WithTemporaryPorts()
 
-	networkMappings, err := networkManager.GenerateNetworkMappings(ctx, runtime.Base.Service, runtime.Endpoints, nil)
+	networkMappings, err := networkManager.GenerateNetworkMappings(ctx, env, workspace, service, runtime.Endpoints)
 	require.NoError(t, err)
 	require.NotNil(t, networkMappings)
 	require.Equal(t, 2, len(networkMappings))
 
-	init, err := runtime.Init(ctx, &runtimev0.InitRequest{ProposedNetworkMappings: networkMappings})
+	testRun(t, runtime, ctx, identity, runtimeContext, networkMappings)
+
+	_, err = runtime.Stop(ctx, &runtimev0.StopRequest{})
+	require.NoError(t, err)
+
+	// Running again should work
+	testRun(t, runtime, ctx, identity, runtimeContext, networkMappings)
+
+	// Test
+	test, err := runtime.Test(ctx, &runtimev0.TestRequest{RuntimeContext: runtimeContext})
+	require.NoError(t, err)
+	require.Equal(t, runtimev0.TestStatus_SUCCESS, test.Status.State)
+
+	_, err = runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
+	require.NoError(t, err)
+
+}
+
+func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev0.ServiceIdentity, runtimeContext *basev0.RuntimeContext, networkMappings []*basev0.NetworkMapping) {
+
+	init, err := runtime.Init(ctx, &runtimev0.InitRequest{
+		RuntimeContext:          runtimeContext,
+		ProposedNetworkMappings: networkMappings})
 	require.NoError(t, err)
 	require.NotNil(t, init)
 
-	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, init.NetworkMappings, runtime.GrpcEndpoint, resources.NewNativeNetworkAccess())
+	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, init.NetworkMappings, runtime.RestEndpoint, resources.NewNativeNetworkAccess())
 	require.NoError(t, err)
 
 	_, err = runtime.Start(ctx, &runtimev0.StartRequest{})
@@ -87,11 +128,14 @@ func TestCreateToRun(t *testing.T) {
 		if tries > 10 {
 			t.Fatal("too many tries")
 		}
+		time.Sleep(time.Second)
 
 		// HTTP
-		response, err := client.Get(instance.Address)
-		// Check that we should have JSON Version: 0.0.0
-		require.NoError(t, err)
+		response, err := client.Get(fmt.Sprintf("%s/version", instance.Address))
+		if err != nil {
+			tries++
+			continue
+		}
 
 		defer response.Body.Close()
 
@@ -102,13 +146,9 @@ func TestCreateToRun(t *testing.T) {
 		err = json.Unmarshal(body, &data)
 		require.NoError(t, err)
 
-		version, ok := data["Version"].(string)
+		version, ok := data["version"].(string)
 		require.True(t, ok)
-		require.Equal(t, "0.0.0", version)
-
-		tries++
-		time.Sleep(time.Second)
-
+		require.Equal(t, identity.Version, version)
+		break
 	}
-
 }

@@ -88,7 +88,7 @@ func NewService() *Service {
 	}
 }
 
-var runtimeImage = &configurations.DockerImage{Name: "golang", Tag: "bullseye"}
+var runtimeImage = &configurations.DockerImage{Name: "golang", Tag: "1.22.2-alpine"}
 
 func main() {
 	agents.Register(

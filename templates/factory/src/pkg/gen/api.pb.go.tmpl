@@ -27,7 +27,7 @@ type VersionRequest struct {
 	unknownFields protoimpl.UnknownFields
 }
 
-func (x *VersionRequest) Reset() {
+func (x *VersionRequest) Destroy() {
 	*x = VersionRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_api_proto_msgTypes[0]
@@ -67,7 +67,7 @@ type VersionResponse struct {
 	Version string `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
 }
 
-func (x *VersionResponse) Reset() {
+func (x *VersionResponse) Destroy() {
 	*x = VersionResponse{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_api_proto_msgTypes[1]

@@ -25,6 +25,7 @@ import (
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/standards"
 	"github.com/codefly-dev/go-grpc/base/pkg/adapters"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -50,6 +51,8 @@ func WithWork(w Work) {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	fmt.Println("Starting the service...", os.Environ())
 
 	provider, err := codefly.Init(ctx)
 	if err != nil {

@@ -180,7 +180,7 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 
 	err = s.EnvironmentVariables.AddEndpoints(ctx,
 		resources.LocalizeNetworkMapping(req.NetworkMappings, "localhost"),
-		rresources.NewContainerNetworkAccess())
+		resources.NewContainerNetworkAccess())
 	if err != nil {
 		return s.Builder.DeployError(err)
 	}
