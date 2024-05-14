@@ -39,18 +39,18 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	agents.LogToConsole()
 
 	ctx := context.Background()
-	tmpDir := t.TempDir()
+	tmpDir, err := os.MkdirTemp("testdata", runtimeContext.Kind)
+	tmpDir = shared.MustSolvePath(tmpDir)
+	require.NoError(t, err)
 	defer func(path string) {
-		err := os.RemoveAll(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		err = os.RemoveAll(tmpDir)
+		require.NoError(t, err)
 	}(tmpDir)
 
 	workspace := &resources.Workspace{Name: "test"}
 
 	service := &resources.Service{Name: "svc", Module: "mod", Version: "0.0.0"}
-	err := service.SaveAtDir(ctx, tmpDir)
+	err = service.SaveAtDir(ctx, tmpDir)
 	require.NoError(t, err)
 
 	identity := &basev0.ServiceIdentity{
@@ -95,7 +95,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	require.NoError(t, err)
 
 	// Running again should work
-	//testRun(t, runtime, ctx, identity, runtimeContext, networkMappings)
+	testRun(t, runtime, ctx, identity, runtimeContext, networkMappings)
 
 	// Test
 	test, err := runtime.Test(ctx, &runtimev0.TestRequest{RuntimeContext: runtimeContext})
