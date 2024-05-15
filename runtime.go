@@ -188,6 +188,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 
 	// Filter resources for the scope
 	confs := resources.FilterConfigurations(req.DependenciesConfigurations, s.Runtime.RuntimeContext)
+
 	s.Wool.Debug("adding configurations", wool.Field("configurations", resources.MakeManyConfigurationSummary(confs)))
 	err = s.EnvironmentVariables.AddConfigurations(confs...)
 
@@ -296,6 +297,26 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	return s.Runtime.StartResponse()
 }
 
+func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
+	defer s.Wool.Catch()
+	ctx = s.Wool.Inject(ctx)
+	err := s.runnerEnvironment.Env().WithBinary("codefly")
+	if err != nil {
+		return s.Runtime.TestError(err)
+	}
+	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "./...")
+	if err != nil {
+		return s.Runtime.TestError(err)
+	}
+	proc.WithOutput(s.Logger)
+
+	err = proc.Run(ctx)
+	if err != nil {
+		return s.Runtime.TestError(err)
+	}
+	return s.Runtime.TestResponse()
+}
+
 func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationRequest) (*runtimev0.InformationResponse, error) {
 	return s.Runtime.InformationResponse(ctx, req)
 }
@@ -350,26 +371,6 @@ func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*
 		}
 	}
 	return s.Runtime.DestroyResponse()
-}
-
-func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
-	defer s.Wool.Catch()
-	ctx = s.Wool.Inject(ctx)
-	err := s.runnerEnvironment.Env().WithBinary("codefly")
-	if err != nil {
-		return s.Runtime.TestError(err)
-	}
-	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "./...")
-	if err != nil {
-		return s.Runtime.TestError(err)
-	}
-	proc.WithOutput(s.Logger)
-
-	err = proc.Run(ctx)
-	if err != nil {
-		return s.Runtime.TestError(err)
-	}
-	return s.Runtime.TestResponse()
 }
 
 func (s *Runtime) Communicate(ctx context.Context, req *agentv0.Engage) (*agentv0.InformationRequest, error) {

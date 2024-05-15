@@ -43,8 +43,8 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	tmpDir = shared.MustSolvePath(tmpDir)
 	require.NoError(t, err)
 	defer func(path string) {
-		err = os.RemoveAll(tmpDir)
-		require.NoError(t, err)
+		//err = os.RemoveAll(tmpDir)
+		//require.NoError(t, err)
 	}(tmpDir)
 
 	workspace := &resources.Workspace{Name: "test"}
