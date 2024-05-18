@@ -41,7 +41,7 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 		return nil, err
 	}
 
-	s.sourceLocation = s.Local("src")
+	s.sourceLocation = s.Local("code")
 	s.cacheLocation = s.Local(".cache")
 
 	requirements.Localize(s.Location)
@@ -170,7 +170,7 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 
 	s.Builder.LogDeployRequest(req, s.Wool.Debug)
 
-	s.EnvironmentVariables.SetRunning(true)
+	s.EnvironmentVariables.SetRunning()
 
 	var k *builderv0.KubernetesDeployment
 	var err error
