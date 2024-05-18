@@ -2,7 +2,7 @@ FROM golang:alpine AS builder
 WORKDIR /app
 
 # Copy go mod and sum files to cache download
-COPY src/go.mod src/go.sum ./
+COPY code/go.mod src/go.sum ./
 RUN go mod download
 
 {{ range .Components}}
@@ -22,7 +22,7 @@ ENV {{.Key}} {{.Value}}
 RUN adduser -D appuser
 USER appuser
 COPY --chown=appuser service.codefly.yaml .
-COPY --chown=appuser --from=builder /app/src/app .
+COPY --chown=appuser --from=builder /app/code/app .
 EXPOSE 8080
 EXPOSE 9090
 

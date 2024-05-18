@@ -75,6 +75,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	}
 
 	s.buf.WithCache(s.cacheLocation)
+
 	if s.Watcher != nil {
 		s.Watcher.Pause()
 	}
@@ -112,7 +113,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 
 func (s *Runtime) SetRuntimeContext(ctx context.Context, runtimeContext *basev0.RuntimeContext) error {
 	if runtimeContext.Kind == resources.RuntimeContextFree || runtimeContext.Kind == resources.RuntimeContextNative {
-		if languages.HasPythonPoetryRuntime(nil) {
+		if languages.HasGoRuntime(nil) {
 			s.Runtime.RuntimeContext = resources.NewRuntimeContextNative()
 			return nil
 		}
@@ -137,6 +138,7 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 		}
 
 		dockerEnv.WithPort(ctx, instance.Port)
+
 		if s.WithRestEndpoint {
 			restInstance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.RestEndpoint, resources.NewContainerNetworkAccess())
 			if err != nil {
