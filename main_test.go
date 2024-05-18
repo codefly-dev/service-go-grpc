@@ -43,8 +43,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	tmpDir = shared.MustSolvePath(tmpDir)
 	require.NoError(t, err)
 	defer func(path string) {
-		err = os.RemoveAll(tmpDir)
-		require.NoError(t, err)
+		_ = os.RemoveAll(tmpDir)
 	}(tmpDir)
 
 	workspace := &resources.Workspace{Name: "test"}
@@ -98,12 +97,11 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	testRun(t, runtime, ctx, identity, runtimeContext, networkMappings)
 
 	// Test
-	//test, err := runtime.Test(ctx, &runtimev0.TestRequest{RuntimeContext: runtimeContext})
-	//require.NoError(t, err)
-	//require.Equal(t, runtimev0.TestStatus_SUCCESS, test.Status.State)
-
-	_, err = runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
+	test, err := runtime.Test(ctx, &runtimev0.TestRequest{})
 	require.NoError(t, err)
+	require.Equal(t, runtimev0.TestStatus_SUCCESS, test.Status.State)
+
+	_, _ = runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
 
 }
 

@@ -59,7 +59,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 
 	s.Runtime.SetEnvironment(req.Environment)
 
-	s.sourceLocation, err = s.LocalDirCreate(ctx, "src")
+	s.sourceLocation, err = s.LocalDirCreate(ctx, "code")
 	if err != nil {
 		return s.Runtime.LoadErrorf(err, "creating source location")
 	}
@@ -300,17 +300,19 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
+
 	err := s.runnerEnvironment.Env().WithBinary("codefly")
 	if err != nil {
 		return s.Runtime.TestError(err)
 	}
-	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "./...")
+
+	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test")
 	if err != nil {
 		return s.Runtime.TestError(err)
 	}
 	proc.WithOutput(s.Logger)
 
-	s.Infof("testing poetry app")
+	s.Infof("testing go tests")
 	testingContext := s.Wool.Inject(context.Background())
 
 	err = proc.Run(testingContext)

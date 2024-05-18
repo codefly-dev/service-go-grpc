@@ -25,8 +25,8 @@ var agent = shared.Must(configurations.LoadFromFs[configurations.Agent](shared.E
 
 var requirements = builders.NewDependencies(agent.Name,
 	builders.NewDependency("service.codefly.yaml"),
-	builders.NewDependency("src").WithPathSelect(shared.NewSelect("*.go")),
-	builders.NewDependency("src/go.mod"),
+	builders.NewDependency("code").WithPathSelect(shared.NewSelect("*.go")),
+	builders.NewDependency("code/go.mod"),
 )
 
 type Settings struct {
