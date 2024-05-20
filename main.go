@@ -88,7 +88,7 @@ func NewService() *Service {
 	}
 }
 
-var runtimeImage = &configurations.DockerImage{Name: "codeflydev/go", Tag: "0.0.3"}
+var runtimeImage = &configurations.DockerImage{Name: "codeflydev/go", Tag: "0.0.4"}
 
 func main() {
 	agents.Register(
