@@ -11,6 +11,7 @@ import (
 	runners "github.com/codefly-dev/core/runners/base"
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/standards"
+	"path"
 	"strings"
 
 	"github.com/codefly-dev/core/wool"
@@ -123,10 +124,11 @@ func (s *Runtime) SetRuntimeContext(ctx context.Context, runtimeContext *basev0.
 }
 
 func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
-	s.Wool.Debug("creating runner environment in", wool.DirField(s.sourceLocation))
+	s.Wool.Debug("creating runner environment in", wool.DirField(s.Identity.WorkspacePath))
 
 	if s.Runtime.IsContainerRuntime() {
-		dockerEnv, err := golanghelpers.NewDockerGoRunner(ctx, runtimeImage, s.sourceLocation, s.UniqueWithWorkspace())
+		dockerEnv, err := golanghelpers.NewDockerGoRunner(ctx, runtimeImage, s.Identity.WorkspacePath,
+			path.Join(s.Identity.RelativeToWorkspace, "code"), s.UniqueWithWorkspace())
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create docker runner")
 		}
@@ -150,7 +152,7 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 		dockerEnv.WithFile(s.Local("service.codefly.yaml"), "/service.codefly.yaml")
 		s.runnerEnvironment = dockerEnv
 	} else {
-		localEnv, err := golanghelpers.NewNativeGoRunner(ctx, s.sourceLocation)
+		localEnv, err := golanghelpers.NewNativeGoRunner(ctx, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, "code"))
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create local runner")
 		}
@@ -332,6 +334,8 @@ func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationReq
 func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtimev0.StopResponse, error) {
 	defer s.Wool.Catch()
 
+	ctx = s.Wool.Inject(ctx)
+
 	s.Wool.Debug("stopping service")
 	if s.runner != nil {
 		s.Wool.Debug("stopping runner")
@@ -369,7 +373,7 @@ func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*
 	if s.Runtime.IsContainerRuntime() {
 		s.Wool.Debug("running in container")
 
-		dockerEnv, err := golanghelpers.NewDockerGoRunner(ctx, runtimeImage, s.sourceLocation, s.UniqueWithWorkspace())
+		dockerEnv, err := golanghelpers.NewDockerGoRunner(ctx, runtimeImage, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, "code"), s.UniqueWithWorkspace())
 		if err != nil {
 			return s.Runtime.DestroyError(err)
 		}

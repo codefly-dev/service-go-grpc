@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"testing"
 	"time"
 
@@ -49,15 +50,16 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	workspace := &resources.Workspace{Name: "test"}
 
 	service := &resources.Service{Name: "svc", Module: "mod", Version: "0.0.0"}
-	err = service.SaveAtDir(ctx, tmpDir)
+	err = service.SaveAtDir(ctx, path.Join(tmpDir, service.Unique()))
 	require.NoError(t, err)
 
 	identity := &basev0.ServiceIdentity{
-		Name:      service.Name,
-		Version:   service.Version,
-		Module:    service.Module,
-		Workspace: workspace.Name,
-		Location:  tmpDir,
+		Name:                service.Name,
+		Version:             service.Version,
+		Module:              service.Module,
+		Workspace:           workspace.Name,
+		WorkspacePath:       tmpDir,
+		RelativeToWorkspace: service.Unique(),
 	}
 	env := resources.LocalEnvironment()
 
@@ -88,13 +90,27 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	require.NotNil(t, networkMappings)
 	require.Equal(t, 2, len(networkMappings))
 
-	testRun(t, runtime, ctx, identity, runtimeContext, networkMappings)
+	init, err := runtime.Init(ctx, &runtimev0.InitRequest{
+		RuntimeContext:          runtimeContext,
+		ProposedNetworkMappings: networkMappings})
+	require.NoError(t, err)
+	require.NotNil(t, init)
+
+	testRun(t, runtime, ctx, identity, networkMappings)
 
 	_, err = runtime.Stop(ctx, &runtimev0.StopRequest{})
 	require.NoError(t, err)
 
+	// Check that the runner is stopped
+	time.Sleep(2 * time.Second)
+	running, err := runtime.runner.IsRunning(ctx)
+	require.NoError(t, err)
+	require.False(t, running)
+
+	testNoApi(t, runtime, ctx, networkMappings)
+
 	// Running again should work
-	testRun(t, runtime, ctx, identity, runtimeContext, networkMappings)
+	testRun(t, runtime, ctx, identity, networkMappings)
 
 	// Test
 	//test, err := runtime.Test(ctx, &runtimev0.TestRequest{})
@@ -105,15 +121,9 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 
 }
 
-func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev0.ServiceIdentity, runtimeContext *basev0.RuntimeContext, networkMappings []*basev0.NetworkMapping) {
+func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev0.ServiceIdentity, networkMappings []*basev0.NetworkMapping) {
 
-	init, err := runtime.Init(ctx, &runtimev0.InitRequest{
-		RuntimeContext:          runtimeContext,
-		ProposedNetworkMappings: networkMappings})
-	require.NoError(t, err)
-	require.NotNil(t, init)
-
-	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, init.NetworkMappings, runtime.RestEndpoint, resources.NewNativeNetworkAccess())
+	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.RestEndpoint, resources.NewNativeNetworkAccess())
 	require.NoError(t, err)
 
 	_, err = runtime.Start(ctx, &runtimev0.StartRequest{})
@@ -149,4 +159,26 @@ func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *base
 		require.Equal(t, identity.Version, version)
 		break
 	}
+}
+
+func testNoApi(t *testing.T, runtime *Runtime, ctx context.Context, networkMappings []*basev0.NetworkMapping) {
+	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.RestEndpoint, resources.NewNativeNetworkAccess())
+	require.NoError(t, err)
+
+	client := http.Client{Timeout: 200 * time.Millisecond}
+	// HTTP
+	response, err := client.Get(fmt.Sprintf("%s/version", instance.Address))
+	if err != nil {
+		return
+	}
+
+	defer response.Body.Close()
+
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+
+	fmt.Println(string(body))
+
+	t.Fatal("should not have reached here")
+
 }
