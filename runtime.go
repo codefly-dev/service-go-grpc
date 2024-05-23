@@ -256,20 +256,12 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		}
 	}
 
-	// Stop before replacing the runner
-	if s.runner != nil {
-		err = s.runner.Stop(ctx)
-		if err != nil {
-			return s.Runtime.InitError(err)
-		}
-	}
-
-	s.Wool.Info("Building go binary")
 	err = s.runnerEnvironment.Init(ctx)
 	if err != nil {
 		s.Wool.Error("cannot init the go runner", wool.ErrField(err))
 		return s.Runtime.InitError(err)
 	}
+
 	s.Wool.Debug("runner init done")
 	s.Ready()
 
@@ -281,6 +273,21 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runtimev0.StartResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
+
+	s.Wool.Info("Building go binary")
+
+	// Stop before replacing the runner
+	if s.runner != nil {
+		err := s.runner.Stop(ctx)
+		if err != nil {
+			return s.Runtime.StartError(err)
+		}
+	}
+
+	err := s.runnerEnvironment.BuildBinary(ctx)
+	if err != nil {
+		return s.Runtime.StartError(err)
+	}
 
 	runningContext := s.Wool.Inject(context.Background())
 
@@ -310,11 +317,12 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		return s.Runtime.TestError(err)
 	}
 
-	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test")
+	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "./...")
 	if err != nil {
 		return s.Runtime.TestError(err)
 	}
 	proc.WithOutput(s.Logger)
+	proc.WithDir(s.sourceLocation)
 
 	s.Infof("testing go tests")
 	testingContext := s.Wool.Inject(context.Background())
