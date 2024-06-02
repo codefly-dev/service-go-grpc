@@ -42,6 +42,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	ctx := context.Background()
 	tmpDir, err := os.MkdirTemp("testdata", runtimeContext.Kind)
 	tmpDir = shared.MustSolvePath(tmpDir)
+
 	require.NoError(t, err)
 	defer func(path string) {
 		_ = os.RemoveAll(tmpDir)

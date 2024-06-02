@@ -36,6 +36,8 @@ func NewBuilder() *Builder {
 func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builderv0.LoadResponse, error) {
 	defer s.Wool.Catch()
 
+	ctx = s.Wool.Inject(ctx)
+
 	err := s.Builder.Load(ctx, req.Identity, s.Settings)
 	if err != nil {
 		return nil, err

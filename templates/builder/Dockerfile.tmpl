@@ -1,15 +1,17 @@
 FROM golang:alpine AS builder
-WORKDIR /app
 
 # Copy go mod and sum files to cache download
-COPY code/go.mod src/go.sum ./
+WORKDIR /app/code
+COPY code/go.mod code/go.sum ./
+
 RUN go mod download
 
+WORKDIR /app
 {{ range .Components}}
 COPY {{.}} {{.}}
 {{end}}
 
-WORKDIR /app/src
+WORKDIR /app/code
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags '-s -w' -o app
 
