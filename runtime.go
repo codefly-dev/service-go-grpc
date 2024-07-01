@@ -5,7 +5,7 @@ import (
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/builders"
 	"github.com/codefly-dev/core/companions/proto"
-	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
+	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
@@ -16,10 +16,10 @@ import (
 
 	"github.com/codefly-dev/core/wool"
 
-	agentv0 "github.com/codefly-dev/core/generated/go/services/agent/v0"
+	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 
 	"github.com/codefly-dev/core/agents/helpers/code"
-	runtimev0 "github.com/codefly-dev/core/generated/go/services/runtime/v0"
+	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
 )
 
@@ -102,7 +102,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		return s.Runtime.LoadErrorf(err, "finding grpc endpoint")
 	}
 
-	if s.Settings.WithRestEndpoint {
+	if s.Settings.RestEndpoint {
 		s.RestEndpoint, err = resources.FindRestEndpoint(ctx, s.Endpoints)
 		if err != nil {
 			return s.Runtime.LoadErrorf(err, "finding rest endpoint")
@@ -141,7 +141,7 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 
 		dockerEnv.WithPort(ctx, instance.Port)
 
-		if s.WithRestEndpoint {
+		if s.Settings.RestEndpoint {
 			restInstance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.RestEndpoint, resources.NewContainerNetworkAccess())
 			if err != nil {
 				return s.Wool.Wrapf(err, "cannot find network instance")
@@ -161,9 +161,9 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 
 	s.runnerEnvironment.WithLocalCacheDir(s.cacheLocation)
 
-	s.runnerEnvironment.WithDebugSymbol(s.Settings.WithDebugSymbols)
-	s.runnerEnvironment.WithRaceConditionDetection(s.Settings.WithRaceConditionDetectionRun)
-	s.runnerEnvironment.WithEnvironmentVariables(s.EnvironmentVariables.All()...)
+	s.runnerEnvironment.WithDebugSymbol(s.Settings.DebugSymbols)
+	s.runnerEnvironment.WithRaceConditionDetection(s.Settings.RaceConditionDetectionRun)
+	s.runnerEnvironment.WithEnvironmentVariables(ctx, s.EnvironmentVariables.All()...)
 	return nil
 }
 
@@ -211,7 +211,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	}
 	err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess())
 
-	if s.WithRestEndpoint {
+	if s.Settings.RestEndpoint {
 		nm, err = resources.FindNetworkMapping(ctx, s.NetworkMappings, s.RestEndpoint)
 		if err != nil {
 			return s.Runtime.InitError(err)
@@ -230,18 +230,21 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	s.Wool.Debug("environment variables", wool.Field("endpoint", resources.MakeManyEndpointAccessSummary(endpointAccesses)))
 
 	if s.Settings.HotReload {
-		s.Wool.Debug("setting up code watcher")
+		s.Wool.Focus("starting hot reload")
 		// Add proto and swagger
 		dependencies := requirements.Clone()
 		dependencies.AddDependencies(
 			builders.NewDependency("proto").WithPathSelect(shared.NewSelect("*.proto")),
 		)
 		dependencies.Localize(s.Location)
+		s.Wool.Focus("setting up code watcher", wool.Field("dep", dependencies.All()))
 		conf := services.NewWatchConfiguration(dependencies)
 		err = s.SetupWatcher(ctx, conf, s.EventHandler)
 		if err != nil {
 			s.Wool.Warn("error in watcher", wool.ErrField(err))
 		}
+	} else {
+		s.Wool.Focus("not hot-reloading")
 	}
 
 	if s.Watcher != nil {
@@ -286,7 +289,12 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 
 	err := s.runnerEnvironment.BuildBinary(ctx)
 	if err != nil {
-		return s.Runtime.StartError(err)
+
+		if !s.Settings.HotReload {
+			return s.Runtime.StartError(err)
+		}
+		s.Wool.Info("compile error, waiting for hot-reload")
+		return s.Runtime.StartResponse()
 	}
 
 	runningContext := s.Wool.Inject(context.Background())
@@ -414,6 +422,6 @@ func (s *Runtime) EventHandler(event code.Change) error {
 		return nil
 	}
 	s.Wool.Debug("detected change requiring re-build", wool.Field("path", event.Path))
-	s.Runtime.DesiredInit()
+	s.Runtime.DesiredStart()
 	return nil
 }

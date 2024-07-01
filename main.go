@@ -14,8 +14,8 @@ import (
 
 	"github.com/codefly-dev/core/agents"
 	"github.com/codefly-dev/core/agents/services"
-	basev0 "github.com/codefly-dev/core/generated/go/base/v0"
-	agentv0 "github.com/codefly-dev/core/generated/go/services/agent/v0"
+	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
+	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 	configurations "github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/core/shared"
 )
@@ -29,16 +29,16 @@ var requirements = builders.NewDependencies(agent.Name,
 )
 
 type Settings struct {
-	HotReload                     bool `yaml:"hot-reload"`
-	WithDebugSymbols              bool `yaml:"with-debug-symbols"`
-	WithRaceConditionDetectionRun bool `yaml:"with-race-condition-detection-run"`
-	WithRestEndpoint              bool `yaml:"with-rest-endpoint"`
+	HotReload                 bool `yaml:"hot-reload"`
+	DebugSymbols              bool `yaml:"debug-symbols"`
+	RaceConditionDetectionRun bool `yaml:"race-condition-detection-run"`
+	RestEndpoint              bool `yaml:"rest-endpoint"`
 }
 
 const HotReload = "hot-reload"
-const WithDebugSymbols = "with-debug-symbols"
-const WithRaceConditionDetection = "with-race-condition-detection"
-const WithRestEndpoint = "with-rest-endpoint"
+const DebugSymbols = "debug-symbols"
+const RaceConditionDetectionRun = "race-condition-detection-run"
+const RestEndpoint = "rest-endpoint"
 
 type Service struct {
 	*services.Base

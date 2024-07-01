@@ -14,8 +14,8 @@ import (
 	"github.com/codefly-dev/core/agents/communicate"
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
 	"github.com/codefly-dev/core/agents/services"
-	agentv0 "github.com/codefly-dev/core/generated/go/services/agent/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/services/builder/v0"
+	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
 	"github.com/codefly-dev/core/resources"
 )
 
@@ -75,7 +75,7 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 		return s.Builder.LoadError(err)
 	}
 
-	if s.Settings.WithRestEndpoint {
+	if s.Settings.RestEndpoint {
 		s.RestEndpoint, err = resources.FindRestEndpoint(ctx, s.Endpoints)
 		if err != nil {
 			return s.Builder.LoadError(err)
@@ -236,7 +236,7 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 
 	s.Endpoints = append(s.Endpoints, s.GrpcEndpoint)
 
-	if s.Settings.WithRestEndpoint {
+	if s.Settings.RestEndpoint {
 		rest, err := resources.LoadRestAPI(ctx, shared.Pointer(s.Local(standards.OpenAPIPath)))
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create openapi api")
@@ -254,9 +254,9 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 func (s *Builder) Options() []*agentv0.Question {
 	return []*agentv0.Question{
 		communicate.NewConfirm(&agentv0.Message{Name: HotReload, Message: "Code hot-reload (Recommended)?", Description: "codefly can restart your service when code changes are detected 🔎"}, true),
-		communicate.NewConfirm(&agentv0.Message{Name: WithDebugSymbols, Message: "Start with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, false),
-		communicate.NewConfirm(&agentv0.Message{Name: WithRaceConditionDetection, Message: "Start with race condition detection?", Description: "Build the go binary with race condition detection"}, false),
-		communicate.NewConfirm(&agentv0.Message{Name: WithRestEndpoint, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC definition -- the easiest way to do REST"}, true),
+		communicate.NewConfirm(&agentv0.Message{Name: DebugSymbols, Message: "Start with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, false),
+		communicate.NewConfirm(&agentv0.Message{Name: RaceConditionDetectionRun, Message: "Start with race condition detection?", Description: "Build the go binary with race condition detection"}, false),
+		communicate.NewConfirm(&agentv0.Message{Name: RestEndpoint, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC definition -- the easiest way to do REST"}, true),
 	}
 }
 
@@ -288,17 +288,17 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 			return s.Builder.CreateError(err)
 		}
 
-		s.Settings.WithDebugSymbols, err = session.Confirm(WithDebugSymbols)
+		s.Settings.DebugSymbols, err = session.Confirm(DebugSymbols)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
 
-		s.Settings.WithRaceConditionDetectionRun, err = session.Confirm(WithRaceConditionDetection)
+		s.Settings.RaceConditionDetectionRun, err = session.Confirm(RaceConditionDetectionRun)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
 
-		s.Settings.WithRestEndpoint, err = session.Confirm(WithRestEndpoint)
+		s.Settings.RestEndpoint, err = session.Confirm(RestEndpoint)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
@@ -309,17 +309,17 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
-		s.Settings.WithDebugSymbols, err = communicate.GetDefaultConfirm(options, WithDebugSymbols)
+		s.Settings.DebugSymbols, err = communicate.GetDefaultConfirm(options, DebugSymbols)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
 
-		s.Settings.WithRaceConditionDetectionRun, err = communicate.GetDefaultConfirm(options, WithRaceConditionDetection)
+		s.Settings.RaceConditionDetectionRun, err = communicate.GetDefaultConfirm(options, RaceConditionDetectionRun)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
 
-		s.Settings.WithRestEndpoint, err = communicate.GetDefaultConfirm(options, WithRestEndpoint)
+		s.Settings.RestEndpoint, err = communicate.GetDefaultConfirm(options, RestEndpoint)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
