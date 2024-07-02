@@ -1,0 +1,12 @@
+name: svc
+version: 0.0.0
+module: mod
+agent: null
+endpoints:
+    - name: grpc
+    - name: rest
+spec:
+    debug-symbols: false
+    hot-reload: true
+    race-condition-detection-run: false
+    rest-endpoint: true

@@ -1,15 +1,15 @@
-module base_replacement
+module svc
 
 go 1.22.0
 
 require (
 	github.com/bufbuild/protovalidate-go v0.6.2
-	github.com/codefly-dev/core v0.1.117
+	github.com/codefly-dev/core v0.1.115
 	github.com/codefly-dev/sdk-go v0.1.31
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0
 	github.com/rs/cors v1.11.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20240701130421-f6361c86f094
-	google.golang.org/grpc v1.65.0
+	google.golang.org/grpc v1.64.0
 	google.golang.org/protobuf v1.34.2
 )
 
