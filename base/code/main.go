@@ -20,11 +20,11 @@ func doWork(ctx context.Context) (Clean, error) {
 ----------------------------------------------------------------- */
 
 import (
+	"base_replacement/pkg/adapters"
 	"context"
 	"fmt"
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/standards"
-	"github.com/codefly-dev/go-grpc/base/pkg/adapters"
 	"os/signal"
 	"syscall"
 

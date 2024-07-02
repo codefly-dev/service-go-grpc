@@ -10,7 +10,7 @@ message VersionResponse {
     string version = 1;
 }
 
-service {{.Service.Name.Title}}Service {
+service {{ .Service.Name.Title }}Service {
     rpc Version(VersionRequest) returns (VersionResponse) {
         option (google.api.http) = {
             get: "/version"

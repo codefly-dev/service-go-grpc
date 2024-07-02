@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
-	"os"
 	"path"
 	"testing"
 	"time"
@@ -40,18 +39,12 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	agents.LogToConsole()
 
 	ctx := context.Background()
-	tmpDir, err := os.MkdirTemp("testdata", runtimeContext.Kind)
-	tmpDir = shared.MustSolvePath(tmpDir)
-
-	require.NoError(t, err)
-	defer func(path string) {
-		_ = os.RemoveAll(tmpDir)
-	}(tmpDir)
+	tmpDir := t.TempDir()
 
 	workspace := &resources.Workspace{Name: "test"}
 
 	service := &resources.Service{Name: "svc", Module: "mod", Version: "0.0.0"}
-	err = service.SaveAtDir(ctx, path.Join(tmpDir, service.Unique()))
+	err := service.SaveAtDir(ctx, path.Join(tmpDir, service.Unique()))
 	require.NoError(t, err)
 
 	identity := &basev0.ServiceIdentity{

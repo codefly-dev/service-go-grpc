@@ -1,6 +1,8 @@
-base:
-  name: Web
-  domain: github.com/codefly-dev/go-grpc/base/
+replacements:
+  - from: Web
+    to: "{{ .Service.Name.Title }}"
+  - from: base_replacement
+    to: "{{ .Service.Name.DNSCase }}"
 ignores:
   - .codefly.yaml
   - service.generation.codefly.yaml

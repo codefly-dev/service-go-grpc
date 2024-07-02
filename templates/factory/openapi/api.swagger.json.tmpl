@@ -6,7 +6,7 @@
   },
   "tags": [
     {
-      "name": "{{.Service.Name.Title}}Service"
+      "name": "{{ .Service.Name.Title }}Service"
     }
   ],
   "consumes": [
@@ -18,7 +18,7 @@
   "paths": {
     "/version": {
       "get": {
-        "operationId": "{{.Service.Name.Title}}Service_Version",
+        "operationId": "{{ .Service.Name.Title }}Service_Version",
         "responses": {
           "200": {
             "description": "A successful response.",
@@ -34,7 +34,7 @@
           }
         },
         "tags": [
-          "{{.Service.Name.Title}}Service"
+          "{{ .Service.Name.Title }}Service"
         ]
       }
     }

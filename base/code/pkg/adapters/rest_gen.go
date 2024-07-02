@@ -7,11 +7,11 @@ package adapters
 ----------------------------------------------------------------- */
 
 import (
+	"base_replacement/pkg/gen"
 	"bytes"
 	"context"
 	"fmt"
 	"github.com/codefly-dev/core/standards/headers"
-	"github.com/codefly-dev/go-grpc/base/pkg/gen"
 	"google.golang.org/grpc/grpclog"
 	"io"
 	"net/http"

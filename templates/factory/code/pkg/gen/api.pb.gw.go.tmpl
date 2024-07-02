@@ -31,7 +31,7 @@ var _ = runtime.String
 var _ = utilities.NewDoubleArray
 var _ = metadata.Join
 
-func request_{{.Service.Name.Title}}Service_Version_0(ctx context.Context, marshaler runtime.Marshaler, client {{.Service.Name.Title}}ServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+func request_{{ .Service.Name.Title }}Service_Version_0(ctx context.Context, marshaler runtime.Marshaler, client {{ .Service.Name.Title }}ServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq VersionRequest
 	var metadata runtime.ServerMetadata
 
@@ -40,7 +40,7 @@ func request_{{.Service.Name.Title}}Service_Version_0(ctx context.Context, marsh
 
 }
 
-func local_request_{{.Service.Name.Title}}Service_Version_0(ctx context.Context, marshaler runtime.Marshaler, server {{.Service.Name.Title}}ServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+func local_request_{{ .Service.Name.Title }}Service_Version_0(ctx context.Context, marshaler runtime.Marshaler, server {{ .Service.Name.Title }}ServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq VersionRequest
 	var metadata runtime.ServerMetadata
 
@@ -49,13 +49,13 @@ func local_request_{{.Service.Name.Title}}Service_Version_0(ctx context.Context,
 
 }
 
-// Register{{.Service.Name.Title}}ServiceHandlerServer registers the http handlers for service {{.Service.Name.Title}}Service to "mux".
-// UnaryRPC     :call {{.Service.Name.Title}}ServiceServer directly.
+// Register{{ .Service.Name.Title }}ServiceHandlerServer registers the http handlers for service {{ .Service.Name.Title }}Service to "mux".
+// UnaryRPC     :call {{ .Service.Name.Title }}ServiceServer directly.
 // StreamingRPC :currently unsupported pending https://github.com/grpc/grpc-go/issues/906.
-// Note that using this registration option will cause many gRPC library features to stop working. Consider using Register{{.Service.Name.Title}}ServiceHandlerFromEndpoint instead.
-func Register{{.Service.Name.Title}}ServiceHandlerServer(ctx context.Context, mux *runtime.ServeMux, server {{.Service.Name.Title}}ServiceServer) error {
+// Note that using this registration option will cause many gRPC library features to stop working. Consider using Register{{ .Service.Name.Title }}ServiceHandlerFromEndpoint instead.
+func Register{{ .Service.Name.Title }}ServiceHandlerServer(ctx context.Context, mux *runtime.ServeMux, server {{ .Service.Name.Title }}ServiceServer) error {
 
-	mux.Handle("GET", pattern_{{.Service.Name.Title}}Service_Version_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("GET", pattern_{{ .Service.Name.Title }}Service_Version_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		var stream runtime.ServerTransportStream
@@ -63,12 +63,12 @@ func Register{{.Service.Name.Title}}ServiceHandlerServer(ctx context.Context, mu
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/api.{{.Service.Name.Title}}Service/Version", runtime.WithHTTPPathPattern("/version"))
+		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/api.{{ .Service.Name.Title }}Service/Version", runtime.WithHTTPPathPattern("/version"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := local_request_{{.Service.Name.Title}}Service_Version_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		resp, md, err := local_request_{{ .Service.Name.Title }}Service_Version_0(annotatedContext, inboundMarshaler, server, req, pathParams)
 		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
@@ -76,16 +76,16 @@ func Register{{.Service.Name.Title}}ServiceHandlerServer(ctx context.Context, mu
 			return
 		}
 
-		forward_{{.Service.Name.Title}}Service_Version_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_{{ .Service.Name.Title }}Service_Version_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
 	return nil
 }
 
-// Register{{.Service.Name.Title}}ServiceHandlerFromEndpoint is same as Register{{.Service.Name.Title}}ServiceHandler but
+// Register{{ .Service.Name.Title }}ServiceHandlerFromEndpoint is same as Register{{ .Service.Name.Title }}ServiceHandler but
 // automatically dials to "endpoint" and closes the connection when "ctx" gets done.
-func Register{{.Service.Name.Title}}ServiceHandlerFromEndpoint(ctx context.Context, mux *runtime.ServeMux, endpoint string, opts []grpc.DialOption) (err error) {
+func Register{{ .Service.Name.Title }}ServiceHandlerFromEndpoint(ctx context.Context, mux *runtime.ServeMux, endpoint string, opts []grpc.DialOption) (err error) {
 	conn, err := grpc.DialContext(ctx, endpoint, opts...)
 	if err != nil {
 		return err
@@ -105,41 +105,41 @@ func Register{{.Service.Name.Title}}ServiceHandlerFromEndpoint(ctx context.Conte
 		}()
 	}()
 
-	return Register{{.Service.Name.Title}}ServiceHandler(ctx, mux, conn)
+	return Register{{ .Service.Name.Title }}ServiceHandler(ctx, mux, conn)
 }
 
-// Register{{.Service.Name.Title}}ServiceHandler registers the http handlers for service {{.Service.Name.Title}}Service to "mux".
+// Register{{ .Service.Name.Title }}ServiceHandler registers the http handlers for service {{ .Service.Name.Title }}Service to "mux".
 // The handlers forward requests to the grpc endpoint over "conn".
-func Register{{.Service.Name.Title}}ServiceHandler(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error {
-	return Register{{.Service.Name.Title}}ServiceHandlerClient(ctx, mux, New{{.Service.Name.Title}}ServiceClient(conn))
+func Register{{ .Service.Name.Title }}ServiceHandler(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error {
+	return Register{{ .Service.Name.Title }}ServiceHandlerClient(ctx, mux, New{{ .Service.Name.Title }}ServiceClient(conn))
 }
 
-// Register{{.Service.Name.Title}}ServiceHandlerClient registers the http handlers for service {{.Service.Name.Title}}Service
-// to "mux". The handlers forward requests to the grpc endpoint over the given implementation of "{{.Service.Name.Title}}ServiceClient".
-// Note: the gRPC framework executes interceptors within the gRPC handler. If the passed in "{{.Service.Name.Title}}ServiceClient"
+// Register{{ .Service.Name.Title }}ServiceHandlerClient registers the http handlers for service {{ .Service.Name.Title }}Service
+// to "mux". The handlers forward requests to the grpc endpoint over the given implementation of "{{ .Service.Name.Title }}ServiceClient".
+// Note: the gRPC framework executes interceptors within the gRPC handler. If the passed in "{{ .Service.Name.Title }}ServiceClient"
 // doesn't go through the normal gRPC flow (creating a gRPC client etc.) then it will be up to the passed in
-// "{{.Service.Name.Title}}ServiceClient" to call the correct interceptors.
-func Register{{.Service.Name.Title}}ServiceHandlerClient(ctx context.Context, mux *runtime.ServeMux, client {{.Service.Name.Title}}ServiceClient) error {
+// "{{ .Service.Name.Title }}ServiceClient" to call the correct interceptors.
+func Register{{ .Service.Name.Title }}ServiceHandlerClient(ctx context.Context, mux *runtime.ServeMux, client {{ .Service.Name.Title }}ServiceClient) error {
 
-	mux.Handle("GET", pattern_{{.Service.Name.Title}}Service_Version_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("GET", pattern_{{ .Service.Name.Title }}Service_Version_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/api.{{.Service.Name.Title}}Service/Version", runtime.WithHTTPPathPattern("/version"))
+		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/api.{{ .Service.Name.Title }}Service/Version", runtime.WithHTTPPathPattern("/version"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := request_{{.Service.Name.Title}}Service_Version_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		resp, md, err := request_{{ .Service.Name.Title }}Service_Version_0(annotatedContext, inboundMarshaler, client, req, pathParams)
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
 			return
 		}
 
-		forward_{{.Service.Name.Title}}Service_Version_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_{{ .Service.Name.Title }}Service_Version_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -147,9 +147,9 @@ func Register{{.Service.Name.Title}}ServiceHandlerClient(ctx context.Context, mu
 }
 
 var (
-	pattern_{{.Service.Name.Title}}Service_Version_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0}, []string{"version"}, ""))
+	pattern_{{ .Service.Name.Title }}Service_Version_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0}, []string{"version"}, ""))
 )
 
 var (
-	forward_{{.Service.Name.Title}}Service_Version_0 = runtime.ForwardResponseMessage
+	forward_{{ .Service.Name.Title }}Service_Version_0 = runtime.ForwardResponseMessage
 )

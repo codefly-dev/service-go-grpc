@@ -10,10 +10,10 @@ implement your APIs there.
 ----------------------------------------------------------------- */
 
 import (
+	"base_replacement/pkg/gen"
 	"context"
 	"fmt"
 	"github.com/bufbuild/protovalidate-go"
-	"github.com/codefly-dev/go-grpc/base/pkg/gen"
 	"net"
 
 	"google.golang.org/grpc/codes"

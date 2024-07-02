@@ -10,10 +10,10 @@ implement your APIs there.
 ----------------------------------------------------------------- */
 
 import (
+	"{{ .Service.Name.DNSCase }}/pkg/gen"
 	"context"
 	"fmt"
 	"github.com/bufbuild/protovalidate-go"
-	"github.com/codefly-dev/go-grpc/base/pkg/gen"
 	"net"
 
 	"google.golang.org/grpc/codes"
@@ -60,7 +60,7 @@ type Configuration struct {
 }
 
 type GrpcServer struct {
-	gen.Unsafe{{.Service.Name.Title}}ServiceServer
+	gen.Unsafe{{ .Service.Name.Title }}ServiceServer
 	configuration *Configuration
 	gRPC          *grpc.Server
 	validator     *protovalidate.Validator
@@ -78,7 +78,7 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 		gRPC:          grpcServer,
 		validator:     v,
 	}
-	gen.Register{{.Service.Name.Title}}ServiceServer(grpcServer, &s)
+	gen.Register{{ .Service.Name.Title }}ServiceServer(grpcServer, &s)
 	reflection.Register(grpcServer)
 	return &s, nil
 }
