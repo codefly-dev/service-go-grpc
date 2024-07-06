@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"github.com/codefly-dev/core/companions/proto"
+	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/standards"
 	"github.com/codefly-dev/core/wool"
 
@@ -88,17 +89,42 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 func (s *Builder) Init(ctx context.Context, req *builderv0.InitRequest) (*builderv0.InitResponse, error) {
 	defer s.Wool.Catch()
 
+	s.Builder.LogInitRequest(req)
+
+	ctx = s.Wool.Inject(ctx)
+
+	s.DependencyEndpoints = req.DependenciesEndpoints
+
 	return s.Builder.InitResponse()
 }
 
 func (s *Builder) Update(ctx context.Context, req *builderv0.UpdateRequest) (*builderv0.UpdateResponse, error) {
 	defer s.Wool.Catch()
 
+	ctx = s.Wool.Inject(ctx)
+
 	return &builderv0.UpdateResponse{}, nil
 }
 
 func (s *Builder) Sync(ctx context.Context, req *builderv0.SyncRequest) (*builderv0.SyncResponse, error) {
 	defer s.Wool.Catch()
+
+	ctx = s.Wool.Inject(ctx)
+
+	s.Wool.Debug("dependencies", wool.Field("dependencies", s.Service.Service.ServiceDependencies))
+	for _, dep := range s.Service.Service.ServiceDependencies {
+		ep, err := resources.FindGRPCEndpointFromService(ctx, dep, s.DependencyEndpoints)
+		if err != nil {
+			return s.Builder.SyncError(err)
+		}
+		if ep == nil {
+			continue
+		}
+		err = proto.GenerateGRPC(ctx, languages.GO, s.Local("code/external/%s", dep.Unique()), dep.Unique(), ep)
+		if err != nil {
+			return s.Builder.SyncError(err)
+		}
+	}
 
 	return s.Builder.SyncResponse()
 }
@@ -115,6 +141,9 @@ type DockerTemplating struct {
 
 func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*builderv0.BuildResponse, error) {
 	defer s.Wool.Catch()
+
+	ctx = s.Wool.Inject(ctx)
+
 	dockerRequest, err := s.Builder.DockerBuildRequest(ctx, req)
 	if err != nil {
 		return nil, s.Wool.Wrapf(err, "can only do docker build request")
@@ -170,6 +199,8 @@ type Parameters struct {
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 
+	ctx = s.Wool.Inject(ctx)
+
 	s.Builder.LogDeployRequest(req, s.Wool.Debug)
 
 	s.EnvironmentVariables.SetRunning()
@@ -182,6 +213,12 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 
 	err = s.EnvironmentVariables.AddEndpoints(ctx,
 		resources.LocalizeNetworkMapping(req.NetworkMappings, "localhost"),
+		resources.NewContainerNetworkAccess())
+	if err != nil {
+		return s.Builder.DeployError(err)
+	}
+
+	err = s.EnvironmentVariables.AddEndpoints(ctx, req.DependenciesNetworkMappings,
 		resources.NewContainerNetworkAccess())
 	if err != nil {
 		return s.Builder.DeployError(err)
@@ -222,7 +259,9 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 	}
 
 	err = s.Builder.KustomizeDeploy(ctx, req.Environment, k, deploymentFS, params)
-
+	if err != nil {
+		return s.Builder.DeployError(err)
+	}
 	return s.Builder.DeployResponse()
 }
 

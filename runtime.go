@@ -299,11 +299,21 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 
 	runningContext := s.Wool.Inject(context.Background())
 
+	// Add DependenciesNetworkMappings
+	err = s.EnvironmentVariables.AddEndpoints(ctx, req.DependenciesNetworkMappings, resources.NetworkAccessFromRuntimeContext(s.Runtime.RuntimeContext))
+	if err != nil {
+		return s.Runtime.StartError(err)
+	}
+	// Add Fixture
+	s.EnvironmentVariables.SetFixture(req.Fixture)
+
 	// Now we run
 	proc, err := s.runnerEnvironment.Runner()
 	if err != nil {
 		return s.Runtime.StartErrorf(err, "getting runner")
 	}
+
+	proc.WithEnvironmentVariables(ctx, s.EnvironmentVariables.All()...)
 
 	s.runner = proc
 	err = s.runner.Start(runningContext)
@@ -329,6 +339,7 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	if err != nil {
 		return s.Runtime.TestError(err)
 	}
+
 	proc.WithOutput(s.Logger)
 	proc.WithDir(s.sourceLocation)
 
@@ -421,7 +432,7 @@ func (s *Runtime) EventHandler(event code.Change) error {
 		s.Runtime.DesiredLoad()
 		return nil
 	}
-	s.Wool.Debug("detected change requiring re-build", wool.Field("path", event.Path))
+	s.Wool.Info("detected change requiring re-build", wool.Field("path", event.Path))
 	s.Runtime.DesiredStart()
 	return nil
 }

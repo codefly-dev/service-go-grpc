@@ -83,7 +83,12 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		defer clean()
+		defer func() {
+			if clean == nil {
+				return
+			}
+			clean()
+		}()
 	}
 
 	<-ctx.Done()

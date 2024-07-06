@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"github.com/codefly-dev/core/standards/headers"
 	"google.golang.org/grpc/grpclog"
+	"google.golang.org/grpc/status"
 	"io"
 	"net/http"
 
@@ -37,12 +38,23 @@ func NewRestServer(c *Configuration) (*RestServer, error) {
 
 func CustomHeaderToGRPCMetadataAnnotator(ctx context.Context, req *http.Request) metadata.MD {
 	var data []string
-	for _, h := range []string{headers.UserID, headers.UserEmail} {
+	for _, h := range headers.UserHeaders() {
 		if v := req.Header.Get(h); len(v) > 0 {
 			data = append(data, wool.HeaderKey(h), v)
 		}
 	}
 	return metadata.Pairs(data...)
+}
+
+func customErrorHandler(ctx context.Context, mux *runtime.ServeMux, marshaler runtime.Marshaler, w http.ResponseWriter, r *http.Request, err error) {
+	// Check if it's a "not found" error
+	if runtime.HTTPStatusFromCode(status.Code(err)) == http.StatusNotFound {
+		http.Error(w, "Route not found", http.StatusNotFound)
+		return
+	}
+
+	// For other errors, use the default error handler
+	runtime.DefaultHTTPErrorHandler(ctx, mux, marshaler, w, r, err)
 }
 
 func (s *RestServer) Run(ctx context.Context) error {
@@ -51,7 +63,9 @@ func (s *RestServer) Run(ctx context.Context) error {
 	// Create a CORS handler
 	c := Cors()
 
-	gwMux := runtime.NewServeMux(runtime.WithMetadata(CustomHeaderToGRPCMetadataAnnotator))
+	gwMux := runtime.NewServeMux(
+		runtime.WithMetadata(CustomHeaderToGRPCMetadataAnnotator),
+		runtime.WithErrorHandler(customErrorHandler))
 
 	// Register generated gateway handlers
 
