@@ -11,7 +11,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/codefly-dev/core/standards/headers"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/status"
 	"io"
@@ -37,13 +36,7 @@ func NewRestServer(c *Configuration) (*RestServer, error) {
 }
 
 func CustomHeaderToGRPCMetadataAnnotator(ctx context.Context, req *http.Request) metadata.MD {
-	var data []string
-	for _, h := range headers.UserHeaders() {
-		if v := req.Header.Get(h); len(v) > 0 {
-			data = append(data, wool.HeaderKey(h), v)
-		}
-	}
-	return metadata.Pairs(data...)
+	return wool.MetadataFromRequest(ctx, req)
 }
 
 func customErrorHandler(ctx context.Context, mux *runtime.ServeMux, marshaler runtime.Marshaler, w http.ResponseWriter, r *http.Request, err error) {

@@ -190,6 +190,12 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 
 	s.NetworkMappings = req.ProposedNetworkMappings
 
+	// Project configurations
+	err = s.EnvironmentVariables.AddConfigurations(req.ProjectConfigurations...)
+	if err != nil {
+		return s.Runtime.InitError(err)
+	}
+
 	// Filter resources for the scope
 	confs := resources.FilterConfigurations(req.DependenciesConfigurations, s.Runtime.RuntimeContext)
 
