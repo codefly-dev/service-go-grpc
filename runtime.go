@@ -336,11 +336,6 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	err := s.runnerEnvironment.Env().WithBinary("codefly")
-	if err != nil {
-		return s.Runtime.TestErrorf(err, "cannot find codefly binary")
-	}
-
 	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "-v", "./...")
 	if err != nil {
 		return s.Runtime.TestErrorf(err, "cannot create test proc")
