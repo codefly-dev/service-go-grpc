@@ -187,13 +187,7 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	return s.Builder.BuildResponse()
 }
 
-type LoadBalancer struct {
-	Enabled bool
-	Host    string
-}
-
 type Parameters struct {
-	LoadBalancer
 }
 
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
@@ -247,15 +241,7 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 	params := services.DeploymentParameters{
 		ConfigMap:  cm,
 		SecretMap:  secrets,
-		Parameters: Parameters{LoadBalancer{}},
-	}
-	if req.Deployment.LoadBalancer {
-		inst, err := resources.FindNetworkInstanceInNetworkMappings(ctx, req.NetworkMappings, s.RestEndpoint, resources.NewContainerNetworkAccess())
-		if err != nil {
-			return s.Builder.DeployError(err)
-		}
-
-		params.Parameters = Parameters{LoadBalancer{Host: inst.Hostname, Enabled: true}}
+		Parameters: Parameters{},
 	}
 
 	err = s.Builder.KustomizeDeploy(ctx, req.Environment, k, deploymentFS, params)
@@ -270,7 +256,7 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 	if err != nil {
 		return s.Wool.Wrapf(err, "cannot load grpc api")
 	}
-	endpoint := s.Base.Service.BaseEndpoint(standards.GRPC)
+	endpoint := s.Base.BaseEndpoint(standards.GRPC)
 	s.GrpcEndpoint, err = resources.NewAPI(ctx, endpoint, resources.ToGrpcAPI(grpc))
 
 	s.Endpoints = append(s.Endpoints, s.GrpcEndpoint)
@@ -280,7 +266,7 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create openapi api")
 		}
-		endpoint = s.Base.Service.BaseEndpoint(standards.REST)
+		endpoint = s.Base.BaseEndpoint(standards.REST)
 		s.RestEndpoint, err = resources.NewAPI(ctx, endpoint, resources.ToRestAPI(rest))
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create openapi api")

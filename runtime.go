@@ -236,21 +236,21 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	s.Wool.Debug("environment variables", wool.Field("endpoint", resources.MakeManyEndpointAccessSummary(endpointAccesses)))
 
 	if s.Settings.HotReload {
-		s.Wool.Focus("starting hot reload")
+		s.Wool.Debug("starting hot reload")
 		// Add proto and swagger
 		dependencies := requirements.Clone()
 		dependencies.AddDependencies(
 			builders.NewDependency("proto").WithPathSelect(shared.NewSelect("*.proto")),
 		)
 		dependencies.Localize(s.Location)
-		s.Wool.Focus("setting up code watcher", wool.Field("dep", dependencies.All()))
+		s.Wool.Debug("setting up code watcher", wool.Field("dep", dependencies.All()))
 		conf := services.NewWatchConfiguration(dependencies)
 		err = s.SetupWatcher(ctx, conf, s.EventHandler)
 		if err != nil {
 			s.Wool.Warn("error in watcher", wool.ErrField(err))
 		}
 	} else {
-		s.Wool.Focus("not hot-reloading")
+		s.Wool.Debug("not hot-reloading")
 	}
 
 	if s.Watcher != nil {
@@ -338,24 +338,25 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 
 	err := s.runnerEnvironment.Env().WithBinary("codefly")
 	if err != nil {
-		return s.Runtime.TestError(err)
+		return s.Runtime.TestErrorf(err, "cannot find codefly binary")
 	}
 
-	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "./...")
+	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "-v", "./...")
 	if err != nil {
-		return s.Runtime.TestError(err)
+		return s.Runtime.TestErrorf(err, "cannot create test proc")
 	}
 
 	proc.WithOutput(s.Logger)
 	proc.WithDir(s.sourceLocation)
 
-	s.Infof("testing go tests")
+	s.Infof("running go tests")
+
 	testingContext := s.Wool.Inject(context.Background())
 
 	err = proc.Run(testingContext)
 
 	if err != nil {
-		return s.Runtime.TestError(err)
+		return s.Runtime.TestErrorf(err, "cannot run tests successfully")
 	}
 	return s.Runtime.TestResponse()
 }
@@ -431,7 +432,7 @@ func (s *Runtime) EventHandler(event code.Change) error {
 	if strings.HasSuffix(event.Path, ".swagger.json") {
 		return nil
 	}
-	s.Wool.Focus("stopping service")
+	s.Wool.Debug("stopping service")
 	if strings.HasSuffix(event.Path, ".proto") {
 		s.Wool.Debug("proto change detected")
 		// Because we read endpoints in Load

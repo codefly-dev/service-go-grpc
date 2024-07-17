@@ -19,6 +19,6 @@ spec:
           image: image:tag
           envFrom:
             - configMapRef:
-                name: config-{{ .Service.Name.DNSCase }}
+                name: cm-{{ .Service.Name.DNSCase }}
             - secretRef:
                 name: secret-{{ .Service.Name.DNSCase }}
