@@ -31,7 +31,6 @@ func TestCreateToRunNative(t *testing.T) {
 }
 
 func TestCreateToRunDocker(t *testing.T) {
-	t.Skip("skipping: fix this garbage")
 	testCreateToRun(t, resources.NewRuntimeContextContainer())
 }
 
@@ -46,17 +45,21 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 
 	workspace := &resources.Workspace{Name: "test"}
 
-	service := &resources.Service{Name: "svc", Module: "mod", Version: "0.0.0"}
-	err = service.SaveAtDir(ctx, path.Join(tmpDir, service.Unique()))
+	service := &resources.Service{Name: "svc", Version: "0.0.0"}
+	err = service.SaveAtDir(ctx, path.Join(tmpDir, fmt.Sprintf("mod/%s", service.Name)))
+	require.NoError(t, err)
+	service.WithModule("mod")
+	mod := &resources.Module{Name: "mod"}
+	err = mod.SaveToDir(ctx, path.Join(tmpDir, "mod"))
 	require.NoError(t, err)
 
 	identity := &basev0.ServiceIdentity{
 		Name:                service.Name,
 		Version:             service.Version,
-		Module:              service.Module,
+		Module:              "mod",
 		Workspace:           workspace.Name,
 		WorkspacePath:       tmpDir,
-		RelativeToWorkspace: service.Unique(),
+		RelativeToWorkspace: fmt.Sprintf("mod/%s", service.Name),
 	}
 	env := resources.LocalEnvironment()
 
@@ -82,7 +85,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	require.NoError(t, err)
 	networkManager.WithTemporaryPorts()
 
-	networkMappings, err := networkManager.GenerateNetworkMappings(ctx, env, workspace, service, runtime.Endpoints)
+	networkMappings, err := networkManager.GenerateNetworkMappings(ctx, env, workspace, runtime.Identity, runtime.Endpoints)
 	require.NoError(t, err)
 	require.NotNil(t, networkMappings)
 	require.Equal(t, 2, len(networkMappings))
@@ -110,9 +113,9 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	// testRun(t, runtime, ctx, identity, networkMappings)
 
 	// Test
-	//test, err := runtime.Test(ctx, &runtimev0.TestRequest{})
-	//require.NoError(t, err)
-	//require.Equal(t, runtimev0.TestStatus_SUCCESS, test.Status.State)
+	test, err := runtime.Test(ctx, &runtimev0.TestRequest{})
+	require.NoError(t, err)
+	require.Equal(t, runtimev0.TestStatus_SUCCESS, test.Status.State)
 
 	_, _ = runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
 
