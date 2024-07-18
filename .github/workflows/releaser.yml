@@ -18,7 +18,7 @@ jobs:
           go-version: 1.21.4
 
       - name: test
-        run: go test -v ./... && rm -f .codefly
+        run: go test -v ./... && rm -rf .codefly
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v3
