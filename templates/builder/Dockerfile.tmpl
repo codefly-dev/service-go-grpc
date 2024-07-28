@@ -23,7 +23,6 @@ ENV {{.Key}} {{.Value}}
 # Set up a non-root user
 RUN adduser -D appuser
 USER appuser
-COPY --chown=appuser service.codefly.yaml .
 COPY --chown=appuser --from=builder /app/code/app .
 EXPOSE 8080
 EXPOSE 9090
