@@ -50,7 +50,7 @@ func (s *GrpcServer) Version(ctx context.Context, req *gen.VersionRequest) (*gen
 		return nil, err
 	}
 	return &gen.VersionResponse{
-		Version: codefly.Version(),
+		Version: codefly.ServiceVersion(),
 	}, nil
 }
 

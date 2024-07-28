@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"strconv"
 	"testing"
 	"time"
 
@@ -50,6 +51,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	require.NoError(t, err)
 	service.WithModule("mod")
 	mod := &resources.Module{Name: "mod"}
+
 	err = mod.SaveToDir(ctx, path.Join(tmpDir, "mod"))
 	require.NoError(t, err)
 
@@ -63,6 +65,9 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	}
 	env := resources.LocalEnvironment()
 
+	// randomize
+	env.NamingScope = strconv.Itoa(time.Now().Second())
+
 	builder := NewBuilder()
 
 	resp, err := builder.Load(ctx, &builderv0.LoadRequest{Identity: identity, CreationMode: &builderv0.CreationMode{Communicate: false}})
@@ -75,7 +80,10 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	// Now run it
 	runtime := NewRuntime()
 
-	_, err = runtime.Load(ctx, &runtimev0.LoadRequest{Identity: identity, Environment: shared.Must(env.Proto()), DisableCatch: true})
+	_, err = runtime.Load(ctx, &runtimev0.LoadRequest{
+		Identity:     identity,
+		Environment:  shared.Must(env.Proto()),
+		DisableCatch: true})
 	require.NoError(t, err)
 
 	require.Equal(t, 2, len(runtime.Endpoints))
@@ -95,6 +103,10 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 		ProposedNetworkMappings: networkMappings})
 	require.NoError(t, err)
 	require.NotNil(t, init)
+
+	defer func() {
+		_, _ = runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
+	}()
 
 	testRun(t, runtime, ctx, identity, networkMappings)
 	//
@@ -116,8 +128,6 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	test, err := runtime.Test(ctx, &runtimev0.TestRequest{})
 	require.NoError(t, err)
 	require.Equal(t, runtimev0.TestStatus_SUCCESS, test.Status.State)
-
-	_, _ = runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
 
 }
 
