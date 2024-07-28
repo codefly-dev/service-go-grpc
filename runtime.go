@@ -191,7 +191,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	s.NetworkMappings = req.ProposedNetworkMappings
 
 	// Project configurations
-	err = s.EnvironmentVariables.AddConfigurations(req.ProjectConfigurations...)
+	err = s.EnvironmentVariables.AddConfigurations(ctx, req.ProjectConfigurations...)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
@@ -200,7 +200,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	confs := resources.FilterConfigurations(req.DependenciesConfigurations, s.Runtime.RuntimeContext)
 
 	s.Wool.Debug("adding configurations", wool.Field("configurations", resources.MakeManyConfigurationSummary(confs)))
-	err = s.EnvironmentVariables.AddConfigurations(confs...)
+	err = s.EnvironmentVariables.AddConfigurations(ctx, confs...)
 
 	// Networking: a process is native to itself
 	net, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GrpcEndpoint, resources.NewNativeNetworkAccess())
@@ -336,6 +336,11 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
+	err := s.runnerEnvironment.Env().WithBinary("codefly")
+	if err != nil {
+		s.Wool.Warn("codefly binary not found in environment: testing with dependencies will not work")
+	}
+
 	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "-v", "./...")
 	if err != nil {
 		return s.Runtime.TestErrorf(err, "cannot create test proc")
@@ -343,6 +348,7 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 
 	proc.WithOutput(s.Logger)
 	proc.WithDir(s.sourceLocation)
+	proc.WithEnvironmentVariables(ctx, s.EnvironmentVariables.All()...)
 
 	s.Infof("running go tests")
 
