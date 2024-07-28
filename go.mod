@@ -3,7 +3,7 @@ module github.com/codefly-dev/service-go-grpc
 go 1.22.0
 
 require (
-	github.com/codefly-dev/core v0.1.136
+	github.com/codefly-dev/core v0.1.138
 	github.com/stretchr/testify v1.9.0
 	google.golang.org/grpc v1.65.0
 )
@@ -16,6 +16,7 @@ require (
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
+	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/bufbuild/protovalidate-go v0.6.3 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cheggaaa/pb/v3 v3.1.5 // indirect
