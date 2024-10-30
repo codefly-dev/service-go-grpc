@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Service.Name.DNSCase }}
+  namespace: {{ .Namespace }}
+  labels:
+    app: {{ .Service.Name.DNSCase }}
+    # Add more labels as needed for better organization
+    environment: {{ .Environment.Name | default "production" }}
+spec:
+  replicas: {{ .Replicas | default 2 }}  # Default to 2 replicas for high availability
+  selector:
+    matchLabels:
+      app: {{ .Service.Name.DNSCase }}
+  strategy:
+    type: RollingUpdate  # Use rolling updates for zero-downtime deployments
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app: {{ .Service.Name.DNSCase }}
+        sha: {{ .Sha }}
+      annotations:
+        prometheus.io/scrape: "true"  # Enable Prometheus scraping if you use it
+        prometheus.io/port: "8080"    # Adjust the port as needed
+    spec:
+      serviceAccountName: {{ .Service.Name.DNSCase }}-sa  # Use a dedicated service account
+      securityContext:
+        runAsNonRoot: true  # Run as non-root for better security
+        runAsUser: 1000     # Use a non-root UID
+        fsGroup: 2000       # Set fsGroup for volume permissions
+      containers:
+        - name: {{ .Service.Name.DNSCase }}
+          image: image:tag
+          imagePullPolicy: Always  # Always pull the image to ensure the latest version
+          ports:
+            - containerPort: 8080  # Adjust as needed
+          envFrom:
+            - configMapRef:
+                name: cm-{{ .Service.Name.DNSCase }}
+            - secretRef:
+                name: secret-{{ .Service.Name.DNSCase }}
+          resources:
+            requests:
+              cpu: 100m     # Request 0.1 CPU cores
+              memory: 128Mi # Request 128 MB of memory
+            limits:
+              cpu: 500m     # Limit to 0.5 CPU cores
+              memory: 512Mi # Limit to 512 MB of memory
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            periodSeconds: 5
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - {{ .Service.Name.DNSCase }}
+                topologyKey: "kubernetes.io/hostname"
+      terminationGracePeriodSeconds: 30

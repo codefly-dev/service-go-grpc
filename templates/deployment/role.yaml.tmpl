@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Service.Name.DNSCase }}-role
+  namespace: {{ .Namespace }}
+rules:
+  - apiGroups: [""]  # Add necessary API groups
+    resources: [""]  # Add necessary resources
+    verbs: [""]      # Add necessary verbs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Service.Name.DNSCase }}-rolebinding
+  namespace: {{ .Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Service.Name.DNSCase }}-sa
+    namespace: {{ .Namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Service.Name.DNSCase }}-role
+  apiGroup: rbac.authorization.k8s.io
