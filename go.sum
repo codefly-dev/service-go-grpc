@@ -26,8 +26,6 @@ github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK3
 github.com/cenkalti/backoff/v4 v4.3.0/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
 github.com/cheggaaa/pb/v3 v3.1.5 h1:QuuUzeM2WsAqG2gMqtzaWithDJv0i+i6UlnwSCI4QLk=
 github.com/cheggaaa/pb/v3 v3.1.5/go.mod h1:CrxkeghYTXi1lQBEI7jSn+3svI3cuc19haAj6jM60XI=
-github.com/codefly-dev/core v0.1.143 h1:aASWHDPXtihMpU7OZD/00DgLMTSekrV/NZEXzXS/Lgg=
-github.com/codefly-dev/core v0.1.143/go.mod h1:ucOEYpW5MlrzMbtnohrCZ6qrh4ATAiwvJTbI2AHzPao=
 github.com/codefly-dev/core v0.1.144 h1:HJQ0EtXcy/OLjzU8LO0WKgdHZ6hMOYvpQwOmQ5k8XaY=
 github.com/codefly-dev/core v0.1.144/go.mod h1:ucOEYpW5MlrzMbtnohrCZ6qrh4ATAiwvJTbI2AHzPao=
 github.com/containerd/log v0.1.0 h1:TCJt7ioM2cr/tfR8GPbGf9/VRAX8D2B4PjzCpfX540I=
