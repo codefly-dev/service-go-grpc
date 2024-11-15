@@ -135,8 +135,10 @@ type Env struct {
 }
 
 type DockerTemplating struct {
-	Components []string
-	Envs       []Env
+	Components    []string
+	Envs          []Env
+	GoVersion     string
+	AlpineVersion string
 }
 
 func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*builderv0.BuildResponse, error) {
@@ -157,7 +159,9 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	}
 
 	docker := DockerTemplating{
-		Components: requirements.All(),
+		Components:    requirements.All(),
+		GoVersion:     GoVersion,
+		AlpineVersion: AlpineVersion,
 	}
 
 	err = shared.DeleteFile(ctx, s.Local("builder/Dockerfile"))

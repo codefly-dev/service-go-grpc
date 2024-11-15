@@ -10,7 +10,6 @@ import (
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 	"github.com/codefly-dev/core/shared"
-	"github.com/codefly-dev/core/standards"
 	"path"
 	"strings"
 
@@ -81,15 +80,9 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		s.Watcher.Pause()
 	}
 
-	exists, err := shared.FileExists(ctx, s.Local(standards.OpenAPIPath))
+	err = s.buf.Generate(ctx)
 	if err != nil {
 		return s.Runtime.LoadError(err)
-	}
-	if exists {
-		err = s.buf.Generate(ctx)
-		if err != nil {
-			return s.Runtime.LoadError(err)
-		}
 	}
 
 	s.Endpoints, err = s.Base.Service.LoadEndpoints(ctx)
@@ -164,6 +157,10 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 	s.runnerEnvironment.WithDebugSymbol(s.Settings.DebugSymbols)
 	s.runnerEnvironment.WithRaceConditionDetection(s.Settings.RaceConditionDetectionRun)
 	s.runnerEnvironment.WithEnvironmentVariables(ctx, s.EnvironmentVariables.All()...)
+
+	s.runnerEnvironment.WithCGO(s.WithCGO)
+	s.runnerEnvironment.WithWorkspace(s.WithWorkspace)
+
 	return nil
 }
 
@@ -191,7 +188,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	s.NetworkMappings = req.ProposedNetworkMappings
 
 	// Project configurations
-	err = s.EnvironmentVariables.AddConfigurations(ctx, req.ProjectConfigurations...)
+	err = s.EnvironmentVariables.AddConfigurations(ctx, req.WorkspaceConfigurations...)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
@@ -310,6 +307,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	if err != nil {
 		return s.Runtime.StartError(err)
 	}
+
 	// Add Fixture
 	s.EnvironmentVariables.SetFixture(req.Fixture)
 

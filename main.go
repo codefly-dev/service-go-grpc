@@ -33,6 +33,8 @@ type Settings struct {
 	DebugSymbols              bool `yaml:"debug-symbols"`
 	RaceConditionDetectionRun bool `yaml:"race-condition-detection-run"`
 	RestEndpoint              bool `yaml:"rest-endpoint"`
+	WithCGO                   bool `yaml:"with-cgo"`
+	WithWorkspace             bool `yaml:"with-workspace"`
 }
 
 const HotReload = "hot-reload"
@@ -87,7 +89,13 @@ func NewService() *Service {
 	}
 }
 
-// Builder
+// GoVersion is the version of Go
+const GoVersion = "1.23"
+
+// AlpineVersion is the version of Alpine
+const AlpineVersion = "3.20"
+
+// Runtime Image
 var runtimeImage = &configurations.DockerImage{Name: "codeflydev/go", Tag: "0.0.5"}
 
 func main() {

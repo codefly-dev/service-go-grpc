@@ -1,32 +1,53 @@
-FROM golang:alpine AS builder
+# Build stage
+FROM golang:{{ .GoVersion }}-alpine AS builder
 
-# Copy go mod and sum files to cache download
-WORKDIR /app/code
+# Install ca-certificates for HTTPS requests and git for private repos if needed
+RUN apk add --no-cache ca-certificates git
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod and sum files
 COPY code/go.mod code/go.sum ./
 
+# Download dependencies
 RUN go mod download
 
-WORKDIR /app
+# Copy the source code
 {{ range .Components}}
 COPY {{.}} {{.}}
 {{end}}
 
 WORKDIR /app/code
+
 # Build the binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags '-s -w' -o app
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-w -s -extldflags "-static"' -o app
 
-FROM alpine:latest
+# Final stage
+FROM alpine:{{ .AlpineVersion }}
+
+# Install ca-certificates for HTTPS requests
+RUN apk add --no-cache ca-certificates
+
+# Set working directory
 WORKDIR /app
+
+# Set environment variables
 {{ range .Envs}}
-ENV {{.Key}} {{.Value}}
+ENV {{.Key}}={{.Value}}
 {{end}}
-# Set up a non-root user
+
+# Create a non-root user
 RUN adduser -D appuser
-USER appuser
+
+# Copy the binary from the builder stage
 COPY --chown=appuser --from=builder /app/code/app .
-EXPOSE 8080
-EXPOSE 9090
 
+# Use the non-root user
+USER appuser
 
+# Expose ports
+EXPOSE 8080 9090
 
+# Run the binary
 CMD ["./app"]

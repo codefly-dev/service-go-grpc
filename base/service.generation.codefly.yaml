@@ -4,7 +4,6 @@ replacements:
   - from: base_replacement
     to: "{{ .Service.Name.DNSCase }}"
 ignores:
-  - .codefly.yaml
   - service.generation.codefly.yaml
   - go.work
   - go.work.sum
