@@ -80,7 +80,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		s.Watcher.Pause()
 	}
 
-	err = s.buf.Generate(ctx)
+	err = s.buf.Generate(ctx, true)
 	if err != nil {
 		return s.Runtime.LoadError(err)
 	}
@@ -180,7 +180,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	s.EnvironmentVariables.SetRuntimeContext(s.Runtime.RuntimeContext)
 
 	// Caching included
-	err = s.buf.Generate(ctx)
+	err = s.buf.Generate(ctx, true)
 	if err != nil {
 		return s.Runtime.InitError(err)
 	}
