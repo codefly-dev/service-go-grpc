@@ -65,8 +65,8 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	}
 	env := resources.LocalEnvironment()
 
-	// randomize
-	env.NamingScope = strconv.Itoa(time.Now().Second())
+	// randomize with nanoseconds to avoid port collisions
+	env.NamingScope = strconv.FormatInt(time.Now().UnixNano(), 10)
 
 	builder := NewBuilder()
 
