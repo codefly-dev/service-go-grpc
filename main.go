@@ -101,8 +101,8 @@ var runtimeImage = &configurations.DockerImage{Name: "codeflydev/go", Tag: "0.0.
 func main() {
 	agents.Register(
 		services.NewServiceAgent(agent.Of(configurations.ServiceAgent), NewService()),
-		services.NewBuilderAgent(agent.Of(configurations.RuntimeServiceAgent), NewBuilder()),
-		services.NewRuntimeAgent(agent.Of(configurations.BuilderServiceAgent), NewRuntime()))
+		services.NewBuilderAgent(agent.Of(configurations.BuilderServiceAgent), NewBuilder()),
+		services.NewRuntimeAgent(agent.Of(configurations.RuntimeServiceAgent), NewRuntime()))
 }
 
 //go:embed agent.codefly.yaml

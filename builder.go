@@ -4,8 +4,10 @@ import (
 	"context"
 	"embed"
 	"fmt"
+
 	"github.com/codefly-dev/core/companions/proto"
 	"github.com/codefly-dev/core/languages"
+	runners "github.com/codefly-dev/core/runners/base"
 	"github.com/codefly-dev/core/standards"
 	"github.com/codefly-dev/core/wool"
 
@@ -367,6 +369,23 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 	err := s.Templates(ctx, create, services.WithFactory(factoryFS).WithPathSelect(ignore).WithOverride(override))
 	if err != nil {
 		return s.Builder.CreateError(err)
+	}
+
+	// Generate go.sum by running go mod tidy
+	s.Wool.Debug("running go mod tidy to generate go.sum")
+	codeDir := s.Local("code")
+	env, err := runners.NewNativeEnvironment(ctx, codeDir)
+	if err != nil {
+		return s.Builder.CreateError(err)
+	}
+	proc, err := env.NewProcess("go", "mod", "tidy")
+	if err != nil {
+		return s.Builder.CreateError(err)
+	}
+	proc.WithOutput(s.Wool)
+	err = proc.Run(ctx)
+	if err != nil {
+		return s.Builder.CreateErrorf(err, "cannot run go mod tidy")
 	}
 
 	err = s.CreateEndpoints(ctx)

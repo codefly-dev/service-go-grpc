@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"path"
+	"strings"
+
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/builders"
 	"github.com/codefly-dev/core/companions/proto"
@@ -10,8 +13,6 @@ import (
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 	"github.com/codefly-dev/core/shared"
-	"path"
-	"strings"
 
 	"github.com/codefly-dev/core/wool"
 
@@ -29,6 +30,7 @@ type Runtime struct {
 
 	// cache
 	cacheLocation string
+	protoLocation string
 
 	// proto
 	buf *proto.Buf
@@ -63,13 +65,17 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	if err != nil {
 		return s.Runtime.LoadErrorf(err, "creating source location")
 	}
+	s.protoLocation, err = s.LocalDirCreate(ctx, "proto")
+	if err != nil {
+		return s.Runtime.LoadErrorf(err, "creating proto location")
+	}
 
 	s.cacheLocation, err = s.LocalDirCreate(ctx, ".cache")
 	if err != nil {
 		return s.Runtime.LoadErrorf(err, "creating cache location")
 	}
 
-	s.buf, err = proto.NewBuf(ctx, s.Location)
+	s.buf, err = proto.NewBuf(ctx, s.protoLocation)
 	if err != nil {
 		return s.Runtime.LoadError(err)
 	}
@@ -292,7 +298,6 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 
 	err := s.runnerEnvironment.BuildBinary(ctx)
 	if err != nil {
-
 		if !s.Settings.HotReload {
 			return s.Runtime.StartError(err)
 		}

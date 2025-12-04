@@ -13,7 +13,7 @@ import (
 	"base_replacement/pkg/gen"
 	"context"
 	"fmt"
-	"github.com/bufbuild/protovalidate-go"
+	"buf.build/go/protovalidate"
 	"net"
 
 	"google.golang.org/grpc/codes"
