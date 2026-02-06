@@ -9,7 +9,7 @@ import (
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/network"
 	"github.com/codefly-dev/core/shared"
-	"github.com/codefly-dev/core/wool"
+	"github.com/codefly-dev/wool"
 	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"

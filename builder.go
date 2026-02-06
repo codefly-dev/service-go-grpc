@@ -7,7 +7,7 @@ import (
 	"github.com/codefly-dev/core/companions/proto"
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/standards"
-	"github.com/codefly-dev/core/wool"
+	"github.com/codefly-dev/wool"
 
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/templates"
@@ -233,7 +233,11 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		return s.Builder.DeployError(err)
 	}
 
-	cm, err := services.EnvsAsConfigMapData(s.EnvironmentVariables.Configurations()...)
+	confs, err := s.EnvironmentVariables.Configurations()
+	if err != nil {
+		return s.Builder.DeployError(err)
+	}
+	cm, err := services.EnvsAsConfigMapData(confs...)
 	if err != nil {
 		return s.Builder.DeployError(err)
 	}

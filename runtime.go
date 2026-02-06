@@ -13,7 +13,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/codefly-dev/core/wool"
+	"github.com/codefly-dev/wool"
 
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 
@@ -106,6 +106,10 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 }
 
 func (s *Runtime) SetRuntimeContext(ctx context.Context, runtimeContext *basev0.RuntimeContext) error {
+	if runtimeContext.Kind == resources.RuntimeContextNix {
+		s.Runtime.RuntimeContext = resources.NewRuntimeContextNix()
+		return nil
+	}
 	if runtimeContext.Kind == resources.RuntimeContextFree || runtimeContext.Kind == resources.RuntimeContextNative {
 		if languages.HasGoRuntime(nil) {
 			s.Runtime.RuntimeContext = resources.NewRuntimeContextNative()
@@ -144,6 +148,12 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 		// Mount the service.codefly.yaml
 		dockerEnv.WithFile(s.Local("service.codefly.yaml"), "/service.codefly.yaml")
 		s.runnerEnvironment = dockerEnv
+	} else if s.Runtime.IsNixRuntime() {
+		nixEnv, err := golanghelpers.NewNixGoRunner(ctx, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, "code"))
+		if err != nil {
+			return s.Wool.Wrapf(err, "cannot create nix runner")
+		}
+		s.runnerEnvironment = nixEnv
 	} else {
 		localEnv, err := golanghelpers.NewNativeGoRunner(ctx, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, "code"))
 		if err != nil {
@@ -156,7 +166,11 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 
 	s.runnerEnvironment.WithDebugSymbol(s.Settings.DebugSymbols)
 	s.runnerEnvironment.WithRaceConditionDetection(s.Settings.RaceConditionDetectionRun)
-	s.runnerEnvironment.WithEnvironmentVariables(ctx, s.EnvironmentVariables.All()...)
+	allEnvs, err := s.EnvironmentVariables.All()
+	if err != nil {
+		return s.Wool.Wrapf(err, "cannot get environment variables")
+	}
+	s.runnerEnvironment.WithEnvironmentVariables(ctx, allEnvs...)
 
 	s.runnerEnvironment.WithCGO(s.WithCGO)
 	s.runnerEnvironment.WithWorkspace(s.WithWorkspace)
@@ -317,7 +331,11 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 		return s.Runtime.StartErrorf(err, "getting runner")
 	}
 
-	proc.WithEnvironmentVariables(ctx, s.EnvironmentVariables.All()...)
+	startEnvs, err := s.EnvironmentVariables.All()
+	if err != nil {
+		return s.Runtime.StartErrorf(err, "getting environment variables")
+	}
+	proc.WithEnvironmentVariables(ctx, startEnvs...)
 
 	s.runner = proc
 	err = s.runner.Start(runningContext)
@@ -346,7 +364,11 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 
 	proc.WithOutput(s.Logger)
 	proc.WithDir(s.sourceLocation)
-	proc.WithEnvironmentVariables(ctx, s.EnvironmentVariables.All()...)
+	testEnvs, err := s.EnvironmentVariables.All()
+	if err != nil {
+		return s.Runtime.TestErrorf(err, "getting environment variables")
+	}
+	proc.WithEnvironmentVariables(ctx, testEnvs...)
 
 	s.Infof("running go tests")
 
