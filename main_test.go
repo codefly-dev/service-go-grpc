@@ -9,7 +9,7 @@ import (
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/network"
 	"github.com/codefly-dev/core/shared"
-	"github.com/codefly-dev/wool"
+	"github.com/codefly-dev/core/wool"
 	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
@@ -24,6 +24,38 @@ import (
 
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 )
+
+func TestSetRuntimeContextNix(t *testing.T) {
+	ctx := context.Background()
+
+	runtime := NewRuntime()
+	// Minimal setup for the runtime
+	runtime.Service = NewService()
+	runtime.Runtime.RuntimeContext = resources.NewRuntimeContextNative() // start with native
+
+	err := runtime.SetRuntimeContext(ctx, resources.NewRuntimeContextNix())
+	require.NoError(t, err)
+	require.Equal(t, resources.RuntimeContextNix, runtime.Runtime.RuntimeContext.Kind)
+	require.True(t, runtime.Runtime.IsNixRuntime())
+	require.False(t, runtime.Runtime.IsContainerRuntime())
+	require.False(t, runtime.Runtime.IsNativeRuntime())
+}
+
+func TestSetRuntimeContextNative(t *testing.T) {
+	ctx := context.Background()
+
+	runtime := NewRuntime()
+	runtime.Service = NewService()
+
+	err := runtime.SetRuntimeContext(ctx, resources.NewRuntimeContextNative())
+	require.NoError(t, err)
+
+	if languages.HasGoRuntime(nil) {
+		require.Equal(t, resources.RuntimeContextNative, runtime.Runtime.RuntimeContext.Kind)
+	} else {
+		require.Equal(t, resources.RuntimeContextContainer, runtime.Runtime.RuntimeContext.Kind)
+	}
+}
 
 func TestCreateToRunNative(t *testing.T) {
 	if languages.HasGoRuntime(nil) {

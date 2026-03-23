@@ -7,7 +7,6 @@ import (
 	"github.com/codefly-dev/core/builders"
 
 	"google.golang.org/grpc/codes"
-
 	"google.golang.org/grpc/status"
 
 	"github.com/codefly-dev/core/templates"
@@ -58,7 +57,13 @@ type Service struct {
 func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInformationRequest) (*agentv0.AgentInformation, error) {
 	defer s.Wool.Catch()
 
-	readme, err := templates.ApplyTemplateFrom(ctx, shared.Embed(readmeFS), "templates/agent/README.md", s.Information)
+	// Information may be nil if GetAgentInformation is called before Load.
+	// Provide a fallback for the template.
+	info := s.Information
+	if info == nil {
+		info = &services.Information{}
+	}
+	readme, err := templates.ApplyTemplateFrom(ctx, shared.Embed(readmeFS), "templates/agent/README.md", info)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -78,7 +83,8 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInfor
 			{Type: agentv0.Protocol_HTTP},
 			{Type: agentv0.Protocol_GRPC},
 		},
-		ReadMe: readme,
+		ReadMe:     readme,
+		Techniques: goGrpcTechniques(),
 	}, nil
 }
 
@@ -99,10 +105,13 @@ const AlpineVersion = "3.20"
 var runtimeImage = &configurations.DockerImage{Name: "codeflydev/go", Tag: "0.0.5"}
 
 func main() {
-	agents.Register(
-		services.NewServiceAgent(agent.Of(configurations.ServiceAgent), NewService()),
-		services.NewBuilderAgent(agent.Of(configurations.RuntimeServiceAgent), NewBuilder()),
-		services.NewRuntimeAgent(agent.Of(configurations.BuilderServiceAgent), NewRuntime()))
+	svc := NewService()
+	agents.Serve(agents.PluginRegistration{
+		Agent:   svc,
+		Runtime: NewRuntime(),
+		Builder: NewBuilder(),
+		Code:    NewCode(),
+	})
 }
 
 //go:embed agent.codefly.yaml

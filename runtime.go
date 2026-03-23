@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/builders"
-	"github.com/codefly-dev/core/companions/proto"
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/resources"
@@ -13,9 +12,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/codefly-dev/wool"
-
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	"github.com/codefly-dev/core/wool"
 
 	"github.com/codefly-dev/core/agents/helpers/code"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
@@ -23,6 +20,8 @@ import (
 )
 
 type Runtime struct {
+	services.RuntimeServer
+
 	*Service
 
 	runnerEnvironment *golanghelpers.GoRunnerEnvironment
@@ -30,11 +29,9 @@ type Runtime struct {
 	// cache
 	cacheLocation string
 
-	// proto
-	buf *proto.Buf
-
 	// go runner
-	runner runners.Proc
+	runner   runners.Proc
+	testProc runners.Proc
 }
 
 func NewRuntime() *Runtime {
@@ -69,20 +66,8 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		return s.Runtime.LoadErrorf(err, "creating cache location")
 	}
 
-	s.buf, err = proto.NewBuf(ctx, s.Location)
-	if err != nil {
-		return s.Runtime.LoadError(err)
-	}
-
-	s.buf.WithCache(s.cacheLocation)
-
 	if s.Watcher != nil {
 		s.Watcher.Pause()
-	}
-
-	err = s.buf.Generate(ctx)
-	if err != nil {
-		return s.Runtime.LoadError(err)
 	}
 
 	s.Endpoints, err = s.Base.Service.LoadEndpoints(ctx)
@@ -121,7 +106,7 @@ func (s *Runtime) SetRuntimeContext(ctx context.Context, runtimeContext *basev0.
 }
 
 func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
-	s.Wool.Debug("creating runner environment in", wool.DirField(s.Identity.WorkspacePath))
+	s.Wool.Trace("creating runner environment in", wool.DirField(s.Identity.WorkspacePath))
 
 	if s.Runtime.IsContainerRuntime() {
 		dockerEnv, err := golanghelpers.NewDockerGoRunner(ctx, runtimeImage, s.Identity.WorkspacePath,
@@ -193,12 +178,6 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 
 	s.EnvironmentVariables.SetRuntimeContext(s.Runtime.RuntimeContext)
 
-	// Caching included
-	err = s.buf.Generate(ctx)
-	if err != nil {
-		return s.Runtime.InitError(err)
-	}
-
 	s.NetworkMappings = req.ProposedNetworkMappings
 
 	// Project configurations
@@ -210,7 +189,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	// Filter resources for the scope
 	confs := resources.FilterConfigurations(req.DependenciesConfigurations, s.Runtime.RuntimeContext)
 
-	s.Wool.Debug("adding configurations", wool.Field("configurations", resources.MakeManyConfigurationSummary(confs)))
+	s.Wool.Trace("adding configurations", wool.Field("configurations", resources.MakeManyConfigurationSummary(confs)))
 	err = s.EnvironmentVariables.AddConfigurations(ctx, confs...)
 
 	// Networking: a process is native to itself
@@ -244,24 +223,24 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	}
 
 	endpointAccesses := s.EnvironmentVariables.Endpoints()
-	s.Wool.Debug("environment variables", wool.Field("endpoint", resources.MakeManyEndpointAccessSummary(endpointAccesses)))
+	s.Wool.Trace("environment variables", wool.Field("endpoint", resources.MakeManyEndpointAccessSummary(endpointAccesses)))
 
 	if s.Settings.HotReload {
-		s.Wool.Debug("starting hot reload")
+		s.Wool.Trace("starting hot reload")
 		// Add proto and swagger
 		dependencies := requirements.Clone()
 		dependencies.AddDependencies(
 			builders.NewDependency("proto").WithPathSelect(shared.NewSelect("*.proto")),
 		)
 		dependencies.Localize(s.Location)
-		s.Wool.Debug("setting up code watcher", wool.Field("dep", dependencies.All()))
+		s.Wool.Trace("setting up code watcher", wool.Field("dep", dependencies.All()))
 		conf := services.NewWatchConfiguration(dependencies)
 		err = s.SetupWatcher(ctx, conf, s.EventHandler)
 		if err != nil {
 			s.Wool.Warn("error in watcher", wool.ErrField(err))
 		}
 	} else {
-		s.Wool.Debug("not hot-reloading")
+		s.Wool.Trace("not hot-reloading")
 	}
 
 	if s.Watcher != nil {
@@ -269,7 +248,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	}
 
 	if s.runnerEnvironment == nil {
-		s.Wool.Debug("creating runner")
+		s.Wool.Trace("creating runner")
 		err = s.CreateRunnerEnvironment(ctx)
 		if err != nil {
 			return s.Runtime.InitErrorf(err, "cannot create runner environment")
@@ -282,8 +261,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		return s.Runtime.InitError(err)
 	}
 
-	s.Wool.Debug("runner init done")
-	s.Ready()
+	s.Wool.Trace("runner init done")
 
 	s.Wool.Info("successful init of runner")
 
@@ -294,7 +272,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	s.Wool.Info("Building go binary")
+	s.Wool.Forwardf("building go binary...")
 
 	// Stop before replacing the runner
 	if s.runner != nil {
@@ -336,6 +314,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 		return s.Runtime.StartErrorf(err, "getting environment variables")
 	}
 	proc.WithEnvironmentVariables(ctx, startEnvs...)
+	proc.WithOutput(s.Logger)
 
 	s.runner = proc
 	err = s.runner.Start(runningContext)
@@ -343,7 +322,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 		return s.Runtime.StartErrorf(err, "starting runner")
 	}
 
-	s.Wool.Debug("runner started successfully")
+	s.Wool.Forwardf("service started and running")
 
 	return s.Runtime.StartResponse()
 }
@@ -357,12 +336,13 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		s.Wool.Warn("codefly binary not found in environment: testing with dependencies will not work")
 	}
 
-	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "-v", "./...")
+	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "-json", "-cover", "./...")
 	if err != nil {
 		return s.Runtime.TestErrorf(err, "cannot create test proc")
 	}
 
-	proc.WithOutput(s.Logger)
+	var capture lineCapture
+	proc.WithOutput(&capture)
 	proc.WithDir(s.sourceLocation)
 	testEnvs, err := s.EnvironmentVariables.All()
 	if err != nil {
@@ -372,14 +352,22 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 
 	s.Infof("running go tests")
 
-	testingContext := s.Wool.Inject(context.Background())
+	s.testProc = proc
+	runErr := proc.Run(ctx)
+	s.testProc = nil
 
-	err = proc.Run(testingContext)
+	summary := parseTestJSON(capture.String())
 
-	if err != nil {
-		return s.Runtime.TestErrorf(err, "cannot run tests successfully")
+	// Forward summary and failures to the logger for the TUI
+	s.Wool.Forwardf("Tests: %s", summary.summaryLine())
+	for _, f := range summary.Failures {
+		s.Wool.Forwardf(f)
 	}
-	return s.Runtime.TestResponse()
+
+	if runErr != nil {
+		return s.Runtime.TestResponseWithResults(summary.Run, summary.Passed, summary.Failed, summary.Skipped, summary.Coverage, summary.Failures, runErr)
+	}
+	return s.Runtime.TestResponseWithResults(summary.Run, summary.Passed, summary.Failed, summary.Skipped, summary.Coverage, summary.Failures, nil)
 }
 
 func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationRequest) (*runtimev0.InformationResponse, error) {
@@ -391,22 +379,32 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 
 	ctx = s.Wool.Inject(ctx)
 
-	s.Wool.Debug("stopping service")
+	s.Wool.Trace("stopping service")
+	if s.testProc != nil {
+		s.Wool.Trace("stopping test process")
+		_ = s.testProc.Stop(ctx)
+		s.testProc = nil
+	}
 	if s.runner != nil {
-		s.Wool.Debug("stopping runner")
+		s.Wool.Trace("stopping runner")
 		err := s.runner.Stop(ctx)
 		if err != nil {
 			return s.Runtime.StopError(err)
 		}
-		s.Wool.Debug("runner stopped")
+		s.Wool.Trace("runner stopped")
 	}
 
-	err := s.Base.Stop()
-	if err != nil {
-		return s.Runtime.StopError(err)
+	// Stop the file watcher to prevent CPU spin on orphaned processes
+	if s.Watcher != nil {
+		s.Watcher.Pause()
+	}
+	// Close events channel to unblock the handler goroutine
+	if s.Events != nil {
+		close(s.Events)
+		s.Events = nil
 	}
 
-	s.Wool.Debug("base stopped")
+	s.Wool.Trace("base stopped")
 	return s.Runtime.StopResponse()
 }
 
@@ -415,10 +413,9 @@ func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*
 
 	ctx = s.Wool.Inject(ctx)
 
-	s.Wool.Debug("Destroying service")
+	s.Wool.Trace("destroying service")
 
-	// Remove cache
-	s.Wool.Debug("removing cache")
+	s.Wool.Trace("removing cache")
 	err := shared.EmptyDir(ctx, s.cacheLocation)
 	if err != nil {
 		return s.Runtime.DestroyError(err)
@@ -426,7 +423,7 @@ func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*
 
 	// Get the runner environment
 	if s.Runtime.IsContainerRuntime() {
-		s.Wool.Debug("running in container")
+		s.Wool.Trace("running in container")
 
 		dockerEnv, err := golanghelpers.NewDockerGoRunner(ctx, runtimeImage, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, "code"), s.UniqueWithWorkspace())
 		if err != nil {
@@ -440,10 +437,6 @@ func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*
 	return s.Runtime.DestroyResponse()
 }
 
-func (s *Runtime) Communicate(ctx context.Context, req *agentv0.Engage) (*agentv0.InformationRequest, error) {
-	return s.Base.Communicate(ctx, req)
-}
-
 /* Details
 
  */
@@ -453,9 +446,9 @@ func (s *Runtime) EventHandler(event code.Change) error {
 	if strings.HasSuffix(event.Path, ".swagger.json") {
 		return nil
 	}
-	s.Wool.Debug("stopping service")
+	s.Wool.Trace("stopping service for rebuild")
 	if strings.HasSuffix(event.Path, ".proto") {
-		s.Wool.Debug("proto change detected")
+		s.Wool.Trace("proto change detected")
 		// Because we read endpoints in Load
 		s.Runtime.DesiredLoad()
 		return nil

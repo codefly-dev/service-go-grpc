@@ -8,20 +8,25 @@ RUN apk add --no-cache ca-certificates git
 WORKDIR /app
 
 # Copy go mod and sum files
-COPY code/go.mod code/go.sum ./
+# Support both layouts: go.mod in code/ (standard) or at service root
+COPY code/go.mod* code/go.sum* ./code/
+COPY go.mod* go.sum* ./
 
-# Download dependencies
-RUN go mod download
+# Download dependencies (try code/ first, fall back to root)
+RUN if [ -f code/go.mod ]; then cd code && go mod download; elif [ -f go.mod ]; then go mod download; fi
 
 # Copy the source code
 {{ range .Components}}
 COPY {{.}} {{.}}
 {{end}}
 
-WORKDIR /app/code
-
 # Build the binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-w -s -extldflags "-static"' -o app
+# Detect source location: code/ or root
+RUN if [ -f code/go.mod ]; then \
+      cd code && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-w -s -extldflags "-static"' -o /app/app; \
+    else \
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-w -s -extldflags "-static"' -o /app/app ./cmd/server; \
+    fi
 
 # Final stage
 FROM alpine:{{ .AlpineVersion }}
@@ -41,7 +46,7 @@ ENV {{.Key}}={{.Value}}
 RUN adduser -D appuser
 
 # Copy the binary from the builder stage
-COPY --chown=appuser --from=builder /app/code/app .
+COPY --chown=appuser --from=builder /app/app .
 
 # Use the non-root user
 USER appuser

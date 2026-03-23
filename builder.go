@@ -7,7 +7,7 @@ import (
 	"github.com/codefly-dev/core/companions/proto"
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/standards"
-	"github.com/codefly-dev/wool"
+	"github.com/codefly-dev/core/wool"
 
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/templates"
@@ -21,11 +21,16 @@ import (
 )
 
 type Builder struct {
+	services.BuilderServer
+
 	*Service
 
 	buf *proto.Buf
 
 	cacheLocation string
+
+	// Answers from interactive Communicate stream (set during Create/Sync flows)
+	answers map[string]*agentv0.Answer
 }
 
 func NewBuilder() *Builder {
@@ -57,12 +62,6 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 			return s.Builder.LoadError(err)
 		}
 
-		if req.CreationMode.Communicate {
-			err = s.Communication.Register(ctx, communicate.New[builderv0.CreateRequest](s.createCommunicate()))
-			if err != nil {
-				return s.Builder.LoadError(err)
-			}
-		}
 		return s.Builder.LoadResponse()
 	}
 
@@ -110,6 +109,19 @@ func (s *Builder) Sync(ctx context.Context, req *builderv0.SyncRequest) (*builde
 	defer s.Wool.Catch()
 
 	ctx = s.Wool.Inject(ctx)
+
+	if s.buf == nil {
+		var err error
+		s.buf, err = proto.NewBuf(ctx, s.Location)
+		if err != nil {
+			return s.Builder.SyncError(err)
+		}
+		s.buf.WithCache(s.cacheLocation)
+	}
+
+	if err := s.buf.Generate(ctx); err != nil {
+		return s.Builder.SyncError(err)
+	}
 
 	s.Wool.Debug("dependencies", wool.Field("dependencies", s.Service.Service.ServiceDependencies))
 	for _, dep := range s.Service.Service.ServiceDependencies {
@@ -294,11 +306,6 @@ func (s *Builder) Options() []*agentv0.Question {
 	}
 }
 
-func (s *Builder) createCommunicate() *communicate.Sequence {
-	return communicate.NewSequence(s.Options()...)
-
-}
-
 type CreateConfiguration struct {
 	*services.Information
 	Envs []string
@@ -309,34 +316,27 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 
 	ctx = s.Wool.Inject(ctx)
 
-	if s.Builder.CreationMode.Communicate {
-		s.Wool.Debug("using communicate mode")
-
-		session, err := s.Communication.Done(ctx, communicate.Channel[builderv0.CreateRequest]())
-		if err != nil {
-			return s.Builder.CreateErrorf(err, "cannot find a communication")
-		}
-
-		s.Settings.HotReload, err = session.Confirm(HotReload)
+	if s.Builder.CreationMode != nil && s.Builder.CreationMode.Communicate && s.answers != nil {
+		// Use answers collected during the Communicate stream
+		var err error
+		s.Settings.HotReload, err = communicate.Confirm(s.answers, HotReload)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
-
-		s.Settings.DebugSymbols, err = session.Confirm(DebugSymbols)
+		s.Settings.DebugSymbols, err = communicate.Confirm(s.answers, DebugSymbols)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
-
-		s.Settings.RaceConditionDetectionRun, err = session.Confirm(RaceConditionDetectionRun)
+		s.Settings.RaceConditionDetectionRun, err = communicate.Confirm(s.answers, RaceConditionDetectionRun)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
-
-		s.Settings.RestEndpoint, err = session.Confirm(RestEndpoint)
+		s.Settings.RestEndpoint, err = communicate.Confirm(s.answers, RestEndpoint)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
 	} else {
+		// No interactive session -- use defaults
 		options := s.Options()
 		var err error
 		s.Settings.HotReload, err = communicate.GetDefaultConfirm(options, HotReload)
@@ -347,17 +347,14 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
-
 		s.Settings.RaceConditionDetectionRun, err = communicate.GetDefaultConfirm(options, RaceConditionDetectionRun)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
-
 		s.Settings.RestEndpoint, err = communicate.GetDefaultConfirm(options, RestEndpoint)
 		if err != nil {
 			return s.Builder.CreateError(err)
 		}
-
 	}
 
 	create := CreateConfiguration{
@@ -379,6 +376,16 @@ func (s *Builder) Create(ctx context.Context, req *builderv0.CreateRequest) (*bu
 	}
 
 	return s.Builder.CreateResponse(ctx, s.Settings)
+}
+
+func (s *Builder) Communicate(stream builderv0.Builder_CommunicateServer) error {
+	asker := communicate.NewQuestionAsker(stream)
+	answers, err := asker.RunSequence(s.Options())
+	if err != nil {
+		return err
+	}
+	s.answers = answers
+	return nil
 }
 
 //go:embed templates/factory

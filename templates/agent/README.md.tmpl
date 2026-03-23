@@ -1,18 +1,74 @@
 
-Welcome to the service agent go-grpc
-Some of the things this agent provides for you:
+# {{if .Service}}{{.Service.Name}}{{else}}Service{{end}} — Go gRPC Service Agent
 
-## Developer Experience
-- hot-reload
-- code generation automated
-- Kreya configuration (optional)
-- Postman configuration (coming soon)
-- 
-## Code
-- gRPC server
-- REST server auto-generated (optional)
-- Version endpoint
+## Overview
 
-## Production ready
-- docker build
-- Kubernetes deployment
+This agent manages a Go gRPC service with optional REST gateway.
+It handles code generation, building, testing, and deployment.
+
+## Capabilities
+
+- **gRPC server** with protobuf-defined APIs
+- **REST gateway** auto-generated from proto HTTP annotations (optional)
+- **Hot-reload** during development
+- **Docker build** for production
+- **Kubernetes deployment** manifests
+
+## File Layout
+
+```
+{{if .Service}}{{.Service.Name}}{{else}}service{{end}}/
+├── proto/
+│   └── api.proto              ← YOUR service definitions
+├── code/
+│   ├── main.go                ← Composition root (usually untouched)
+│   ├── pkg/
+│   │   ├── adapters/
+│   │   │   ├── rpcs.go        ← YOUR RPC implementations
+│   │   │   ├── grpc_gen.go    ✗ auto-generated
+│   │   │   ├── rest_gen.go    ✗ auto-generated
+│   │   │   ├── server_gen.go  ✗ auto-generated
+│   │   │   └── cors_gen.go    ✗ auto-generated
+│   │   ├── business/          ← YOUR domain logic
+│   │   ├── gen/               ✗ auto-generated from proto
+│   │   └── infra/             ← YOUR infrastructure (DB, cache, etc.)
+│   ├── go.mod
+│   └── go.sum                 ✗ auto-generated
+└── openapi/
+    └── api.swagger.json       ✗ auto-generated
+```
+
+**Legend**: ← = you edit,  ✗ = auto-generated (do not edit)
+
+## Common Operations
+
+### Add a new RPC
+
+1. Define the RPC and messages in `proto/api.proto`
+2. Add HTTP annotation if REST is enabled
+3. Run `codefly` to regenerate
+4. Implement the handler in `pkg/adapters/rpcs.go`
+5. Add business logic in `pkg/business/`
+
+### Run locally
+
+```bash
+codefly run service
+```
+
+### Run tests
+
+```bash
+codefly test service
+```
+
+## Configuration
+
+| Setting | Description |
+|---------|-------------|
+| `hot-reload` | Enable file-watching hot reload in dev mode |
+| `debug-symbols` | Include debug symbols in binary |
+| `race-condition-detection-run` | Enable Go race detector |
+| `rest-endpoint` | Generate REST gateway alongside gRPC |
+| `with-cgo` | Enable CGO for native dependencies |
+| `with-workspace` | Use Go workspace mode |

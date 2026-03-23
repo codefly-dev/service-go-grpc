@@ -16,7 +16,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/codefly-dev/wool"
+	"github.com/codefly-dev/core/wool"
 
 	"google.golang.org/grpc/metadata"
 
