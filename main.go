@@ -16,6 +16,7 @@ import (
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 	configurations "github.com/codefly-dev/core/resources"
+	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/codefly-dev/core/shared"
 )
 
@@ -28,27 +29,14 @@ var requirements = builders.NewDependencies(agent.Name,
 )
 
 type Settings struct {
-	HotReload                 bool   `yaml:"hot-reload"`
-	DebugSymbols              bool   `yaml:"debug-symbols"`
-	RaceConditionDetectionRun bool   `yaml:"race-condition-detection-run"`
-	RestEndpoint              bool   `yaml:"rest-endpoint"`
-	WithCGO                   bool   `yaml:"with-cgo"`
-	WithWorkspace             bool   `yaml:"with-workspace"`
-	SourceDir                 string `yaml:"source-dir"` // Go source directory relative to service root. Default: "code"
+	golanghelpers.GoAgentSettings `yaml:",inline"`
+	RestEndpoint                  bool `yaml:"rest-endpoint"`
 }
 
-// GoSourceDir returns the configured source directory, defaulting to "code".
-func (s *Settings) GoSourceDir() string {
-	if s.SourceDir != "" {
-		return s.SourceDir
-	}
-	return "code"
-}
-
-const HotReload = "hot-reload"
-const DebugSymbols = "debug-symbols"
-const RaceConditionDetectionRun = "race-condition-detection-run"
-const RestEndpoint = "rest-endpoint"
+const HotReload = golanghelpers.SettingHotReload
+const DebugSymbols = golanghelpers.SettingDebugSymbols
+const RaceConditionDetectionRun = golanghelpers.SettingRaceConditionDetectionRun
+const RestEndpointSetting = "rest-endpoint"
 
 type Service struct {
 	*services.Base

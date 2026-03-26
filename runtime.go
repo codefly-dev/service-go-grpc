@@ -97,58 +97,44 @@ func (s *Runtime) SetRuntimeContext(_ context.Context, runtimeContext *basev0.Ru
 func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 	s.Wool.Trace("creating runner environment in", wool.DirField(s.Identity.WorkspacePath))
 
-	if s.Runtime.IsContainerRuntime() {
-		dockerEnv, err := golanghelpers.NewDockerGoRunner(ctx, runtimeImage, s.Identity.WorkspacePath,
-			path.Join(s.Identity.RelativeToWorkspace, s.Settings.GoSourceDir()), s.UniqueWithWorkspace())
-		if err != nil {
-			return s.Wool.Wrapf(err, "cannot create docker runner")
-		}
+	cfg := golanghelpers.RunnerConfig{
+		RuntimeImage:   runtimeImage,
+		WorkspacePath:  s.Identity.WorkspacePath,
+		RelativeSource: s.Identity.RelativeToWorkspace,
+		UniqueName:     s.UniqueWithWorkspace(),
+		CacheLocation:  s.cacheLocation,
+		Settings:       &s.Settings.GoAgentSettings,
+	}
 
-		// Need to bind the ports
+	env, err := golanghelpers.CreateRunner(ctx, s.Runtime.RuntimeContext, cfg)
+	if err != nil {
+		return err
+	}
+
+	// Bind endpoint ports for container runtime (agent-specific).
+	if s.Runtime.IsContainerRuntime() {
 		instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GrpcEndpoint, resources.NewContainerNetworkAccess())
 		if err != nil {
-			return s.Wool.Wrapf(err, "cannot find network instance")
+			return s.Wool.Wrapf(err, "cannot find grpc network instance")
 		}
-
-		dockerEnv.WithPort(ctx, instance.Port)
+		env.WithPort(ctx, instance.Port)
 
 		if s.Settings.RestEndpoint {
 			restInstance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.RestEndpoint, resources.NewContainerNetworkAccess())
 			if err != nil {
-				return s.Wool.Wrapf(err, "cannot find network instance")
+				return s.Wool.Wrapf(err, "cannot find rest network instance")
 			}
-			dockerEnv.WithPort(ctx, restInstance.Port)
+			env.WithPort(ctx, restInstance.Port)
 		}
-		// Mount the service.codefly.yaml
-		dockerEnv.WithFile(s.Local("service.codefly.yaml"), "/service.codefly.yaml")
-		s.runnerEnvironment = dockerEnv
-	} else if s.Runtime.IsNixRuntime() {
-		nixEnv, err := golanghelpers.NewNixGoRunner(ctx, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, s.Settings.GoSourceDir()))
-		if err != nil {
-			return s.Wool.Wrapf(err, "cannot create nix runner")
-		}
-		s.runnerEnvironment = nixEnv
-	} else {
-		localEnv, err := golanghelpers.NewNativeGoRunner(ctx, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, s.Settings.GoSourceDir()))
-		if err != nil {
-			return s.Wool.Wrapf(err, "cannot create local runner")
-		}
-		s.runnerEnvironment = localEnv
 	}
 
-	s.runnerEnvironment.WithLocalCacheDir(s.cacheLocation)
-
-	s.runnerEnvironment.WithDebugSymbol(s.Settings.DebugSymbols)
-	s.runnerEnvironment.WithRaceConditionDetection(s.Settings.RaceConditionDetectionRun)
 	allEnvs, err := s.EnvironmentVariables.All()
 	if err != nil {
 		return s.Wool.Wrapf(err, "cannot get environment variables")
 	}
-	s.runnerEnvironment.WithEnvironmentVariables(ctx, allEnvs...)
+	env.WithEnvironmentVariables(ctx, allEnvs...)
 
-	s.runnerEnvironment.WithCGO(s.WithCGO)
-	s.runnerEnvironment.WithWorkspace(s.WithWorkspace)
-
+	s.runnerEnvironment = env
 	return nil
 }
 
