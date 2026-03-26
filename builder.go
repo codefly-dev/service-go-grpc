@@ -49,7 +49,7 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 		return nil, err
 	}
 
-	s.sourceLocation = s.Local("code")
+	s.sourceLocation = s.Local("%s", s.Settings.GoSourceDir())
 	s.cacheLocation = s.Local(".cache")
 
 	requirements.Localize(s.Location)

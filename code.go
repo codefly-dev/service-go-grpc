@@ -38,8 +38,8 @@ func (c *Code) ListSymbols(ctx context.Context, req *codev0.ListSymbolsRequest) 
 	if c.lspClient == nil {
 		sourceDir := c.sourceLocation
 		if sourceDir == "" {
-			// Fall back to base location + code
-			sourceDir = c.Location + "/code"
+			// Fall back to base location + configured source dir
+			sourceDir = c.Location + "/" + c.Settings.GoSourceDir()
 		}
 
 		w.Info("starting LSP client", wool.DirField(sourceDir))

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/codefly-dev/core/agents"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/network"
@@ -69,8 +68,6 @@ func TestCreateToRunDocker(t *testing.T) {
 
 func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	wool.SetGlobalLogLevel(wool.DEBUG)
-	agents.LogToConsole()
-
 	ctx := context.Background()
 
 	var err error

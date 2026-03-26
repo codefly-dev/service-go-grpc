@@ -24,16 +24,25 @@ var agent = shared.Must(configurations.LoadFromFs[configurations.Agent](shared.E
 
 var requirements = builders.NewDependencies(agent.Name,
 	builders.NewDependency("service.codefly.yaml"),
-	builders.NewDependency("code").WithPathSelect(shared.NewSelect("*.go")),
+	builders.NewDependency("code").WithPathSelect(shared.NewSelect("*.go")), // TODO: use Settings.GoSourceDir() at load time
 )
 
 type Settings struct {
-	HotReload                 bool `yaml:"hot-reload"`
-	DebugSymbols              bool `yaml:"debug-symbols"`
-	RaceConditionDetectionRun bool `yaml:"race-condition-detection-run"`
-	RestEndpoint              bool `yaml:"rest-endpoint"`
-	WithCGO                   bool `yaml:"with-cgo"`
-	WithWorkspace             bool `yaml:"with-workspace"`
+	HotReload                 bool   `yaml:"hot-reload"`
+	DebugSymbols              bool   `yaml:"debug-symbols"`
+	RaceConditionDetectionRun bool   `yaml:"race-condition-detection-run"`
+	RestEndpoint              bool   `yaml:"rest-endpoint"`
+	WithCGO                   bool   `yaml:"with-cgo"`
+	WithWorkspace             bool   `yaml:"with-workspace"`
+	SourceDir                 string `yaml:"source-dir"` // Go source directory relative to service root. Default: "code"
+}
+
+// GoSourceDir returns the configured source directory, defaulting to "code".
+func (s *Settings) GoSourceDir() string {
+	if s.SourceDir != "" {
+		return s.SourceDir
+	}
+	return "code"
 }
 
 const HotReload = "hot-reload"
@@ -96,13 +105,13 @@ func NewService() *Service {
 }
 
 // GoVersion is the version of Go
-const GoVersion = "1.23"
+const GoVersion = "1.26"
 
 // AlpineVersion is the version of Alpine
-const AlpineVersion = "3.20"
+const AlpineVersion = "3.21"
 
 // Runtime Image
-var runtimeImage = &configurations.DockerImage{Name: "codeflydev/go", Tag: "0.0.5"}
+var runtimeImage = &configurations.DockerImage{Name: "codeflydev/go", Tag: "0.0.10"}
 
 func main() {
 	svc := NewService()

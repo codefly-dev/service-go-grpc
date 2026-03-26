@@ -5,7 +5,6 @@ import (
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/builders"
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 	"github.com/codefly-dev/core/shared"
@@ -56,7 +55,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 
 	s.Runtime.SetEnvironment(req.Environment)
 
-	s.sourceLocation, err = s.LocalDirCreate(ctx, "code")
+	s.sourceLocation, err = s.LocalDirCreate(ctx, "%s", s.Settings.GoSourceDir())
 	if err != nil {
 		return s.Runtime.LoadErrorf(err, "creating source location")
 	}
@@ -90,18 +89,8 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	return s.Runtime.LoadResponse()
 }
 
-func (s *Runtime) SetRuntimeContext(ctx context.Context, runtimeContext *basev0.RuntimeContext) error {
-	if runtimeContext.Kind == resources.RuntimeContextNix {
-		s.Runtime.RuntimeContext = resources.NewRuntimeContextNix()
-		return nil
-	}
-	if runtimeContext.Kind == resources.RuntimeContextFree || runtimeContext.Kind == resources.RuntimeContextNative {
-		if languages.HasGoRuntime(nil) {
-			s.Runtime.RuntimeContext = resources.NewRuntimeContextNative()
-			return nil
-		}
-	}
-	s.Runtime.RuntimeContext = resources.NewRuntimeContextContainer()
+func (s *Runtime) SetRuntimeContext(_ context.Context, runtimeContext *basev0.RuntimeContext) error {
+	s.Runtime.RuntimeContext = golanghelpers.SetGoRuntimeContext(runtimeContext)
 	return nil
 }
 
@@ -110,7 +99,7 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 
 	if s.Runtime.IsContainerRuntime() {
 		dockerEnv, err := golanghelpers.NewDockerGoRunner(ctx, runtimeImage, s.Identity.WorkspacePath,
-			path.Join(s.Identity.RelativeToWorkspace, "code"), s.UniqueWithWorkspace())
+			path.Join(s.Identity.RelativeToWorkspace, s.Settings.GoSourceDir()), s.UniqueWithWorkspace())
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create docker runner")
 		}
@@ -134,13 +123,13 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 		dockerEnv.WithFile(s.Local("service.codefly.yaml"), "/service.codefly.yaml")
 		s.runnerEnvironment = dockerEnv
 	} else if s.Runtime.IsNixRuntime() {
-		nixEnv, err := golanghelpers.NewNixGoRunner(ctx, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, "code"))
+		nixEnv, err := golanghelpers.NewNixGoRunner(ctx, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, s.Settings.GoSourceDir()))
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create nix runner")
 		}
 		s.runnerEnvironment = nixEnv
 	} else {
-		localEnv, err := golanghelpers.NewNativeGoRunner(ctx, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, "code"))
+		localEnv, err := golanghelpers.NewNativeGoRunner(ctx, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, s.Settings.GoSourceDir()))
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create local runner")
 		}
@@ -331,43 +320,22 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	err := s.runnerEnvironment.Env().WithBinary("codefly")
-	if err != nil {
-		s.Wool.Warn("codefly binary not found in environment: testing with dependencies will not work")
-	}
+	s.Infof("running go tests")
 
-	proc, err := s.runnerEnvironment.Env().NewProcess("go", "test", "-json", "-cover", "./...")
-	if err != nil {
-		return s.Runtime.TestErrorf(err, "cannot create test proc")
-	}
-
-	var capture lineCapture
-	proc.WithOutput(&capture)
-	proc.WithDir(s.sourceLocation)
 	testEnvs, err := s.EnvironmentVariables.All()
 	if err != nil {
 		return s.Runtime.TestErrorf(err, "getting environment variables")
 	}
-	proc.WithEnvironmentVariables(ctx, testEnvs...)
 
-	s.Infof("running go tests")
-
-	s.testProc = proc
-	runErr := proc.Run(ctx)
-	s.testProc = nil
-
-	summary := parseTestJSON(capture.String())
+	summary, runErr := golanghelpers.RunGoTests(ctx, s.runnerEnvironment, s.sourceLocation, testEnvs)
 
 	// Forward summary and failures to the logger for the TUI
-	s.Wool.Forwardf("Tests: %s", summary.summaryLine())
+	s.Wool.Forwardf("Tests: %s", summary.SummaryLine())
 	for _, f := range summary.Failures {
-		s.Wool.Forwardf(f)
+		s.Wool.Forwardf("%s", f)
 	}
 
-	if runErr != nil {
-		return s.Runtime.TestResponseWithResults(summary.Run, summary.Passed, summary.Failed, summary.Skipped, summary.Coverage, summary.Failures, runErr)
-	}
-	return s.Runtime.TestResponseWithResults(summary.Run, summary.Passed, summary.Failed, summary.Skipped, summary.Coverage, summary.Failures, nil)
+	return s.Runtime.TestResponseWithResults(summary.Run, summary.Passed, summary.Failed, summary.Skipped, summary.Coverage, summary.Failures, runErr)
 }
 
 func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationRequest) (*runtimev0.InformationResponse, error) {
@@ -410,29 +378,15 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 
 func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*runtimev0.DestroyResponse, error) {
 	defer s.Wool.Catch()
-
 	ctx = s.Wool.Inject(ctx)
 
 	s.Wool.Trace("destroying service")
-
-	s.Wool.Trace("removing cache")
-	err := shared.EmptyDir(ctx, s.cacheLocation)
+	err := golanghelpers.DestroyGoRuntime(ctx, s.Runtime.RuntimeContext, runtimeImage,
+		s.cacheLocation, s.Identity.WorkspacePath,
+		path.Join(s.Identity.RelativeToWorkspace, s.Settings.GoSourceDir()),
+		s.UniqueWithWorkspace())
 	if err != nil {
 		return s.Runtime.DestroyError(err)
-	}
-
-	// Get the runner environment
-	if s.Runtime.IsContainerRuntime() {
-		s.Wool.Trace("running in container")
-
-		dockerEnv, err := golanghelpers.NewDockerGoRunner(ctx, runtimeImage, s.Identity.WorkspacePath, path.Join(s.Identity.RelativeToWorkspace, "code"), s.UniqueWithWorkspace())
-		if err != nil {
-			return s.Runtime.DestroyError(err)
-		}
-		err = dockerEnv.Shutdown(ctx)
-		if err != nil {
-			return s.Runtime.DestroyError(err)
-		}
 	}
 	return s.Runtime.DestroyResponse()
 }
