@@ -86,6 +86,9 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		}
 	}
 
+	// Register agent commands
+	s.registerCommands()
+
 	return s.Runtime.LoadResponse()
 }
 
@@ -276,6 +279,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	}
 
 	// Add Fixture
+	s.Wool.Debug("setting fixture", wool.Field("fixture", req.Fixture))
 	s.EnvironmentVariables.SetFixture(req.Fixture)
 
 	// Now we run
@@ -302,6 +306,25 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	return s.Runtime.StartResponse()
 }
 
+func (s *Runtime) Build(ctx context.Context, req *runtimev0.BuildRequest) (*runtimev0.BuildResponse, error) {
+	defer s.Wool.Catch()
+	ctx = s.Wool.Inject(ctx)
+
+	s.Infof("running go build")
+
+	envs, err := s.EnvironmentVariables.All()
+	if err != nil {
+		return s.Runtime.BuildErrorf(err, "getting environment variables")
+	}
+
+	opts := golanghelpers.BuildOptions{Target: req.Target}
+	output, runErr := golanghelpers.RunGoBuild(ctx, s.runnerEnvironment, s.sourceLocation, envs, opts)
+	if runErr != nil {
+		return s.Runtime.BuildErrorf(runErr, "build failed")
+	}
+	return s.Runtime.BuildResponse(output)
+}
+
 func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
@@ -313,7 +336,13 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		return s.Runtime.TestErrorf(err, "getting environment variables")
 	}
 
-	summary, runErr := golanghelpers.RunGoTests(ctx, s.runnerEnvironment, s.sourceLocation, testEnvs)
+	opts := golanghelpers.TestOptions{
+		Target:  req.Target,
+		Verbose: req.Verbose,
+		Race:    req.Race,
+		Timeout: req.Timeout,
+	}
+	summary, runErr := golanghelpers.RunGoTests(ctx, s.runnerEnvironment, s.sourceLocation, testEnvs, opts)
 
 	// Forward summary and failures to the logger for the TUI
 	s.Wool.Forwardf("Tests: %s", summary.SummaryLine())
@@ -322,6 +351,25 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	}
 
 	return s.Runtime.TestResponseWithResults(summary.Run, summary.Passed, summary.Failed, summary.Skipped, summary.Coverage, summary.Failures, runErr)
+}
+
+func (s *Runtime) Lint(ctx context.Context, req *runtimev0.LintRequest) (*runtimev0.LintResponse, error) {
+	defer s.Wool.Catch()
+	ctx = s.Wool.Inject(ctx)
+
+	s.Infof("running go vet")
+
+	envs, err := s.EnvironmentVariables.All()
+	if err != nil {
+		return s.Runtime.LintErrorf(err, "getting environment variables")
+	}
+
+	opts := golanghelpers.LintOptions{Target: req.Target}
+	output, runErr := golanghelpers.RunGoLint(ctx, s.runnerEnvironment, s.sourceLocation, envs, opts)
+	if runErr != nil {
+		return s.Runtime.LintErrorf(runErr, "lint failed")
+	}
+	return s.Runtime.LintResponse(output)
 }
 
 func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationRequest) (*runtimev0.InformationResponse, error) {
