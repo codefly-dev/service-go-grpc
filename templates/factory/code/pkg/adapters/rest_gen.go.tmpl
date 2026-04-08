@@ -8,6 +8,7 @@ package adapters
 
 import (
 	"{{ .Service.Name.DNSCase }}/pkg/gen"
+	"{{ .Service.Name.DNSCase }}/plugins"
 	"bytes"
 	"context"
 	"fmt"
@@ -67,6 +68,13 @@ func (s *RestServer) Run(ctx context.Context) error {
 	err := gen.Register{{ .Service.Name.Title }}ServiceHandlerFromEndpoint(ctx, gwMux, fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts)
 	if err != nil {
 		return err
+	}
+
+	// Register plugin REST handlers
+	for _, p := range plugins.All() {
+		if err := p.RegisterREST(ctx, gwMux, fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts); err != nil {
+			return fmt.Errorf("plugin %s REST registration failed: %w", p.Name(), err)
+		}
 	}
 
 	// Wrap your mux with the CORS handler

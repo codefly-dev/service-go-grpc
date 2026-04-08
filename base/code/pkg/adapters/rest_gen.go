@@ -7,7 +7,8 @@ package adapters
 ----------------------------------------------------------------- */
 
 import (
-	"base_replacement/pkg/gen"
+	"codefly-base/pkg/gen"
+	"codefly-base/plugins"
 	"bytes"
 	"context"
 	"fmt"
@@ -67,6 +68,13 @@ func (s *RestServer) Run(ctx context.Context) error {
 	err := gen.RegisterWebServiceHandlerFromEndpoint(ctx, gwMux, fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts)
 	if err != nil {
 		return err
+	}
+
+	// Register plugin REST handlers
+	for _, p := range plugins.All() {
+		if err := p.RegisterREST(ctx, gwMux, fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts); err != nil {
+			return fmt.Errorf("plugin %s REST registration failed: %w", p.Name(), err)
+		}
 	}
 
 	// Wrap your mux with the CORS handler

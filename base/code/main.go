@@ -20,7 +20,7 @@ func doWork(ctx context.Context) (Clean, error) {
 ----------------------------------------------------------------- */
 
 import (
-	"base_replacement/pkg/adapters"
+	"codefly-base/pkg/adapters"
 	"context"
 	"fmt"
 	"github.com/codefly-dev/core/shared"

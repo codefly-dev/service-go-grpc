@@ -1,7 +1,7 @@
 replacements:
   - from: Web
     to: "{{ .Service.Name.Title }}"
-  - from: base_replacement
+  - from: codefly-base
     to: "{{ .Service.Name.DNSCase }}"
 ignores:
   - service.generation.codefly.yaml

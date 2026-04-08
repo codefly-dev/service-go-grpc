@@ -8,6 +8,7 @@ package adapters
 ----------------------------------------------------------------- */
 
 import (
+	"{{ .Service.Name.DNSCase }}/plugins"
 	"context"
 	"fmt"
 )
@@ -23,6 +24,12 @@ func NewServer(config *Configuration) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Register plugins on the gRPC server
+	for _, p := range plugins.All() {
+		p.RegisterGRPC(grpc.gRPC)
+	}
+
 	var rest *RestServer
 	if config.EndpointHttpPort != nil {
 		rest, err = NewRestServer(config)
