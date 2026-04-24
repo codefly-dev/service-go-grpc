@@ -14,8 +14,9 @@ import (
 )
 
 type Server struct {
-	grpc *GrpcServer
-	rest *RestServer
+	grpc    *GrpcServer
+	rest    *RestServer
+	connect *ConnectServer
 }
 
 func NewServer(config *Configuration) (*Server, error) {
@@ -37,9 +38,19 @@ func NewServer(config *Configuration) (*Server, error) {
 			return nil, err
 		}
 	}
+
+	var conn *ConnectServer
+	if config.EndpointConnectPort != nil {
+		conn, err = NewConnectServer(config)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &Server{
-		grpc: grpc,
-		rest: rest,
+		grpc:    grpc,
+		rest:    rest,
+		connect: conn,
 	}, nil
 }
 
@@ -47,6 +58,14 @@ func (server *Server) Start(ctx context.Context) error {
 	if server.rest != nil {
 		go func() {
 			err := server.rest.Run(ctx)
+			if err != nil {
+				panic(err)
+			}
+		}()
+	}
+	if server.connect != nil {
+		go func() {
+			err := server.connect.Run(ctx)
 			if err != nil {
 				panic(err)
 			}

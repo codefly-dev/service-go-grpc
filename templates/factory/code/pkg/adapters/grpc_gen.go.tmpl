@@ -13,7 +13,7 @@ import (
 	"{{ .Service.Name.DNSCase }}/pkg/gen"
 	"context"
 	"fmt"
-	"github.com/bufbuild/protovalidate-go"
+	"buf.build/go/protovalidate"
 	"net"
 
 	"google.golang.org/grpc/codes"
@@ -27,7 +27,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-var validator *protovalidate.Validator
+var validator protovalidate.Validator
 
 func init() {
 	v, err := protovalidate.New()
@@ -55,15 +55,16 @@ func (s *GrpcServer) Version(ctx context.Context, req *gen.VersionRequest) (*gen
 }
 
 type Configuration struct {
-	EndpointGrpcPort uint16
-	EndpointHttpPort *uint16
+	EndpointGrpcPort    uint16
+	EndpointHttpPort    *uint16
+	EndpointConnectPort *uint16
 }
 
 type GrpcServer struct {
 	gen.Unsafe{{ .Service.Name.Title }}ServiceServer
 	configuration *Configuration
 	gRPC          *grpc.Server
-	validator     *protovalidate.Validator
+	validator     protovalidate.Validator
 }
 
 func NewGrpServer(c *Configuration) (*GrpcServer, error) {

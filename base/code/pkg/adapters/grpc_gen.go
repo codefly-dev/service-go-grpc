@@ -55,8 +55,9 @@ func (s *GrpcServer) Version(ctx context.Context, req *gen.VersionRequest) (*gen
 }
 
 type Configuration struct {
-	EndpointGrpcPort uint16
-	EndpointHttpPort *uint16
+	EndpointGrpcPort    uint16
+	EndpointHttpPort    *uint16
+	EndpointConnectPort *uint16
 }
 
 type GrpcServer struct {

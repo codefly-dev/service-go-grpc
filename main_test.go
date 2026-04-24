@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"path"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,46 +28,53 @@ import (
 func TestSetRuntimeContextNix(t *testing.T) {
 	ctx := context.Background()
 
-	runtime := NewRuntime()
-	// Minimal setup for the runtime
-	runtime.Service = NewService()
-	runtime.Runtime.RuntimeContext = resources.NewRuntimeContextNative() // start with native
+	runtime := NewRuntime(NewService())
+	runtime.Base.Runtime.RuntimeContext = resources.NewRuntimeContextNative() // start with native
 
 	err := runtime.SetRuntimeContext(ctx, resources.NewRuntimeContextNix())
 	require.NoError(t, err)
-	require.Equal(t, resources.RuntimeContextNix, runtime.Runtime.RuntimeContext.Kind)
-	require.True(t, runtime.Runtime.IsNixRuntime())
-	require.False(t, runtime.Runtime.IsContainerRuntime())
-	require.False(t, runtime.Runtime.IsNativeRuntime())
+	require.Equal(t, resources.RuntimeContextNix, runtime.Base.Runtime.RuntimeContext.Kind)
+	require.True(t, runtime.Base.Runtime.IsNixRuntime())
+	require.False(t, runtime.Base.Runtime.IsContainerRuntime())
+	require.False(t, runtime.Base.Runtime.IsNativeRuntime())
 }
 
 func TestSetRuntimeContextNative(t *testing.T) {
 	ctx := context.Background()
 
-	runtime := NewRuntime()
-	runtime.Service = NewService()
+	runtime := NewRuntime(NewService())
 
 	err := runtime.SetRuntimeContext(ctx, resources.NewRuntimeContextNative())
 	require.NoError(t, err)
 
 	if languages.HasGoRuntime(nil) {
-		require.Equal(t, resources.RuntimeContextNative, runtime.Runtime.RuntimeContext.Kind)
+		require.Equal(t, resources.RuntimeContextNative, runtime.Base.Runtime.RuntimeContext.Kind)
 	} else {
-		require.Equal(t, resources.RuntimeContextContainer, runtime.Runtime.RuntimeContext.Kind)
+		require.Equal(t, resources.RuntimeContextContainer, runtime.Base.Runtime.RuntimeContext.Kind)
 	}
 }
 
 func TestCreateToRunNative(t *testing.T) {
 	if languages.HasGoRuntime(nil) {
-		testCreateToRun(t, resources.NewRuntimeContextNative())
+		testCreateToRun(t, resources.NewRuntimeContextNative(), false)
 	}
 }
 
 func TestCreateToRunDocker(t *testing.T) {
-	testCreateToRun(t, resources.NewRuntimeContextContainer())
+	testCreateToRun(t, resources.NewRuntimeContextContainer(), false)
 }
 
-func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
+func TestCreateToRunWithConnectNative(t *testing.T) {
+	// Skip until core is published with standards.CONNECT support.
+	// The scaffolded service depends on published core which doesn't
+	// have the CONNECT constant yet.
+	t.Skip("requires published core with standards.CONNECT")
+	if languages.HasGoRuntime(nil) {
+		testCreateToRun(t, resources.NewRuntimeContextNative(), true)
+	}
+}
+
+func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withConnect bool) {
 	wool.SetGlobalLogLevel(wool.DEBUG)
 	ctx := context.Background()
 
@@ -97,7 +105,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	// randomize
 	env.NamingScope = strconv.Itoa(time.Now().Second())
 
-	builder := NewBuilder()
+	builder := NewBuilder(NewService())
 
 	resp, err := builder.Load(ctx, &builderv0.LoadRequest{Identity: identity, CreationMode: &builderv0.CreationMode{Communicate: false}})
 	require.NoError(t, err)
@@ -106,8 +114,27 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	_, err = builder.Create(ctx, &builderv0.CreateRequest{})
 	require.NoError(t, err)
 
+	// For Connect tests, enable Connect and re-create endpoints + save
+	if withConnect {
+		builder.GoGrpc.Settings.ConnectEndpoint = true
+		builder.Endpoints = nil // reset
+		err = builder.CreateEndpoints(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 3, len(builder.Endpoints), "expected grpc+rest+connect endpoints")
+
+		// Re-save with connect endpoint
+		svcDir := path.Join(tmpDir, "mod/svc")
+		reloadedSvc, err := resources.LoadServiceFromDir(ctx, svcDir)
+		require.NoError(t, err)
+		reloadedSvc.Endpoints, err = resources.FromProtoEndpoints(builder.Endpoints...)
+		require.NoError(t, err)
+		reloadedSvc.Spec["connect-endpoint"] = true
+		err = reloadedSvc.Save(ctx)
+		require.NoError(t, err)
+	}
+
 	// Now run it
-	runtime := NewRuntime()
+	runtime := NewRuntime(NewService())
 
 	_, err = runtime.Load(ctx, &runtimev0.LoadRequest{
 		Identity:     identity,
@@ -115,7 +142,11 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 		DisableCatch: true})
 	require.NoError(t, err)
 
-	require.Equal(t, 2, len(runtime.Endpoints))
+	expectedEndpoints := 2 // grpc + rest
+	if withConnect {
+		expectedEndpoints = 3 // grpc + rest + connect
+	}
+	require.Equal(t, expectedEndpoints, len(runtime.Endpoints))
 
 	// Create temporary network mappings
 	networkManager, err := network.NewRuntimeManager(ctx, nil)
@@ -125,7 +156,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	networkMappings, err := networkManager.GenerateNetworkMappings(ctx, env, workspace, runtime.Identity, runtime.Endpoints)
 	require.NoError(t, err)
 	require.NotNil(t, networkMappings)
-	require.Equal(t, 2, len(networkMappings))
+	require.Equal(t, expectedEndpoints, len(networkMappings))
 
 	init, err := runtime.Init(ctx, &runtimev0.InitRequest{
 		RuntimeContext:          runtimeContext,
@@ -138,20 +169,9 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 	}()
 
 	testRun(t, runtime, ctx, identity, networkMappings)
-	//
-	//_, err = runtime.Stop(ctx, &runtimev0.StopRequest{})
-	//require.NoError(t, err)
-	//
-	//// Check that the runner is stopped
-	//time.Sleep(2 * time.Second)
-	//running, err := runtime.runner.IsRunning(ctx)
-	//require.NoError(t, err)
-	//require.False(t, running)
-	//
-	//testNoApi(t, runtime, ctx, networkMappings)
 
-	// Running again should work
-	// testRun(t, runtime, ctx, identity, networkMappings)
+	// Test Connect endpoint (if configured)
+	testConnectEndpoint(t, runtime, ctx, identity, networkMappings)
 
 	// Test
 	test, err := runtime.Test(ctx, &runtimev0.TestRequest{})
@@ -162,7 +182,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext) {
 
 func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev0.ServiceIdentity, networkMappings []*basev0.NetworkMapping) {
 
-	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.RestEndpoint, resources.NewNativeNetworkAccess())
+	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.GoGrpc.RestEndpoint, resources.NewNativeNetworkAccess())
 	require.NoError(t, err)
 
 	_, err = runtime.Start(ctx, &runtimev0.StartRequest{})
@@ -204,8 +224,58 @@ func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *base
 	}
 }
 
+func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev0.ServiceIdentity, networkMappings []*basev0.NetworkMapping) {
+	if runtime.GoGrpc.ConnectEndpoint == nil {
+		t.Log("no connect endpoint configured, skipping connect test")
+		return
+	}
+
+	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.GoGrpc.ConnectEndpoint, resources.NewNativeNetworkAccess())
+	require.NoError(t, err)
+
+	// Connect protocol uses POST with JSON body to /api.WebService/Version
+	client := http.Client{Timeout: 2 * time.Second}
+	tries := 0
+	for {
+		if tries > 10 {
+			t.Fatal("connect endpoint: too many tries")
+		}
+		time.Sleep(time.Second)
+
+		req, err := http.NewRequest("POST", fmt.Sprintf("%s/api.WebService/Version", instance.Address), strings.NewReader("{}"))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+
+		response, err := client.Do(req)
+		if err != nil {
+			tries++
+			continue
+		}
+		if response.StatusCode != http.StatusOK {
+			tries++
+			response.Body.Close()
+			continue
+		}
+
+		defer response.Body.Close()
+
+		body, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+
+		var data map[string]interface{}
+		err = json.Unmarshal(body, &data)
+		require.NoError(t, err)
+
+		version, ok := data["version"].(string)
+		require.True(t, ok)
+		require.Equal(t, identity.Version, version)
+		t.Log("Connect endpoint working:", version)
+		return
+	}
+}
+
 func testNoApi(t *testing.T, runtime *Runtime, ctx context.Context, networkMappings []*basev0.NetworkMapping) {
-	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.RestEndpoint, resources.NewNativeNetworkAccess())
+	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.GoGrpc.RestEndpoint, resources.NewNativeNetworkAccess())
 	require.NoError(t, err)
 
 	client := http.Client{Timeout: 200 * time.Millisecond}

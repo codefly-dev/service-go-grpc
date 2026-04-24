@@ -7,3 +7,8 @@ dist
 dist/
 *.hash
 /service-go-grpc
+service-go-grpc
+go.work
+go.work.sum
+*.test
+*.out

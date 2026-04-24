@@ -4,10 +4,12 @@ go 1.25.0
 
 require (
 	buf.build/go/protovalidate v1.1.3
+	connectrpc.com/connect v1.19.1
 	github.com/codefly-dev/core v0.1.154
 	github.com/codefly-dev/sdk-go v0.1.40
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0
 	github.com/rs/cors v1.11.1
+	golang.org/x/net v0.53.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260406210006-6f92a3bedf2d
 	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11
@@ -57,10 +59,9 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90 // indirect
-	golang.org/x/net v0.52.0 // indirect
+	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260406210006-6f92a3bedf2d // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

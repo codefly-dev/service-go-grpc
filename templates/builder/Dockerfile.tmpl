@@ -1,38 +1,41 @@
 # Build stage
 FROM golang:{{ .GoVersion }}-alpine AS builder
 
+ARG TARGETARCH
+
 # Install ca-certificates for HTTPS requests and git for private repos if needed
 RUN apk add --no-cache ca-certificates git
 
 # Set working directory
 WORKDIR /app
 
-# Copy go mod and sum files
-# Support both layouts: go.mod in code/ (standard) or at service root
-COPY code/go.mod* code/go.sum* ./code/
-COPY go.mod* go.sum* ./
-
-# Download dependencies (try code/ first, fall back to root)
-RUN if [ -f code/go.mod ]; then cd code && go mod download; elif [ -f go.mod ]; then go mod download; fi
-
 # Copy the source code
 {{ range .Components}}
 COPY {{.}} {{.}}
 {{end}}
 
-# Build the binary
-# Detect source location: code/ or root
+# Download dependencies and build the binary
+{{- if .ModuleRoot }}
+COPY {{ .ModuleRoot }}/go.mod {{ .ModuleRoot }}/go.sum {{ .ModuleRoot }}/
+RUN cd {{ .ModuleRoot }} && go mod download
+COPY {{ .ModuleRoot }} {{ .ModuleRoot }}
+RUN cd {{ .ModuleRoot }} && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags='-w -s -extldflags "-static"' -o /app/app {{ .BuildTarget }}
+{{- else }}
 RUN if [ -f code/go.mod ]; then \
-      cd code && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-w -s -extldflags "-static"' -o /app/app; \
+      cd code && go mod download && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags='-w -s -extldflags "-static"' -o /app/app .; \
+    elif [ -f go.mod ]; then \
+      go mod download && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags='-w -s -extldflags "-static"' -o /app/app .; \
     else \
-      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-w -s -extldflags "-static"' -o /app/app ./cmd/server; \
+      echo "ERROR: no go.mod found" && exit 1; \
     fi
+{{- end }}
 
 # Final stage
 FROM alpine:{{ .AlpineVersion }}
 
-# Install ca-certificates for HTTPS requests
-RUN apk add --no-cache ca-certificates
+# Install ca-certificates for HTTPS and git for runtime operations
+RUN apk add --no-cache ca-certificates git
 
 # Set working directory
 WORKDIR /app
