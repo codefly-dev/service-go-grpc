@@ -77,6 +77,15 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 	if err != nil {
 		return resp, err
 	}
+
+	// The generic Load unmarshalled settings into the GENERIC Settings struct,
+	// which has no rest-endpoint / connect-endpoint fields — so those were
+	// silently dropped. Re-unmarshal into the richer go-grpc Settings so the
+	// endpoint discovery below sees them (mirrors Runtime.Load).
+	if err := s.Base.Load(ctx, req.Identity, s.GoGrpc.Settings); err != nil {
+		return nil, s.Wool.Wrapf(err, "cannot load go-grpc settings")
+	}
+
 	s.cacheLocation = s.Local(".cache")
 
 	// Creation mode: generic returned early with GettingStarted.

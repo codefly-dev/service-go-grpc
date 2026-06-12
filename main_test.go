@@ -65,10 +65,9 @@ func TestCreateToRunDocker(t *testing.T) {
 }
 
 func TestCreateToRunWithConnectNative(t *testing.T) {
-	// Skip until core is published with standards.CONNECT support.
-	// The scaffolded service depends on published core which doesn't
-	// have the CONNECT constant yet.
-	t.Skip("requires published core with standards.CONNECT")
+	// CONNECT support is now in the pinned core (the factory templates
+	// reference standards.CONNECT directly), so the scaffolded service
+	// resolves it — the old t.Skip is no longer warranted.
 	if languages.HasGoRuntime(nil) {
 		testCreateToRun(t, resources.NewRuntimeContextNative(), true)
 	}

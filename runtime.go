@@ -4,6 +4,7 @@ import (
 	"context"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/codefly-dev/core/agents/helpers/code"
 	"github.com/codefly-dev/core/agents/services"
@@ -46,7 +47,14 @@ type Runtime struct {
 
 	cacheLocation string
 	runner        runners.Proc
-	testProc      runners.Proc
+	// runnerCancel cancels the context the current runner's supervise
+	// goroutine waits on. We cancel it BEFORE any intentional stop (a
+	// hot-reload rebuild-replace or an explicit Stop) so the goroutine can
+	// tell a deliberate teardown from a real crash — otherwise every stop is
+	// misreported as "exited unexpectedly" and tears the whole tree down,
+	// aborting the rebuild. nil before the first Start.
+	runnerCancel context.CancelFunc
+	testProc     runners.Proc
 }
 
 // NewRuntime composes a go-grpc Runtime by constructing a generic
@@ -224,7 +232,9 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	confs := resources.FilterConfigurations(req.DependenciesConfigurations, s.Base.Runtime.RuntimeContext)
 
 	s.Wool.Trace("adding configurations", wool.Field("configurations", resources.MakeManyConfigurationSummary(confs)))
-	err = s.EnvironmentVariables.AddConfigurations(ctx, confs...)
+	if err = s.EnvironmentVariables.AddConfigurations(ctx, confs...); err != nil {
+		return s.Base.Runtime.InitError(err)
+	}
 
 	// Networking: a process is native to itself
 	net, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.GrpcEndpoint, resources.NewNativeNetworkAccess())
@@ -232,21 +242,25 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		return s.Base.Runtime.InitError(err)
 	}
 
-	s.Infof("gPRC will run on %s", net.Address)
+	s.Infof("gRPC will run on %s", net.Address)
 
 	// Only add gRPC for now
 	nm, err := resources.FindNetworkMapping(ctx, s.NetworkMappings, s.GoGrpc.GrpcEndpoint)
 	if err != nil {
 		return s.Base.Runtime.InitError(err)
 	}
-	err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess())
+	if err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess()); err != nil {
+		return s.Base.Runtime.InitError(err)
+	}
 
 	if s.GoGrpc.Settings.RestEndpoint {
 		nm, err = resources.FindNetworkMapping(ctx, s.NetworkMappings, s.GoGrpc.RestEndpoint)
 		if err != nil {
 			return s.Base.Runtime.InitError(err)
 		}
-		err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess())
+		if err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess()); err != nil {
+			return s.Base.Runtime.InitError(err)
+		}
 
 		net, err = resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.RestEndpoint, resources.NewNativeNetworkAccess())
 		if err != nil {
@@ -261,7 +275,9 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		if err != nil {
 			return s.Base.Runtime.InitError(err)
 		}
-		err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess())
+		if err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess()); err != nil {
+			return s.Base.Runtime.InitError(err)
+		}
 
 		net, err = resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.ConnectEndpoint, resources.NewNativeNetworkAccess())
 		if err != nil {
@@ -323,14 +339,22 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 
 	s.Wool.Forwardf("building go binary...")
 
-	// Stop before replacing the runner
+	// Stop before replacing the runner. Cancel the old supervise goroutine's
+	// context FIRST so it recognises this as an intentional stop (hot-reload
+	// rebuild) and does not fire "exited unexpectedly" / MarkRunnerExited,
+	// which would tear the tree down and abort the rebuild.
 	if s.runner != nil {
+		if s.runnerCancel != nil {
+			s.runnerCancel()
+			s.runnerCancel = nil
+		}
 		err := s.runner.Stop(ctx)
 		if err != nil {
 			return s.Base.Runtime.StartError(err)
 		}
 	}
 
+	buildStarted := time.Now()
 	err := s.RunnerEnvironment.BuildBinary(ctx)
 	if err != nil {
 
@@ -340,8 +364,17 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 		s.Wool.Info("compile error, waiting for hot-reload")
 		return s.Base.Runtime.StartResponse()
 	}
+	buildMode := "built"
+	if s.RunnerEnvironment.UsedCache() {
+		buildMode = "cached"
+	}
+	s.Wool.Forwardf("go binary ready mode=%s elapsed=%s", buildMode, time.Since(buildStarted).Round(100*time.Millisecond))
 
-	runningContext := s.Wool.Inject(context.Background())
+	// runningContext is detached from the request ctx (the binary must outlive
+	// the Start RPC) but cancellable, so an intentional stop can signal the
+	// supervise goroutine below. Stored on the struct for Stop()/rebuild.
+	runningContext, runnerCancel := context.WithCancel(s.Wool.Inject(context.Background()))
+	s.runnerCancel = runnerCancel
 
 	// Add DependenciesNetworkMappings
 	err = s.EnvironmentVariables.AddEndpoints(ctx, req.DependenciesNetworkMappings, resources.NetworkAccessFromRuntimeContext(s.Base.Runtime.RuntimeContext))
@@ -379,7 +412,8 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	go func(p runners.Proc) {
 		err := p.Wait(runningContext)
 		if runningContext.Err() != nil {
-			// Context cancelled from our side (Stop) — clean exit, no signal.
+			// We cancelled runningContext (Stop or a hot-reload rebuild-replace)
+			// — this exit is intentional, not a crash. Stay silent.
 			return
 		}
 		// err may be nil if the binary exited cleanly without us asking —
@@ -415,6 +449,12 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 	}
 	if s.runner != nil {
 		s.Wool.Trace("stopping runner")
+		// Signal the supervise goroutine that this exit is intentional before
+		// we kill the process, so it doesn't misreport a clean stop as a crash.
+		if s.runnerCancel != nil {
+			s.runnerCancel()
+			s.runnerCancel = nil
+		}
 		err := s.runner.Stop(ctx)
 		if err != nil {
 			return s.Base.Runtime.StopError(err)

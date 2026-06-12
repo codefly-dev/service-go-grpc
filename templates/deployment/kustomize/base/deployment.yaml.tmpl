@@ -14,11 +14,87 @@ spec:
         app: {{ .Service.Name.DNSCase }}
         sha: {{ .Sha }}
     spec:
+      # uid 65532 = nobody/nogroup in distroless and most scratch
+      # base images. The codefly Go Dockerfile template (BuildGoDocker
+      # in core/runners/golang) produces a static binary on alpine,
+      # which has uid 65534 for nobody. Use 65534 to match.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
       containers:
         - name: {{ .Service.Name.DNSCase }}
           image: image:tag
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            # Match service.yaml.tmpl. http is grpc-gateway (REST
+            # facade), grpc is the raw gRPC listener.
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 9090
           envFrom:
             - configMapRef:
                 name: cm-{{ .Service.Name.DNSCase }}
             - secretRef:
                 name: secret-{{ .Service.Name.DNSCase }}
+          # Conservative defaults — bump per-service in overlay when
+          # workload size is known. Required because saas-starter's
+          # ResourceQuota / LimitRange demand them.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          # gRPC services that register grpc.health.v1 (which every
+          # go-grpc agent does via core/agents/agents.go's Serve)
+          # respond on either the grpc port (gRPC Check) or the http
+          # port if grpc-gateway is enabled. For broad compatibility
+          # the probes hit a /healthz HTTP path served by the
+          # grpc-gateway on the http port — that's the convention
+          # the go-grpc agent's main.go scaffold sets up.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # readOnlyRootFilesystem=true means anything that wants to
+          # write needs an explicit volume. /tmp is the classic one;
+          # add more here if a service needs scratch space.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
