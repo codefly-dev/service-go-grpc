@@ -375,6 +375,17 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	// supervise goroutine below. Stored on the struct for Stop()/rebuild.
 	runningContext, runnerCancel := context.WithCancel(s.Wool.Inject(context.Background()))
 	s.runnerCancel = runnerCancel
+	// Until the supervise goroutine below takes ownership of runningContext,
+	// any early error return would leak this context — it'd only be cancelled
+	// by some later Stop()/rebuild that happens to call s.runnerCancel. Cancel
+	// it on every bail-out path until the goroutine is actually launched.
+	superviseStarted := false
+	defer func() {
+		if !superviseStarted {
+			runnerCancel()
+			s.runnerCancel = nil
+		}
+	}()
 
 	// Add DependenciesNetworkMappings
 	err = s.EnvironmentVariables.AddEndpoints(ctx, req.DependenciesNetworkMappings, resources.NetworkAccessFromRuntimeContext(s.Base.Runtime.RuntimeContext))
@@ -409,6 +420,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	// missing API key), mark the runner failed so the codefly CLI's Follow
 	// loop sees it via StartStatus and tears the whole tree down. Without
 	// this goroutine the plugin happily idles while its child is dead.
+	superviseStarted = true // the goroutine now owns runningContext's lifetime
 	go func(p runners.Proc) {
 		err := p.Wait(runningContext)
 		if runningContext.Err() != nil {
