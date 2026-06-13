@@ -3,8 +3,8 @@ module github.com/codefly-dev/service-go-grpc
 go 1.25.0
 
 require (
-	github.com/codefly-dev/core v0.1.156
-	github.com/codefly-dev/service-go v0.0.0-00010101000000-000000000000
+	github.com/codefly-dev/core v0.1.164
+	github.com/codefly-dev/service-go v0.0.1
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.80.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -111,5 +111,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
-
-replace github.com/codefly-dev/service-go => ../go
