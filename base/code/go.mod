@@ -2,6 +2,8 @@ module codefly-base
 
 go 1.25.0
 
+toolchain go1.26.4
+
 require (
 	buf.build/go/protovalidate v1.1.3
 	connectrpc.com/connect v1.19.1
