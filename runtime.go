@@ -397,6 +397,9 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	s.Wool.Debug("setting fixture", wool.Field("fixture", req.Fixture))
 	s.EnvironmentVariables.SetFixture(req.Fixture)
 
+	// Add per-service runtime overrides (--set <service>:KEY=VAL)
+	s.EnvironmentVariables.AddOverrides(req.GetOverrides())
+
 	// Now we run
 	proc, err := s.RunnerEnvironment.Runner()
 	if err != nil {
