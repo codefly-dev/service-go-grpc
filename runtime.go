@@ -486,15 +486,12 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 		s.Wool.Trace("runner stopped")
 	}
 
-	// Stop the file watcher to prevent CPU spin on orphaned processes
-	if s.Watcher != nil {
-		s.Watcher.Pause()
-	}
-	// Close events channel to unblock the handler goroutine
-	if s.Events != nil {
-		close(s.Events)
-		s.Events = nil
-	}
+	// Tear down the file watcher. Cancelling it makes its Start goroutine run
+	// `defer close(Events)` — the single close of the events channel, which also
+	// unblocks the debounce handler. Stop must NOT close s.Events itself: that
+	// second close raced the watcher goroutine into a "close of closed channel"
+	// panic (crashing the agent on every shutdown, including Ctrl-C).
+	s.Base.StopWatcher()
 
 	s.Wool.Trace("base stopped")
 	return s.Base.Runtime.StopResponse()
