@@ -84,6 +84,9 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	if req.DisableCatch {
 		s.Wool.DisableCatch()
 	}
+	if err = s.Settings.Validate(); err != nil {
+		return s.Base.Runtime.LoadErrorf(err, "invalid Go settings")
+	}
 
 	s.Base.Runtime.SetEnvironment(req.Environment)
 

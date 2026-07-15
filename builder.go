@@ -254,7 +254,8 @@ func (s *Builder) Options() []*agentv0.Question {
 // CreateConfiguration is the template context passed to factory templates.
 type CreateConfiguration struct {
 	*services.Information
-	Envs []string
+	Settings *Settings
+	Envs     []string
 }
 
 // Create applies factory templates and creates the gRPC endpoint resources.
@@ -274,7 +275,7 @@ func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 		}
 	}
 
-	create := CreateConfiguration{Information: s.Information, Envs: []string{}}
+	create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
 	ignore := shared.NewIgnore("go.work*", "service.generation.codefly.yaml")
 	override := shared.OverrideException(shared.NewIgnore("*.proto"))
 

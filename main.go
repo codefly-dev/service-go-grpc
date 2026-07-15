@@ -12,7 +12,9 @@ import (
 	"github.com/codefly-dev/core/builders"
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	"github.com/codefly-dev/core/languages"
 	configurations "github.com/codefly-dev/core/resources"
+	runnersbase "github.com/codefly-dev/core/runners/base"
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/templates"
@@ -89,24 +91,18 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInfor
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	return &agentv0.AgentInformation{
-		RuntimeRequirements: []*agentv0.Runtime{
-			{Type: agentv0.Runtime_GO},
+	return services.Advertisement{
+		Backends: runnersbase.BackendSupport{
+			Local:  func() bool { return languages.HasGoRuntime(nil) },
+			Nix:    true,
+			Docker: true,
 		},
-		Capabilities: []*agentv0.Capability{
-			{Type: agentv0.Capability_BUILDER},
-			{Type: agentv0.Capability_RUNTIME},
-		},
-		Languages: []*agentv0.Language{
-			{Type: agentv0.Language_GO},
-		},
-		Protocols: []*agentv0.Protocol{
-			{Type: agentv0.Protocol_HTTP},
-			{Type: agentv0.Protocol_GRPC},
-		},
+		Toolchains: []agentv0.Toolchain_Type{agentv0.Toolchain_GO},
+		Languages:  []agentv0.Language_Type{agentv0.Language_GO},
+		Protocols:  []agentv0.Protocol_Type{agentv0.Protocol_HTTP, agentv0.Protocol_GRPC},
 		ReadMe:     readme,
 		Techniques: goGrpcTechniques(),
-	}, nil
+	}.Build(), nil
 }
 
 func NewService() *Service {

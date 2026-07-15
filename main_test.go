@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/network"
+	runners "github.com/codefly-dev/core/runners/base"
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/wool"
 	"github.com/stretchr/testify/require"
@@ -25,7 +27,7 @@ import (
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 )
 
-func TestSetRuntimeContextNix(t *testing.T) {
+func TestSetRuntimeContextNixHintUsesLocalFirst(t *testing.T) {
 	ctx := context.Background()
 
 	runtime := NewRuntime(NewService())
@@ -33,10 +35,16 @@ func TestSetRuntimeContextNix(t *testing.T) {
 
 	err := runtime.SetRuntimeContext(ctx, resources.NewRuntimeContextNix())
 	require.NoError(t, err)
-	require.Equal(t, resources.RuntimeContextNix, runtime.Base.Runtime.RuntimeContext.Kind)
-	require.True(t, runtime.Base.Runtime.IsNixRuntime())
-	require.False(t, runtime.Base.Runtime.IsContainerRuntime())
-	require.False(t, runtime.Base.Runtime.IsNativeRuntime())
+	if languages.HasGoRuntime(nil) {
+		require.Equal(t, resources.RuntimeContextNative, runtime.Base.Runtime.RuntimeContext.Kind)
+		require.True(t, runtime.Base.Runtime.IsNativeRuntime())
+	} else if runners.CheckNixInstalled() && runners.IsNixSupported() {
+		require.Equal(t, resources.RuntimeContextNix, runtime.Base.Runtime.RuntimeContext.Kind)
+		require.True(t, runtime.Base.Runtime.IsNixRuntime())
+	} else {
+		require.Equal(t, resources.RuntimeContextContainer, runtime.Base.Runtime.RuntimeContext.Kind)
+		require.True(t, runtime.Base.Runtime.IsContainerRuntime())
+	}
 }
 
 func TestSetRuntimeContextNative(t *testing.T) {
@@ -106,31 +114,25 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 
 	builder := NewBuilder(NewService())
 
-	resp, err := builder.Load(ctx, &builderv0.LoadRequest{Identity: identity, CreationMode: &builderv0.CreationMode{Communicate: false}})
+	creationMode := &builderv0.CreationMode{Communicate: withConnect}
+	resp, err := builder.Load(ctx, &builderv0.LoadRequest{Identity: identity, CreationMode: creationMode})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
+	if withConnect {
+		confirm := func(value bool) *agentv0.Answer {
+			return &agentv0.Answer{Value: &agentv0.Answer_Confirm{Confirm: &agentv0.ConfirmAnswer{Confirmed: value}}}
+		}
+		builder.answers = map[string]*agentv0.Answer{
+			HotReload:                 confirm(true),
+			DebugSymbols:              confirm(false),
+			RaceConditionDetectionRun: confirm(false),
+			RestEndpointSetting:       confirm(true),
+			ConnectEndpointSetting:    confirm(true),
+		}
+	}
 
 	_, err = builder.Create(ctx, &builderv0.CreateRequest{})
 	require.NoError(t, err)
-
-	// For Connect tests, enable Connect and re-create endpoints + save
-	if withConnect {
-		builder.GoGrpc.Settings.ConnectEndpoint = true
-		builder.Endpoints = nil // reset
-		err = builder.CreateEndpoints(ctx)
-		require.NoError(t, err)
-		require.Equal(t, 3, len(builder.Endpoints), "expected grpc+rest+connect endpoints")
-
-		// Re-save with connect endpoint
-		svcDir := path.Join(tmpDir, "mod/svc")
-		reloadedSvc, err := resources.LoadServiceFromDir(ctx, svcDir)
-		require.NoError(t, err)
-		reloadedSvc.Endpoints, err = resources.FromProtoEndpoints(builder.Endpoints...)
-		require.NoError(t, err)
-		reloadedSvc.Spec["connect-endpoint"] = true
-		err = reloadedSvc.Save(ctx)
-		require.NoError(t, err)
-	}
 
 	// Now run it
 	runtime := NewRuntime(NewService())
@@ -232,8 +234,12 @@ func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, id
 	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.GoGrpc.ConnectEndpoint, resources.NewNativeNetworkAccess())
 	require.NoError(t, err)
 
-	// Connect protocol uses POST with JSON body to /api.WebService/Version
+	// Connect protocol uses POST with JSON body to the generated service path.
 	client := http.Client{Timeout: 2 * time.Second}
+	baseURL := instance.Address
+	if !strings.Contains(baseURL, "://") {
+		baseURL = "http://" + baseURL
+	}
 	tries := 0
 	for {
 		if tries > 10 {
@@ -241,16 +247,24 @@ func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, id
 		}
 		time.Sleep(time.Second)
 
-		req, err := http.NewRequest("POST", fmt.Sprintf("%s/api.WebService/Version", instance.Address), strings.NewReader("{}"))
+		procedure := fmt.Sprintf("/api.%sService/Version", shared.ToTitle(identity.Name))
+		req, err := http.NewRequest("POST", baseURL+procedure, strings.NewReader("{}"))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Connect-Protocol-Version", "1")
 
 		response, err := client.Do(req)
 		if err != nil {
+			t.Logf("Connect request to %s failed: %v", req.URL, err)
 			tries++
 			continue
 		}
 		if response.StatusCode != http.StatusOK {
+			body, readErr := io.ReadAll(response.Body)
+			t.Logf("Connect endpoint returned %s: %s", response.Status, strings.TrimSpace(string(body)))
+			if readErr != nil {
+				t.Logf("reading Connect error response: %v", readErr)
+			}
 			tries++
 			response.Body.Close()
 			continue
