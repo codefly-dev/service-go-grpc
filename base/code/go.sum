@@ -14,8 +14,8 @@ github.com/brianvoe/gofakeit/v6 v6.28.0 h1:Xib46XXuQfmlLS2EXRuJpqcw8St6qSZz75OUo
 github.com/brianvoe/gofakeit/v6 v6.28.0/go.mod h1:Xj58BMSnFqcn/fAQeSK+/PLtC5kSb7FJIq4JyGa8vEs=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/codefly-dev/core v0.2.10 h1:hExMaYgq4ebP5IcX1NifMuNtTIujM95VvTBd3jqV184=
-github.com/codefly-dev/core v0.2.10/go.mod h1:KDqWWUbN2BwqA4tqeo4k0vLOjUBGINxybTqwvXX7kPA=
+github.com/codefly-dev/core v0.2.19 h1:J2nffMEzmr9FHkf1lh/2gNPbjJFYjpQHro3niejrv04=
+github.com/codefly-dev/core v0.2.19/go.mod h1:78gNY4qIlPnj08Fe8X5WwXWtqjTvU4MelJlOYTJq/5s=
 github.com/codefly-dev/sdk-go v0.1.40 h1:dSrPtJndqkHkYzM+B8LINMJzAZfWZK4Da5VX9Ib7Ynw=
 github.com/codefly-dev/sdk-go v0.1.40/go.mod h1:e8JkQTWK72YLEzw44ztuErXxocLgYu+J6BMfEf++7oc=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=

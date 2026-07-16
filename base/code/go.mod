@@ -7,7 +7,7 @@ toolchain go1.26.4
 require (
 	buf.build/go/protovalidate v1.2.0
 	connectrpc.com/connect v1.20.0
-	github.com/codefly-dev/core v0.2.10
+	github.com/codefly-dev/core v0.2.19
 	github.com/codefly-dev/sdk-go v0.1.40
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0
 	github.com/rs/cors v1.11.1
