@@ -6,7 +6,6 @@ import (
 
 	"github.com/codefly-dev/core/agents/communicate"
 	"github.com/codefly-dev/core/agents/services"
-	"github.com/codefly-dev/core/agents/services/audit"
 	"github.com/codefly-dev/core/agents/services/upgrade"
 	"github.com/codefly-dev/core/companions/proto"
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
@@ -159,20 +158,6 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 			d.SourceDir = sourceDir
 			d.ModuleRoot, d.BuildTarget = golanghelpers.SplitSourceDir(sourceDir)
 		})
-}
-
-// Audit scans the Go module for vulnerabilities (govulncheck, callgraph-
-// aware) and optionally reports outdated deps (go list -m -u). Runs at
-// the Go source root (s.Location + Settings.GoSourceDir()).
-func (s *Builder) Audit(ctx context.Context, req *builderv0.AuditRequest) (*builderv0.AuditResponse, error) {
-	defer s.Wool.Catch()
-	ctx = s.Wool.Inject(ctx)
-	dir := s.Local("%s", s.GoGrpc.Settings.GoSourceDir())
-	res, err := audit.Golang(ctx, dir, req.IncludeOutdated)
-	if err != nil {
-		return s.Base.Builder.AuditError(err)
-	}
-	return s.Base.Builder.AuditResponse(res.Findings, res.Outdated, res.Tool, res.Language)
 }
 
 // Upgrade bumps Go module dependencies (go get -u=patch by default,
