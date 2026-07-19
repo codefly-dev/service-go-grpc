@@ -76,5 +76,6 @@ func (server *Server) Start(ctx context.Context) error {
 
 func (server *Server) Stop() {
 	fmt.Println("Stopping server...")
+	server.grpc.health.Shutdown()
 	server.grpc.gRPC.GracefulStop()
 }
