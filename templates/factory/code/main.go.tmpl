@@ -23,7 +23,9 @@ import (
 	"{{ .Service.Name.DNSCase }}/pkg/adapters"
 	"context"
 	"fmt"
+	{{- if or .Settings.RestEndpoint .Settings.ConnectEndpoint }}
 	"github.com/codefly-dev/core/shared"
+	{{- end }}
 	"github.com/codefly-dev/core/standards"
 	"os/signal"
 	"syscall"
@@ -40,11 +42,20 @@ func Must[T any](t T, err error) T {
 
 type Clean func()
 type Work func(ctx context.Context) (Clean, error)
+// Configure runs after codefly has injected service capabilities and before
+// any listener starts. Services use it for real dependency construction and
+// gRPC interceptor/server registration without editing generated files.
+type Configure func(ctx context.Context, config *adapters.Configuration) (Clean, error)
 
 var work Work
+var configure Configure
 
 func WithWork(w Work) {
 	work = w
+}
+
+func WithConfigure(c Configure) {
+	configure = c
 }
 
 func main() {
@@ -62,14 +73,27 @@ func main() {
 	config := &adapters.Configuration{
 		EndpointGrpcPort: codefly.For(ctx).WithDefaultNetwork().API(standards.GRPC).NetworkInstance().Port,
 	}
+	{{- if .Settings.RestEndpoint }}
 	if net := codefly.For(ctx).WithDefaultNetwork().API(standards.REST).NetworkInstance(); net != nil {
 		config.EndpointHttpPort = shared.Pointer(net.Port)
 	}
+	{{- end }}
 	{{- if .Settings.ConnectEndpoint }}
 	if net := codefly.For(ctx).WithDefaultNetwork().API(standards.CONNECT).NetworkInstance(); net != nil {
 		config.EndpointConnectPort = shared.Pointer(net.Port)
 	}
 	{{- end }}
+	if configure != nil {
+		clean, err := configure(ctx, config)
+		if err != nil {
+			panic(err)
+		}
+		defer func() {
+			if clean != nil {
+				clean()
+			}
+		}()
+	}
 	server, err := adapters.NewServer(config)
 	if err != nil {
 		panic(err)

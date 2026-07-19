@@ -1,6 +1,10 @@
 syntax = "proto3";
 package api;
 
+// Keep the Go import path stable while the protobuf package remains free to
+// evolve into a versioned wire namespace (for example coordination.v1).
+option go_package = "{{ .Service.Name.DNSCase }}/pkg/gen;gen";
+
 import "google/api/annotations.proto";
 
 message VersionRequest {

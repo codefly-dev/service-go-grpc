@@ -18,6 +18,7 @@ import (
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/templates"
+	"github.com/codefly-dev/core/toolbox/lang"
 
 	gocode "github.com/codefly-dev/service-go/pkg/code"
 	goruntime "github.com/codefly-dev/service-go/pkg/runtime"
@@ -91,6 +92,13 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInfor
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	validation := goservice.ValidationCapabilities()
+	// The current gRPC specialization regenerates protobuf output in place and
+	// does not yet implement Builder.Sync dry-run comparison. Advertise that gap
+	// explicitly so local validation and CI cannot mistake a mutating operation
+	// for a drift check. The schema plugin will own this operation.
+	validation.Sync.Supported = false
+
 	return services.Advertisement{
 		Backends: runnersbase.BackendSupport{
 			Local:  func() bool { return languages.HasGoRuntime(nil) },
@@ -102,6 +110,7 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInfor
 		Protocols:  []agentv0.Protocol_Type{agentv0.Protocol_HTTP, agentv0.Protocol_GRPC},
 		ReadMe:     readme,
 		Techniques: goGrpcTechniques(),
+		Validation: validation,
 	}.Build(), nil
 }
 
@@ -132,13 +141,15 @@ func main() {
 	// generic already provides (corecode.GoCodeServer + goimports/gofmt).
 	code := gocode.New(svc.Service)
 	genericRuntime := goruntime.New(svc.Service)
+	tooling := gotooling.New(code, genericRuntime)
 
 	agents.Serve(agents.PluginRegistration{
 		Agent:   svc,
 		Runtime: NewRuntime(svc),
 		Builder: NewBuilder(svc),
 		Code:    code,
-		Tooling: gotooling.New(code, genericRuntime),
+		Tooling: tooling,
+		Toolbox: lang.NewToolboxFromTooling(agent.Name, agent.Version, tooling),
 	})
 }
 

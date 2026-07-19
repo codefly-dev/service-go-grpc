@@ -10,10 +10,10 @@ implement your APIs there.
 ----------------------------------------------------------------- */
 
 import (
+	"buf.build/go/protovalidate"
 	"codefly-base/pkg/gen"
 	"context"
 	"fmt"
-	"buf.build/go/protovalidate"
 	"net"
 
 	"google.golang.org/grpc/codes"
@@ -58,17 +58,23 @@ type Configuration struct {
 	EndpointGrpcPort    uint16
 	EndpointHttpPort    *uint16
 	EndpointConnectPort *uint16
+	// GRPCServerOptions installs transport policy such as authentication,
+	// authorization, telemetry, and rate limiting before the listener starts.
+	GRPCServerOptions []grpc.ServerOption
+	// Service replaces the generated Version-only implementation when the
+	// service owns substantive RPCs with constructor-injected dependencies.
+	Service gen.WebServiceServer
 }
 
 type GrpcServer struct {
-	gen.UnsafeWebServiceServer
+	gen.UnimplementedWebServiceServer
 	configuration *Configuration
 	gRPC          *grpc.Server
 	validator     protovalidate.Validator
 }
 
 func NewGrpServer(c *Configuration) (*GrpcServer, error) {
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(c.GRPCServerOptions...)
 	v, err := protovalidate.New()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create validator: %w", err)
@@ -79,7 +85,11 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 		gRPC:          grpcServer,
 		validator:     v,
 	}
-	gen.RegisterWebServiceServer(grpcServer, &s)
+	service := gen.WebServiceServer(&s)
+	if c.Service != nil {
+		service = c.Service
+	}
+	gen.RegisterWebServiceServer(grpcServer, service)
 	reflection.Register(grpcServer)
 	return &s, nil
 }

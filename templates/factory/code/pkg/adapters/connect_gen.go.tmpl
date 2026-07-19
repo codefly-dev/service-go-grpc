@@ -30,7 +30,12 @@ func NewConnectServer(c *Configuration) (*ConnectServer, error) {
 }
 
 // connectHandler wraps the GrpcServer to implement the Connect handler interface.
-type connectHandler struct{}
+type connectHandler struct {
+	// Embedding keeps a service with Connect disabled buildable as protobuf
+	// methods evolve. Enabled Connect services must explicitly implement their
+	// substantive handlers rather than accidentally inheriting a gRPC facade.
+	genconnect.Unimplemented{{ .Service.Name.Title }}ServiceHandler
+}
 
 func (h *connectHandler) Version(ctx context.Context, req *connect.Request[gen.VersionRequest]) (*connect.Response[gen.VersionResponse], error) {
 	return connect.NewResponse(&gen.VersionResponse{

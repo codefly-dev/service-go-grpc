@@ -58,17 +58,23 @@ type Configuration struct {
 	EndpointGrpcPort    uint16
 	EndpointHttpPort    *uint16
 	EndpointConnectPort *uint16
+	// GRPCServerOptions installs transport policy such as authentication,
+	// authorization, telemetry, and rate limiting before the listener starts.
+	GRPCServerOptions []grpc.ServerOption
+	// Service replaces the generated Version-only implementation when the
+	// service owns substantive RPCs with constructor-injected dependencies.
+	Service gen.{{ .Service.Name.Title }}ServiceServer
 }
 
 type GrpcServer struct {
-	gen.Unsafe{{ .Service.Name.Title }}ServiceServer
+	gen.Unimplemented{{ .Service.Name.Title }}ServiceServer
 	configuration *Configuration
 	gRPC          *grpc.Server
 	validator     protovalidate.Validator
 }
 
 func NewGrpServer(c *Configuration) (*GrpcServer, error) {
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(c.GRPCServerOptions...)
 	v, err := protovalidate.New()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create validator: %w", err)
@@ -79,7 +85,11 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 		gRPC:          grpcServer,
 		validator:     v,
 	}
-	gen.Register{{ .Service.Name.Title }}ServiceServer(grpcServer, &s)
+	service := gen.{{ .Service.Name.Title }}ServiceServer(&s)
+	if c.Service != nil {
+		service = c.Service
+	}
+	gen.Register{{ .Service.Name.Title }}ServiceServer(grpcServer, service)
 	reflection.Register(grpcServer)
 	return &s, nil
 }

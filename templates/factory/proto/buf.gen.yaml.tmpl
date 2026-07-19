@@ -1,10 +1,8 @@
 version: v1
+# Go package identity is explicit in api.proto. Managed rewriting couples Go
+# package names to protobuf namespaces and breaks versioned wire packages.
 managed:
-  enabled: true
-  go_package_prefix:
-    default: {{ .Service.Name.DNSCase }}/pkg/gen
-    except:
-      - buf.build/googleapis/googleapis
+  enabled: false
 plugins:
   - plugin: buf.build/protocolbuffers/go
     out: ../code/pkg/gen

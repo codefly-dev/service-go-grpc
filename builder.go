@@ -114,6 +114,18 @@ func (s *Builder) Sync(ctx context.Context, _ *builderv0.SyncRequest) (*builderv
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
+	// Generated scaffold files are part of the agent contract, just like proto
+	// output. Re-render only files that are explicitly generator-owned so fixes
+	// to authentication/startup plumbing reach existing services while user
+	// files such as work.go, rpcs.go, and go.mod remain untouched.
+	create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
+	generated := services.WithFactory(factoryFS).
+		WithPathSelect(generatedScaffoldSelect()).
+		WithOverride(shared.OverrideAll())
+	if err := s.Templates(ctx, create, generated); err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+
 	if s.buf == nil {
 		var err error
 		s.buf, err = proto.NewBuf(ctx, s.Location)
@@ -121,6 +133,10 @@ func (s *Builder) Sync(ctx context.Context, _ *builderv0.SyncRequest) (*builderv
 			return s.Base.Builder.SyncError(err)
 		}
 		s.buf.WithCache(s.cacheLocation)
+		// pkg/gen and openapi are generator-owned. Clearing them only after
+		// Buf detects an input change prevents renamed protobuf packages from
+		// leaving stale Go packages or endpoints behind.
+		s.buf.WithGeneratedDirs(s.Local("code/pkg/gen"), s.Local("openapi"))
 	}
 
 	if err := s.buf.Generate(ctx); err != nil {
@@ -141,6 +157,20 @@ func (s *Builder) Sync(ctx context.Context, _ *builderv0.SyncRequest) (*builderv
 		}
 	}
 	return s.Base.Builder.SyncResponse()
+}
+
+// generatedScaffoldSelect traverses only the directories required to reach
+// generated service plumbing and selects only generator-owned Go files.
+func generatedScaffoldSelect() shared.PathSelect {
+	return shared.NewSelect(
+		"code",
+		"pkg",
+		"adapters",
+		"plugins",
+		"main.go.tmpl",
+		"*_gen.go.tmpl",
+		"registry_gen.go.tmpl",
+	)
 }
 
 // Build produces the service's Docker image. Uses the BuildGoDocker

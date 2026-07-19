@@ -1,10 +1,6 @@
 version: v1
 managed:
-  enabled: true
-  go_package_prefix:
-    default: codefly-base/pkg/gen
-    except:
-      - buf.build/googleapis/googleapis
+  enabled: false
 plugins:
   - plugin: buf.build/protocolbuffers/go
     out: ../code/pkg/gen

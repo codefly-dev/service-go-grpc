@@ -41,10 +41,20 @@ func Must[T any](t T, err error) T {
 type Clean func()
 type Work func(ctx context.Context) (Clean, error)
 
+// Configure runs after codefly has injected service capabilities and before
+// any listener starts. Services use it for real dependency construction and
+// gRPC interceptor/server registration without editing generated files.
+type Configure func(ctx context.Context, config *adapters.Configuration) (Clean, error)
+
 var work Work
+var configure Configure
 
 func WithWork(w Work) {
 	work = w
+}
+
+func WithConfigure(c Configure) {
+	configure = c
 }
 
 func main() {
@@ -67,6 +77,17 @@ func main() {
 	}
 	if net := codefly.For(ctx).WithDefaultNetwork().API(standards.CONNECT).NetworkInstance(); net != nil {
 		config.EndpointConnectPort = shared.Pointer(net.Port)
+	}
+	if configure != nil {
+		clean, err := configure(ctx, config)
+		if err != nil {
+			panic(err)
+		}
+		defer func() {
+			if clean != nil {
+				clean()
+			}
+		}()
 	}
 
 	server, err := adapters.NewServer(config)
