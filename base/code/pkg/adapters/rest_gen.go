@@ -24,6 +24,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
 type RestServer struct {
@@ -75,6 +76,25 @@ func (s *RestServer) Run(ctx context.Context) error {
 		if err := p.RegisterREST(ctx, gwMux, fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts); err != nil {
 			return fmt.Errorf("plugin %s REST registration failed: %w", p.Name(), err)
 		}
+	}
+
+	// Expose the gRPC health check as /healthz for HTTP probes
+	healthConn, err := grpc.NewClient(fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts...)
+	if err != nil {
+		return fmt.Errorf("failed to create health client connection: %w", err)
+	}
+	healthClient := grpc_health_v1.NewHealthClient(healthConn)
+	err = gwMux.HandlePath(http.MethodGet, "/healthz", func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+		resp, err := healthClient.Check(r.Context(), &grpc_health_v1.HealthCheckRequest{})
+		if err != nil || resp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+			http.Error(w, `{"status":"NOT_SERVING"}`, http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"SERVING"}`))
+	})
+	if err != nil {
+		return fmt.Errorf("failed to register health check handler: %w", err)
 	}
 
 	// Wrap your mux with the CORS handler

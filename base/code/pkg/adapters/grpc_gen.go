@@ -25,6 +25,8 @@ import (
 
 	codefly "github.com/codefly-dev/sdk-go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
 var validator protovalidate.Validator
@@ -70,6 +72,7 @@ type GrpcServer struct {
 	gen.UnimplementedWebServiceServer
 	configuration *Configuration
 	gRPC          *grpc.Server
+	health        *health.Server
 	validator     protovalidate.Validator
 }
 
@@ -80,9 +83,15 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 		return nil, fmt.Errorf("failed to create validator: %w", err)
 	}
 
+	healthServer := health.NewServer()
+	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
+	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus(gen.WebService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
+
 	s := GrpcServer{
 		configuration: c,
 		gRPC:          grpcServer,
+		health:        healthServer,
 		validator:     v,
 	}
 	service := gen.WebServiceServer(&s)

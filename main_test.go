@@ -221,6 +221,15 @@ func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *base
 		version, ok := data["version"].(string)
 		require.True(t, ok)
 		require.Equal(t, identity.Version, version)
+
+		// The gateway proxies grpc.health.v1 as /healthz
+		healthResponse, err := client.Get(fmt.Sprintf("%s/healthz", instance.Address))
+		if err != nil {
+			tries++
+			continue
+		}
+		healthResponse.Body.Close()
+		require.Equal(t, http.StatusOK, healthResponse.StatusCode)
 		return
 	}
 }

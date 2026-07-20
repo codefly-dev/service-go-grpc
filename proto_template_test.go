@@ -122,6 +122,45 @@ func TestGeneratedServiceOmitsRESTImplementationWhenDisabled(t *testing.T) {
 	}
 }
 
+// TestGeneratedServiceRegistersHealthChecks keeps the grpc.health.v1 service
+// and the /healthz gateway route that the kustomize deployment probes target.
+func TestGeneratedServiceRegistersHealthChecks(t *testing.T) {
+	grpcTemplate, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/grpc_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read gRPC adapter template: %v", err)
+	}
+	for _, want := range []string{
+		"health.NewServer()",
+		"grpc_health_v1.RegisterHealthServer",
+		`SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)`,
+	} {
+		if !strings.Contains(string(grpcTemplate), want) {
+			t.Errorf("gRPC adapter template does not contain %q", want)
+		}
+	}
+
+	serverTemplate, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/server_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read server adapter template: %v", err)
+	}
+	if !strings.Contains(string(serverTemplate), "server.grpc.health.Shutdown()") {
+		t.Error("server adapter does not flip health to NOT_SERVING on shutdown")
+	}
+
+	restTemplate, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/rest_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read REST adapter template: %v", err)
+	}
+	for _, want := range []string{
+		`HandlePath(http.MethodGet, "/healthz"`,
+		"grpc_health_v1.NewHealthClient",
+	} {
+		if !strings.Contains(string(restTemplate), want) {
+			t.Errorf("REST adapter template does not contain %q", want)
+		}
+	}
+}
+
 func TestGeneratedScaffoldSelectPreservesUserOwnedFiles(t *testing.T) {
 	selectGenerated := generatedScaffoldSelect()
 	for _, name := range []string{"code", "pkg", "adapters", "plugins", "main.go.tmpl", "grpc_gen.go.tmpl", "registry_gen.go.tmpl"} {
