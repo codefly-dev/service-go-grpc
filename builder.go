@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"path/filepath"
 
 	"github.com/codefly-dev/core/agents/communicate"
 	"github.com/codefly-dev/core/agents/services"
@@ -42,9 +43,7 @@ type Builder struct {
 
 	GoGrpc *Service
 
-	buf           *proto.Buf
-	cacheLocation string
-	answers       map[string]*agentv0.Answer
+	answers map[string]*agentv0.Answer
 }
 
 // NewBuilder composes a go-grpc Builder by constructing a generic
@@ -85,8 +84,6 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 		return nil, s.Wool.Wrapf(err, "cannot load go-grpc settings")
 	}
 
-	s.cacheLocation = s.Local(".cache")
-
 	// Creation mode: generic returned early with GettingStarted.
 	if req.CreationMode != nil {
 		return resp, nil
@@ -108,55 +105,97 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 
 // Init, Update are INHERITED from *gobuilder.Builder.
 
-// Sync regenerates local proto code via buf and generates gRPC client
-// stubs for every declared dependency that exposes a gRPC endpoint.
-func (s *Builder) Sync(ctx context.Context, _ *builderv0.SyncRequest) (*builderv0.SyncResponse, error) {
+// Sync stages every generator-owned artifact, then either reports or applies
+// the exact deterministic file set. Buf remains the only protocol generator;
+// Go, Rust, and TypeScript outputs are declared together in buf.gen.yaml.
+func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*builderv0.SyncResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	// Generated scaffold files are part of the agent contract, just like proto
-	// output. Re-render only files that are explicitly generator-owned so fixes
-	// to authentication/startup plumbing reach existing services while user
-	// files such as work.go, rpcs.go, and go.mod remain untouched.
-	create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
-	generated := services.WithFactory(factoryFS).
-		WithPathSelect(generatedScaffoldSelect()).
-		WithOverride(shared.OverrideAll())
-	if err := s.Templates(ctx, create, generated); err != nil {
+	if err := s.GoGrpc.Settings.Validate(); err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	transaction, err := newSyncTransaction(s.Location, s.Identity.RelativeToWorkspace)
+	if err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	defer transaction.Close()
+
+	moduleRoot, _ := golanghelpers.SplitSourceDir(s.GoGrpc.Settings.GoSourceDir())
+	protoDir := filepath.Join(moduleRoot, "proto")
+	if err := transaction.CopyInput(protoDir); err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
 
-	if s.buf == nil {
-		var err error
-		s.buf, err = proto.NewBuf(ctx, s.Location)
-		if err != nil {
+	if !s.GoGrpc.Settings.ProtocolOnlySync {
+		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
+		generated := services.WithFactory(factoryFS).
+			WithPathSelect(generatedScaffoldSelect()).
+			WithOverride(shared.OverrideAll()).
+			WithDestination("%s", transaction.StageRoot())
+		if err := s.Templates(ctx, create, generated); err != nil {
 			return s.Base.Builder.SyncError(err)
 		}
-		s.buf.WithCache(s.cacheLocation)
-		// pkg/gen and openapi are generator-owned. Clearing them only after
-		// Buf detects an input change prevents renamed protobuf packages from
-		// leaving stale Go packages or endpoints behind.
-		s.buf.WithGeneratedDirs(s.Local("code/pkg/gen"), s.Local("openapi"))
+		if err := transaction.TrackStagedFilesOutside(protoDir); err != nil {
+			return s.Base.Builder.SyncError(err)
+		}
 	}
 
-	if err := s.buf.Generate(ctx); err != nil {
+	stageModuleRoot := filepath.Join(transaction.StageRoot(), moduleRoot)
+	buf, err := proto.NewBuf(ctx, stageModuleRoot)
+	if err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	buf.WithCache(transaction.StageRoot())
+	for _, relative := range s.GoGrpc.Settings.protocolOutputDirs() {
+		target := filepath.Join(moduleRoot, relative)
+		if err := transaction.TrackDirectory(target); err != nil {
+			return s.Base.Builder.SyncError(err)
+		}
+		buf.WithGeneratedDirs(filepath.Join(transaction.StageRoot(), target))
+	}
+	if err := transaction.TrackFile(filepath.Join(protoDir, "buf.lock")); err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	if err := buf.Generate(ctx); err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
 
-	s.Wool.Debug("dependencies", wool.Field("dependencies", s.Base.Service.ServiceDependencies))
-	for _, dep := range s.Base.Service.ServiceDependencies {
-		ep, err := resources.FindGRPCEndpointFromService(ctx, dep, s.DependencyEndpoints)
-		if err != nil {
-			return s.Base.Builder.SyncError(err)
+	if !s.GoGrpc.Settings.ProtocolOnlySync {
+		s.Wool.Debug("dependencies", wool.Field("dependencies", s.Base.Service.ServiceDependencies))
+		for _, dep := range s.Base.Service.ServiceDependencies {
+			ep, err := resources.FindGRPCEndpointFromService(ctx, dep, s.DependencyEndpoints)
+			if err != nil {
+				return s.Base.Builder.SyncError(err)
+			}
+			if ep == nil {
+				continue
+			}
+			destination := filepath.Join(moduleRoot, "external", dep.Unique())
+			if err := transaction.TrackDirectory(destination); err != nil {
+				return s.Base.Builder.SyncError(err)
+			}
+			if err := proto.GenerateGRPC(ctx, languages.GO, filepath.Join(transaction.StageRoot(), destination), dep.Unique(), ep); err != nil {
+				return s.Base.Builder.SyncError(err)
+			}
 		}
-		if ep == nil {
-			continue
-		}
-		if err := proto.GenerateGRPC(ctx, languages.GO, s.Local("code/external/%s", dep.Unique()), dep.Unique(), ep); err != nil {
+	}
+
+	changed, err := transaction.ChangedFiles()
+	if err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	if !request.GetDryRun() {
+		if err := transaction.Apply(); err != nil {
 			return s.Base.Builder.SyncError(err)
 		}
 	}
-	return s.Base.Builder.SyncResponse()
+	response, err := s.Base.Builder.SyncResponse()
+	if err != nil {
+		return response, err
+	}
+	response.ChangedFiles = changed
+	return response, nil
 }
 
 // generatedScaffoldSelect traverses only the directories required to reach

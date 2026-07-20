@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"reflect"
 	"testing"
 
+	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 	"gopkg.in/yaml.v3"
 
 	goservice "github.com/codefly-dev/service-go/pkg/service"
@@ -44,6 +47,10 @@ with-workspace: false
 source-dir: "cmd/server"
 rest-endpoint: true
 connect-endpoint: false
+protocol-output-dirs:
+  - generated/go
+  - generated/rust
+protocol-only-sync: true
 `)
 	var s Settings
 	if err := yaml.Unmarshal(src, &s); err != nil {
@@ -63,6 +70,22 @@ connect-endpoint: false
 	}
 	if !s.RestEndpoint {
 		t.Error("RestEndpoint (go-grpc) not populated")
+	}
+	if want := []string{"generated/go", "generated/rust"}; !reflect.DeepEqual(s.ProtocolOutputDirs, want) {
+		t.Errorf("ProtocolOutputDirs: got %#v, want %#v", s.ProtocolOutputDirs, want)
+	}
+	if !s.ProtocolOnlySync {
+		t.Error("ProtocolOnlySync not populated")
+	}
+}
+
+func TestGoGrpcAdvertisesAuthoritativeSync(t *testing.T) {
+	information, err := NewService().GetAgentInformation(context.Background(), &agentv0.AgentInformationRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if information.GetValidation().GetSync() == nil || !information.GetValidation().GetSync().GetSupported() {
+		t.Fatal("go-grpc does not advertise authoritative non-mutating Sync")
 	}
 }
 
