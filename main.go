@@ -50,8 +50,9 @@ type Settings struct {
 	RestEndpoint    bool `yaml:"rest-endpoint"`
 	ConnectEndpoint bool `yaml:"connect-endpoint"`
 	// ProtocolOutputDirs names every Buf-owned output directory relative to
-	// the Go module root. Sync replaces these trees exactly, including stale
-	// files left by renamed or deleted protobuf declarations.
+	// the service root (the directory holding proto/, code/, openapi/). Sync
+	// replaces these trees exactly, including stale files left by renamed or
+	// deleted protobuf declarations.
 	ProtocolOutputDirs []string `yaml:"protocol-output-dirs"`
 
 	// RuntimeImage overrides the codefly-built runtime image. Format:
@@ -68,7 +69,7 @@ func (s *Settings) Validate() error {
 	}
 	for _, dir := range s.protocolOutputDirs() {
 		if !filepath.IsLocal(dir) || dir == "." || strings.ContainsAny(dir, "\x00\\") {
-			return fmt.Errorf("protocol output directory %q must stay below the Go module root", dir)
+			return fmt.Errorf("protocol output directory %q must stay below the service root", dir)
 		}
 	}
 	return nil

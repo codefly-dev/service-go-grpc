@@ -123,8 +123,12 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 	}
 	defer transaction.Close()
 
+	// proto/, openapi/, and code/ are siblings of the service root — the
+	// buf workdir and output dirs are service-root-relative, not module-root
+	// relative. moduleRoot only scopes generated Go code that must live
+	// inside the module (dependency stubs below).
 	moduleRoot, _ := golanghelpers.SplitSourceDir(s.GoGrpc.Settings.GoSourceDir())
-	protoDir := filepath.Join(moduleRoot, "proto")
+	protoDir := "proto"
 	if err := transaction.CopyInput(protoDir); err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
@@ -149,18 +153,16 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		}
 	}
 
-	stageModuleRoot := filepath.Join(transaction.StageRoot(), moduleRoot)
-	buf, err := proto.NewBuf(ctx, stageModuleRoot)
+	buf, err := proto.NewBuf(ctx, transaction.StageRoot())
 	if err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
 	buf.WithCache(transaction.StageRoot())
 	for _, relative := range s.GoGrpc.Settings.protocolOutputDirs() {
-		target := filepath.Join(moduleRoot, relative)
-		if err := transaction.TrackDirectory(target); err != nil {
+		if err := transaction.TrackDirectory(relative); err != nil {
 			return s.Base.Builder.SyncError(err)
 		}
-		buf.WithGeneratedDirs(filepath.Join(transaction.StageRoot(), target))
+		buf.WithGeneratedDirs(filepath.Join(transaction.StageRoot(), relative))
 	}
 	if err := transaction.TrackFile(filepath.Join(protoDir, "buf.lock")); err != nil {
 		return s.Base.Builder.SyncError(err)
