@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -119,41 +120,140 @@ func (transaction *syncTransaction) ChangedFiles() ([]string, error) {
 	return compactStrings(changed), nil
 }
 
+const (
+	syncIncomingSuffix = ".codefly-sync-incoming"
+	syncBackupSuffix   = ".codefly-sync-backup"
+)
+
+// pendingSwap tracks one changed target through the two-phase apply.
+type pendingSwap struct {
+	relative string
+	actual   string
+	incoming string // staged replacement beside actual; "" when the target is being removed
+	backup   string // displaced original beside actual; "" when no original existed
+	swapped  bool
+}
+
+// Apply replaces every changed target with its staged content as one unit.
+// Replacements are first fully materialized as suffixed siblings of their
+// targets, so the copy work that can fail midway (I/O errors, disk full)
+// happens before the real tree is touched. Each target then swaps in via
+// renames within its parent directory, keeping the displaced original until
+// every target has swapped; a failure mid-swap renames the originals back,
+// so the tree is not left partially updated.
 func (transaction *syncTransaction) Apply() error {
+	swaps, err := transaction.prepareSwaps()
+	if err != nil {
+		discardIncoming(swaps)
+		return err
+	}
+	for index, swap := range swaps {
+		if err := swap.commit(); err != nil {
+			err = fmt.Errorf("apply generated target %q: %w", swap.relative, err)
+			if rollbackErr := rollbackSwaps(swaps[:index+1]); rollbackErr != nil {
+				err = fmt.Errorf("%w (rollback also failed, displaced originals kept at %q siblings: %v)", err, syncBackupSuffix, rollbackErr)
+			}
+			discardIncoming(swaps)
+			return err
+		}
+	}
+	for _, swap := range swaps {
+		if swap.backup != "" {
+			_ = os.RemoveAll(swap.backup)
+		}
+	}
+	return nil
+}
+
+func (transaction *syncTransaction) prepareSwaps() ([]*pendingSwap, error) {
+	var swaps []*pendingSwap
 	for _, target := range transaction.sortedTargets() {
 		changed, err := transaction.targetChanges(target)
 		if err != nil {
-			return err
+			return swaps, err
 		}
 		if len(changed) == 0 {
 			continue
 		}
-		actual := filepath.Join(transaction.actualRoot, target.relative)
-		staged := filepath.Join(transaction.stageRoot, target.relative)
-		if target.directory {
-			if err := os.RemoveAll(actual); err != nil {
-				return fmt.Errorf("replace generated directory %q: %w", target.relative, err)
-			}
-			if _, err := os.Lstat(staged); os.IsNotExist(err) {
-				continue
-			} else if err != nil {
-				return fmt.Errorf("stat staged directory %q: %w", target.relative, err)
-			}
-		} else {
-			if err := os.RemoveAll(actual); err != nil {
-				return fmt.Errorf("replace generated file %q: %w", target.relative, err)
-			}
-			if _, err := os.Lstat(staged); os.IsNotExist(err) {
-				continue
-			} else if err != nil {
-				return fmt.Errorf("stat staged file %q: %w", target.relative, err)
-			}
+		swap := &pendingSwap{
+			relative: target.relative,
+			actual:   filepath.Join(transaction.actualRoot, target.relative),
 		}
-		if err := copySyncPath(staged, actual); err != nil {
-			return fmt.Errorf("apply generated target %q: %w", target.relative, err)
+		swaps = append(swaps, swap)
+		staged := filepath.Join(transaction.stageRoot, target.relative)
+		if _, err := os.Lstat(staged); os.IsNotExist(err) {
+			continue // nothing staged: the swap removes the target
+		} else if err != nil {
+			return swaps, fmt.Errorf("stat staged target %q: %w", target.relative, err)
+		}
+		incoming := swap.actual + syncIncomingSuffix
+		if err := os.RemoveAll(incoming); err != nil {
+			return swaps, fmt.Errorf("prepare generated target %q: %w", target.relative, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(swap.actual), 0o755); err != nil {
+			return swaps, fmt.Errorf("prepare generated target %q: %w", target.relative, err)
+		}
+		swap.incoming = incoming
+		if err := copySyncPath(staged, incoming); err != nil {
+			return swaps, fmt.Errorf("prepare generated target %q: %w", target.relative, err)
 		}
 	}
+	return swaps, nil
+}
+
+// commit moves the original aside and the replacement into place. Both steps
+// are renames within the target's parent directory, so each is atomic.
+func (swap *pendingSwap) commit() error {
+	if _, err := os.Lstat(swap.actual); err == nil {
+		backup := swap.actual + syncBackupSuffix
+		if err := os.RemoveAll(backup); err != nil {
+			return err
+		}
+		if err := os.Rename(swap.actual, backup); err != nil {
+			return err
+		}
+		swap.backup = backup
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if swap.incoming != "" {
+		if err := os.Rename(swap.incoming, swap.actual); err != nil {
+			return err
+		}
+	}
+	swap.swapped = true
 	return nil
+}
+
+func rollbackSwaps(swaps []*pendingSwap) error {
+	var failures []error
+	for index := len(swaps) - 1; index >= 0; index-- {
+		swap := swaps[index]
+		if swap.swapped && swap.incoming != "" {
+			if err := os.RemoveAll(swap.actual); err != nil {
+				failures = append(failures, err)
+				continue
+			}
+		}
+		if swap.backup != "" {
+			if err := os.Rename(swap.backup, swap.actual); err != nil {
+				failures = append(failures, err)
+				continue
+			}
+			swap.backup = ""
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// discardIncoming removes replacement copies that never swapped in.
+// Best-effort: leftovers are inert suffixed siblings, never live targets.
+func discardIncoming(swaps []*pendingSwap) {
+	for _, swap := range swaps {
+		if swap.incoming != "" && !swap.swapped {
+			_ = os.RemoveAll(swap.incoming)
+		}
+	}
 }
 
 func (transaction *syncTransaction) targetChanges(target syncTarget) ([]string, error) {

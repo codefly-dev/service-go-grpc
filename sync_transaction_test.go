@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -69,6 +70,64 @@ func TestSyncTransactionDryRunPredictsAndAppliesExactTree(t *testing.T) {
 	}
 	if len(after) != 0 {
 		t.Fatalf("applied transaction still reports drift: %v", after)
+	}
+}
+
+func TestSyncTransactionApplyIsAllOrNothing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("read-only directories do not block root")
+	}
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "gen", "changed.go"), "before")
+	writeTestFile(t, filepath.Join(root, "locked", "gen.go"), "locked-before")
+
+	transaction, err := newSyncTransaction(root, "modules/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transaction.Close()
+	writeTestFile(t, filepath.Join(transaction.StageRoot(), "gen", "changed.go"), "after")
+	writeTestFile(t, filepath.Join(transaction.StageRoot(), "locked", "gen.go"), "locked-after")
+	if err := transaction.TrackDirectory("gen"); err != nil {
+		t.Fatal(err)
+	}
+	if err := transaction.TrackFile(filepath.Join("locked", "gen.go")); err != nil {
+		t.Fatal(err)
+	}
+
+	// "gen" sorts before "locked", so under a target-by-target apply it would
+	// already be replaced when the unwritable target fails.
+	lockedDir := filepath.Join(root, "locked")
+	if err := os.Chmod(lockedDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(lockedDir, 0o755) })
+
+	if err := transaction.Apply(); err == nil {
+		t.Fatal("apply succeeded despite unwritable target")
+	}
+	assertTestFile(t, filepath.Join(root, "gen", "changed.go"), "before")
+	assertTestFile(t, filepath.Join(root, "locked", "gen.go"), "locked-before")
+
+	if err := os.Chmod(lockedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := transaction.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, filepath.Join(root, "gen", "changed.go"), "after")
+	assertTestFile(t, filepath.Join(root, "locked", "gen.go"), "locked-after")
+	err = filepath.Walk(root, func(path string, _ os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if strings.Contains(path, ".codefly-sync-") {
+			t.Errorf("staging leftover %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
