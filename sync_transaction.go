@@ -100,29 +100,6 @@ func (transaction *syncTransaction) track(relative string, directory bool) error
 	return nil
 }
 
-func (transaction *syncTransaction) TrackStagedFilesOutside(excluded string) error {
-	excluded, err := cleanSyncRelative(excluded)
-	if err != nil {
-		return err
-	}
-	return filepath.WalkDir(transaction.stageRoot, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if path == transaction.stageRoot || entry.IsDir() {
-			return nil
-		}
-		relative, err := filepath.Rel(transaction.stageRoot, path)
-		if err != nil {
-			return err
-		}
-		if relative == excluded || pathContains(excluded, relative) {
-			return nil
-		}
-		return transaction.TrackFile(relative)
-	})
-}
-
 func (transaction *syncTransaction) ChangedFiles() ([]string, error) {
 	var changed []string
 	for _, target := range transaction.sortedTargets() {

@@ -53,10 +53,6 @@ type Settings struct {
 	// the Go module root. Sync replaces these trees exactly, including stale
 	// files left by renamed or deleted protobuf declarations.
 	ProtocolOutputDirs []string `yaml:"protocol-output-dirs"`
-	// ProtocolOnlySync limits Sync ownership to Buf inputs and outputs. It is
-	// used by established services whose handwritten bootstrap and gateway
-	// dependency clients are intentionally outside generator authority.
-	ProtocolOnlySync bool `yaml:"protocol-only-sync"`
 
 	// RuntimeImage overrides the codefly-built runtime image. Format:
 	// "name:tag". :latest and untagged refs are rejected — pinning is

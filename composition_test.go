@@ -50,7 +50,6 @@ connect-endpoint: false
 protocol-output-dirs:
   - generated/go
   - generated/rust
-protocol-only-sync: true
 `)
 	var s Settings
 	if err := yaml.Unmarshal(src, &s); err != nil {
@@ -73,9 +72,6 @@ protocol-only-sync: true
 	}
 	if want := []string{"generated/go", "generated/rust"}; !reflect.DeepEqual(s.ProtocolOutputDirs, want) {
 		t.Errorf("ProtocolOutputDirs: got %#v, want %#v", s.ProtocolOutputDirs, want)
-	}
-	if !s.ProtocolOnlySync {
-		t.Error("ProtocolOnlySync not populated")
 	}
 }
 
