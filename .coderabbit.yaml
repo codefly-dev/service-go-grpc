@@ -1,0 +1,9 @@
+# CodeRabbit configuration
+# Docs: https://docs.coderabbit.ai/reference/configuration
+#
+# Automatic reviews are disabled: CodeRabbit will not review pull requests
+# on its own. Request a review on demand by commenting on a PR:
+#   @coderabbitai review
+reviews:
+  auto_review:
+    enabled: false
