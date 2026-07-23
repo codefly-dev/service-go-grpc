@@ -125,7 +125,7 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 	if err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
-	defer transaction.Close()
+	defer func() { _ = transaction.Close() }()
 
 	// proto/, openapi/, and code/ are siblings of the service root — the
 	// buf workdir and output dirs are service-root-relative, not module-root

@@ -20,7 +20,7 @@ func TestSyncTransactionDryRunPredictsAndAppliesExactTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer transaction.Close()
+	defer func() { _ = transaction.Close() }()
 	writeTestFile(t, filepath.Join(transaction.StageRoot(), "gen", "changed.go"), "after")
 	writeTestFile(t, filepath.Join(transaction.StageRoot(), "gen", "new.go"), "new")
 	writeTestFile(t, filepath.Join(transaction.StageRoot(), "proto", "buf.lock"), "new-lock")
@@ -85,7 +85,7 @@ func TestSyncTransactionApplyIsAllOrNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer transaction.Close()
+	defer func() { _ = transaction.Close() }()
 	writeTestFile(t, filepath.Join(transaction.StageRoot(), "gen", "changed.go"), "after")
 	writeTestFile(t, filepath.Join(transaction.StageRoot(), "locked", "gen.go"), "locked-after")
 	if err := transaction.TrackDirectory("gen"); err != nil {
@@ -131,12 +131,66 @@ func TestSyncTransactionApplyIsAllOrNothing(t *testing.T) {
 	}
 }
 
+func TestRollbackSwapsRestoresCommittedTargetsOnMidCommitFailure(t *testing.T) {
+	root := t.TempDir()
+	// Two targets whose originals both exist. The first swaps in cleanly; the
+	// second fails at commit time (after its original is moved aside) because
+	// its staged replacement is missing. This is the path the Apply permission
+	// test cannot reach — a failure during a later commit(), not during
+	// prepareSwaps — so exercise commit()/rollbackSwaps() directly.
+	writeTestFile(t, filepath.Join(root, "first.go"), "first-before")
+	writeTestFile(t, filepath.Join(root, "second.go"), "second-before")
+
+	firstActual := filepath.Join(root, "first.go")
+	firstIncoming := firstActual + syncIncomingSuffix
+	writeTestFile(t, firstIncoming, "first-after")
+
+	secondActual := filepath.Join(root, "second.go")
+	secondIncoming := secondActual + syncIncomingSuffix // never materialized: forces commit to fail
+
+	swaps := []*pendingSwap{
+		{relative: "first.go", actual: firstActual, incoming: firstIncoming},
+		{relative: "second.go", actual: secondActual, incoming: secondIncoming},
+	}
+
+	if err := swaps[0].commit(); err != nil {
+		t.Fatalf("first commit failed: %v", err)
+	}
+	assertTestFile(t, firstActual, "first-after")
+
+	if err := swaps[1].commit(); err == nil {
+		t.Fatal("second commit succeeded despite missing incoming replacement")
+	}
+
+	if err := rollbackSwaps(swaps); err != nil {
+		t.Fatalf("rollback failed: %v", err)
+	}
+
+	// The committed first target is undone and the second target's displaced
+	// original is restored: both are back to their pre-apply content.
+	assertTestFile(t, firstActual, "first-before")
+	assertTestFile(t, secondActual, "second-before")
+
+	err := filepath.Walk(root, func(path string, _ os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if strings.Contains(path, syncBackupSuffix) {
+			t.Errorf("backup leftover %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSyncTransactionRejectsBroadAndOverlappingOwnership(t *testing.T) {
 	transaction, err := newSyncTransaction(t.TempDir(), "module/service")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer transaction.Close()
+	defer func() { _ = transaction.Close() }()
 	if err := transaction.TrackDirectory("."); err == nil {
 		t.Fatal("service-root ownership was accepted")
 	}
