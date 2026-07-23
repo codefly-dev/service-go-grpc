@@ -163,6 +163,7 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		return s.Base.Builder.SyncError(err)
 	}
 	buf.WithCache(transaction.StageRoot())
+	buf.WithGeneratedRoot(transaction.StageRoot())
 	for _, relative := range s.GoGrpc.Settings.protocolOutputDirs() {
 		if err := transaction.TrackDirectory(relative); err != nil {
 			return s.Base.Builder.SyncError(err)
