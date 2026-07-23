@@ -357,8 +357,10 @@ func syncNodeDigest(path string) ([]byte, error) {
 	// as 0600 while a clean Git checkout restores them as 0644; treating that
 	// transport detail as source drift makes a clean checkout impossible to
 	// certify. Preserve node type and executable semantics, which are the
-	// permission bits the repository can actually reproduce.
-	_, _ = fmt.Fprintf(hash, "%v:%t:", info.Mode().Type(), info.Mode().Perm()&0o111 != 0)
+	// permission bits the repository can actually reproduce. Git keys the
+	// executable mode on the owner-execute bit alone (0100 -> 100755), so mask
+	// on 0o100 to mirror it exactly rather than any-execute.
+	_, _ = fmt.Fprintf(hash, "%v:%t:", info.Mode().Type(), info.Mode().Perm()&0o100 != 0)
 	switch {
 	case info.Mode().IsRegular():
 		file, err := os.Open(path)

@@ -52,6 +52,10 @@ type Settings struct {
 	// ProtocolSourceDir locates the Buf source directory relative to the
 	// service root. The default is "proto"; nested Go modules may opt into a
 	// path such as "code/proto" without moving their public protocol tree.
+	// Buf is rooted at the parent of this path, so the leaf must be a
+	// directory Buf discovers by convention (a "proto"-named tree or one
+	// carrying its own buf.yaml); an unconventional leaf name may generate
+	// nothing.
 	ProtocolSourceDir string `yaml:"protocol-source-dir"`
 	// ProtocolOutputDirs names every Buf-owned output directory relative to
 	// the service root (the directory holding proto/, code/, openapi/). Sync
