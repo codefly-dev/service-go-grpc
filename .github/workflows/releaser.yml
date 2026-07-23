@@ -6,32 +6,6 @@ on:
       - 'v*'
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-      - name: test
-        run: go test -v ./...
-
-  goreleaser:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v3
-        with:
-          version: latest
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+  release:
+    uses: codefly-dev/.github/.github/workflows/go-service-release.yml@main
+    secrets: inherit
