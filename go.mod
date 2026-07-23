@@ -5,6 +5,7 @@ go 1.25.0
 toolchain go1.26.4
 
 require (
+	github.com/bufbuild/protocompile v0.14.1
 	github.com/codefly-dev/core v0.2.24
 	github.com/codefly-dev/service-go v0.0.15
 	github.com/stretchr/testify v1.11.1

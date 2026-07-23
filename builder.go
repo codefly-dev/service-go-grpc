@@ -1,9 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"embed"
+	"io/fs"
+	"os"
+	"path/filepath"
 
+	"github.com/bufbuild/protocompile/ast"
+	"github.com/bufbuild/protocompile/parser"
+	"github.com/bufbuild/protocompile/reporter"
 	"github.com/codefly-dev/core/agents/communicate"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/agents/services/upgrade"
@@ -42,9 +49,7 @@ type Builder struct {
 
 	GoGrpc *Service
 
-	buf           *proto.Buf
-	cacheLocation string
-	answers       map[string]*agentv0.Answer
+	answers map[string]*agentv0.Answer
 }
 
 // NewBuilder composes a go-grpc Builder by constructing a generic
@@ -85,8 +90,6 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 		return nil, s.Wool.Wrapf(err, "cannot load go-grpc settings")
 	}
 
-	s.cacheLocation = s.Local(".cache")
-
 	// Creation mode: generic returned early with GettingStarted.
 	if req.CreationMode != nil {
 		return resp, nil
@@ -108,38 +111,67 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 
 // Init, Update are INHERITED from *gobuilder.Builder.
 
-// Sync regenerates local proto code via buf and generates gRPC client
-// stubs for every declared dependency that exposes a gRPC endpoint.
-func (s *Builder) Sync(ctx context.Context, _ *builderv0.SyncRequest) (*builderv0.SyncResponse, error) {
+// Sync stages every generator-owned artifact, then either reports or applies
+// the exact deterministic file set. Buf remains the only protocol generator;
+// Go, Rust, and TypeScript outputs are declared together in buf.gen.yaml.
+func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*builderv0.SyncResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	// Generated scaffold files are part of the agent contract, just like proto
-	// output. Re-render only files that are explicitly generator-owned so fixes
-	// to authentication/startup plumbing reach existing services while user
-	// files such as work.go, rpcs.go, and go.mod remain untouched.
-	create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
-	generated := services.WithFactory(factoryFS).
-		WithPathSelect(generatedScaffoldSelect()).
-		WithOverride(shared.OverrideAll())
-	if err := s.Templates(ctx, create, generated); err != nil {
+	if err := s.GoGrpc.Settings.Validate(); err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	transaction, err := newSyncTransaction(s.Location, s.Identity.RelativeToWorkspace)
+	if err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	defer func() { _ = transaction.Close() }()
+
+	// proto/, openapi/, and code/ are siblings of the service root — the
+	// buf workdir and output dirs are service-root-relative, not module-root
+	// relative. moduleRoot only scopes generated Go code that must live
+	// inside the module (dependency stubs below).
+	moduleRoot, _ := golanghelpers.SplitSourceDir(s.GoGrpc.Settings.GoSourceDir())
+	protoDir := "proto"
+	if err := transaction.CopyInput(protoDir); err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
 
-	if s.buf == nil {
-		var err error
-		s.buf, err = proto.NewBuf(ctx, s.Location)
-		if err != nil {
+	scaffoldTargets, err := generatedScaffoldTargets(s.Location, filepath.Join(s.Location, protoDir), s.Information.Service.Name.Title+"Service")
+	if err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	if len(scaffoldTargets) > 0 {
+		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
+		generated := services.WithFactory(factoryFS).
+			WithPathSelect(generatedScaffoldSelect()).
+			WithOverride(shared.OverrideAll()).
+			WithDestination("%s", transaction.StageRoot())
+		if err := s.Templates(ctx, create, generated); err != nil {
 			return s.Base.Builder.SyncError(err)
 		}
-		s.buf.WithCache(s.cacheLocation)
-		// pkg/gen and openapi are generator-owned. Clearing them only after
-		// Buf detects an input change prevents renamed protobuf packages from
-		// leaving stale Go packages or endpoints behind.
-		s.buf.WithGeneratedDirs(s.Local("code/pkg/gen"), s.Local("openapi"))
+		for _, target := range scaffoldTargets {
+			if err := transaction.TrackFile(target); err != nil {
+				return s.Base.Builder.SyncError(err)
+			}
+		}
 	}
 
-	if err := s.buf.Generate(ctx); err != nil {
+	buf, err := proto.NewBuf(ctx, transaction.StageRoot())
+	if err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	buf.WithCache(transaction.StageRoot())
+	for _, relative := range s.GoGrpc.Settings.protocolOutputDirs() {
+		if err := transaction.TrackDirectory(relative); err != nil {
+			return s.Base.Builder.SyncError(err)
+		}
+		buf.WithGeneratedDirs(filepath.Join(transaction.StageRoot(), relative))
+	}
+	if err := transaction.TrackFile(filepath.Join(protoDir, "buf.lock")); err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	if err := buf.Generate(ctx); err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
 
@@ -152,25 +184,108 @@ func (s *Builder) Sync(ctx context.Context, _ *builderv0.SyncRequest) (*builderv
 		if ep == nil {
 			continue
 		}
-		if err := proto.GenerateGRPC(ctx, languages.GO, s.Local("code/external/%s", dep.Unique()), dep.Unique(), ep); err != nil {
+		destination := filepath.Join(moduleRoot, "external", dep.Unique())
+		if err := transaction.TrackDirectory(destination); err != nil {
+			return s.Base.Builder.SyncError(err)
+		}
+		if err := proto.GenerateGRPC(ctx, languages.GO, filepath.Join(transaction.StageRoot(), destination), dep.Unique(), ep); err != nil {
 			return s.Base.Builder.SyncError(err)
 		}
 	}
-	return s.Base.Builder.SyncResponse()
+
+	changed, err := transaction.ChangedFiles()
+	if err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+	if !request.GetDryRun() {
+		if err := transaction.Apply(); err != nil {
+			return s.Base.Builder.SyncError(err)
+		}
+	}
+	response, err := s.Base.Builder.SyncResponse()
+	if err != nil {
+		return response, err
+	}
+	response.ChangedFiles = changed
+	return response, nil
 }
 
 // generatedScaffoldSelect traverses only the directories required to reach
 // generated service plumbing and selects only generator-owned Go files.
 func generatedScaffoldSelect() shared.PathSelect {
-	return shared.NewSelect(
-		"code",
-		"pkg",
-		"adapters",
-		"plugins",
-		"main.go.tmpl",
-		"*_gen.go.tmpl",
-		"registry_gen.go.tmpl",
-	)
+	return generatedScaffoldSelection{}
+}
+
+type generatedScaffoldSelection struct{}
+
+func (generatedScaffoldSelection) Keep(name string) bool {
+	switch name {
+	case "code", "pkg", "adapters", "plugins", "main.go.tmpl":
+		return true
+	default:
+		return filepath.Ext(name) == ".tmpl" && filepath.Base(name) != "rpcs.go.tmpl" && bytes.HasSuffix([]byte(name), []byte("_gen.go.tmpl"))
+	}
+}
+
+func generatedScaffoldTargets(root, protoRoot, expectedService string) ([]string, error) {
+	mainPath := filepath.Join(root, "code", "main.go")
+	contents, err := os.ReadFile(mainPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Contains(contents, []byte("This code is generated by the agent")) {
+		return nil, nil
+	}
+	services, err := declaredProtoServices(protoRoot)
+	if err != nil {
+		return nil, err
+	}
+	if len(services) != 1 || services[0] != expectedService {
+		return nil, nil
+	}
+	return []string{
+		filepath.Join("code", "main.go"),
+		filepath.Join("code", "pkg", "adapters", "connect_gen.go"),
+		filepath.Join("code", "pkg", "adapters", "cors_gen.go"),
+		filepath.Join("code", "pkg", "adapters", "grpc_gen.go"),
+		filepath.Join("code", "pkg", "adapters", "rest_gen.go"),
+		filepath.Join("code", "pkg", "adapters", "server_gen.go"),
+		filepath.Join("code", "plugins", "registry_gen.go"),
+	}, nil
+}
+
+func declaredProtoServices(root string) ([]string, error) {
+	var services []string
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".proto" {
+			return nil
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		node, parseErr := parser.Parse(path, file, reporter.NewHandler(nil))
+		closeErr := file.Close()
+		if parseErr != nil {
+			return parseErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		for _, declaration := range node.Decls {
+			if service, ok := declaration.(*ast.ServiceNode); ok {
+				services = append(services, service.Name.Val)
+			}
+		}
+		return nil
+	})
+	return services, err
 }
 
 // Build produces the service's Docker image. Uses the BuildGoDocker

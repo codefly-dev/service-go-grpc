@@ -6,6 +6,9 @@ package main
 import (
 	"context"
 	"embed"
+	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/codefly-dev/core/agents"
 	"github.com/codefly-dev/core/agents/services"
@@ -46,6 +49,11 @@ type Settings struct {
 
 	RestEndpoint    bool `yaml:"rest-endpoint"`
 	ConnectEndpoint bool `yaml:"connect-endpoint"`
+	// ProtocolOutputDirs names every Buf-owned output directory relative to
+	// the service root (the directory holding proto/, code/, openapi/). Sync
+	// replaces these trees exactly, including stale files left by renamed or
+	// deleted protobuf declarations.
+	ProtocolOutputDirs []string `yaml:"protocol-output-dirs"`
 
 	// RuntimeImage overrides the codefly-built runtime image. Format:
 	// "name:tag". :latest and untagged refs are rejected — pinning is
@@ -53,6 +61,25 @@ type Settings struct {
 	// Field named RuntimeImage (not DockerImage) to avoid colliding with
 	// services.Base.DockerImage(req).
 	RuntimeImage string `yaml:"docker-image"`
+}
+
+func (s *Settings) Validate() error {
+	if err := s.GoAgentSettings.Validate(); err != nil {
+		return err
+	}
+	for _, dir := range s.protocolOutputDirs() {
+		if !filepath.IsLocal(dir) || dir == "." || strings.ContainsAny(dir, "\x00\\") {
+			return fmt.Errorf("protocol output directory %q must stay below the service root", dir)
+		}
+	}
+	return nil
+}
+
+func (s *Settings) protocolOutputDirs() []string {
+	if len(s.ProtocolOutputDirs) == 0 {
+		return []string{"code/pkg/gen", "openapi"}
+	}
+	return append([]string(nil), s.ProtocolOutputDirs...)
 }
 
 // Setting names re-exported for local use (templates, Builder options).
@@ -93,11 +120,7 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInfor
 	}
 
 	validation := goservice.ValidationCapabilities()
-	// The current gRPC specialization regenerates protobuf output in place and
-	// does not yet implement Builder.Sync dry-run comparison. Advertise that gap
-	// explicitly so local validation and CI cannot mistake a mutating operation
-	// for a drift check. The schema plugin will own this operation.
-	validation.Sync.Supported = false
+	validation.Sync.Supported = true
 
 	return services.Advertisement{
 		Backends: runnersbase.BackendSupport{
