@@ -49,6 +49,10 @@ type Settings struct {
 
 	RestEndpoint    bool `yaml:"rest-endpoint"`
 	ConnectEndpoint bool `yaml:"connect-endpoint"`
+	// ProtocolSourceDir locates the Buf source directory relative to the
+	// service root. The default is "proto"; nested Go modules may opt into a
+	// path such as "code/proto" without moving their public protocol tree.
+	ProtocolSourceDir string `yaml:"protocol-source-dir"`
 	// ProtocolOutputDirs names every Buf-owned output directory relative to
 	// the service root (the directory holding proto/, code/, openapi/). Sync
 	// replaces these trees exactly, including stale files left by renamed or
@@ -67,12 +71,23 @@ func (s *Settings) Validate() error {
 	if err := s.GoAgentSettings.Validate(); err != nil {
 		return err
 	}
+	sourceDir := s.protocolSourceDir()
+	if !filepath.IsLocal(sourceDir) || sourceDir == "." || strings.ContainsAny(sourceDir, "\x00\\") {
+		return fmt.Errorf("protocol source directory %q must stay below the service root", sourceDir)
+	}
 	for _, dir := range s.protocolOutputDirs() {
 		if !filepath.IsLocal(dir) || dir == "." || strings.ContainsAny(dir, "\x00\\") {
 			return fmt.Errorf("protocol output directory %q must stay below the service root", dir)
 		}
 	}
 	return nil
+}
+
+func (s *Settings) protocolSourceDir() string {
+	if s.ProtocolSourceDir == "" {
+		return "proto"
+	}
+	return s.ProtocolSourceDir
 }
 
 func (s *Settings) protocolOutputDirs() []string {

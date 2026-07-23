@@ -47,6 +47,7 @@ with-workspace: false
 source-dir: "cmd/server"
 rest-endpoint: true
 connect-endpoint: false
+protocol-source-dir: code/proto
 protocol-output-dirs:
   - generated/go
   - generated/rust
@@ -69,6 +70,9 @@ protocol-output-dirs:
 	}
 	if !s.RestEndpoint {
 		t.Error("RestEndpoint (go-grpc) not populated")
+	}
+	if s.ProtocolSourceDir != "code/proto" {
+		t.Errorf("ProtocolSourceDir: got %q", s.ProtocolSourceDir)
 	}
 	if want := []string{"generated/go", "generated/rust"}; !reflect.DeepEqual(s.ProtocolOutputDirs, want) {
 		t.Errorf("ProtocolOutputDirs: got %#v, want %#v", s.ProtocolOutputDirs, want)
