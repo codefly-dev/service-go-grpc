@@ -205,6 +205,39 @@ func TestSyncTransactionRejectsBroadAndOverlappingOwnership(t *testing.T) {
 	}
 }
 
+func TestSyncNodesEqualUsesGitStablePermissions(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "checkout.go")
+	right := filepath.Join(root, "generated.go")
+	writeTestFile(t, left, "package generated")
+	writeTestFile(t, right, "package generated")
+
+	if err := os.Chmod(left, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(right, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	equal, err := syncNodesEqual(left, right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equal {
+		t.Fatal("non-executable checkout and container permissions reported drift")
+	}
+
+	if err := os.Chmod(right, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	equal, err = syncNodesEqual(left, right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if equal {
+		t.Fatal("executable permission change was ignored")
+	}
+}
+
 func writeTestFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

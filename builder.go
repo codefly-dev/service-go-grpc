@@ -127,12 +127,12 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 	}
 	defer func() { _ = transaction.Close() }()
 
-	// proto/, openapi/, and code/ are siblings of the service root — the
-	// buf workdir and output dirs are service-root-relative, not module-root
-	// relative. moduleRoot only scopes generated Go code that must live
-	// inside the module (dependency stubs below).
+	// Protocol input and output paths are service-root-relative, not derived
+	// from the Go module root. This keeps the conventional proto/ + code/
+	// layout while allowing an explicit nested source directory for existing
+	// services. moduleRoot only scopes generated Go dependency stubs below.
 	moduleRoot, _ := golanghelpers.SplitSourceDir(s.GoGrpc.Settings.GoSourceDir())
-	protoDir := "proto"
+	protoDir := s.GoGrpc.Settings.protocolSourceDir()
 	if err := transaction.CopyInput(protoDir); err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
@@ -157,7 +157,8 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		}
 	}
 
-	buf, err := proto.NewBuf(ctx, transaction.StageRoot())
+	bufRoot := filepath.Dir(filepath.Join(transaction.StageRoot(), protoDir))
+	buf, err := proto.NewBuf(ctx, bufRoot)
 	if err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
