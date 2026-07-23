@@ -352,7 +352,13 @@ func syncNodeDigest(path string) ([]byte, error) {
 		return nil, err
 	}
 	hash := sha256.New()
-	_, _ = fmt.Fprintf(hash, "%v:%04o:", info.Mode().Type(), info.Mode().Perm())
+	// Git records only whether a regular file is executable, not its complete
+	// POSIX permissions. Containerized generators commonly materialize files
+	// as 0600 while a clean Git checkout restores them as 0644; treating that
+	// transport detail as source drift makes a clean checkout impossible to
+	// certify. Preserve node type and executable semantics, which are the
+	// permission bits the repository can actually reproduce.
+	_, _ = fmt.Fprintf(hash, "%v:%t:", info.Mode().Type(), info.Mode().Perm()&0o111 != 0)
 	switch {
 	case info.Mode().IsRegular():
 		file, err := os.Open(path)
