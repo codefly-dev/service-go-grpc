@@ -6,7 +6,47 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"golang.org/x/tools/imports"
 )
+
+// TestFormatStagedGoMatchesLint proves that generation and lint agree: after
+// formatStagedGo rewrites a staged .go file, the exact goimports pass the lint
+// runs reports it clean, and a second pass is a no-op.
+func TestFormatStagedGoMatchesLint(t *testing.T) {
+	stage := t.TempDir()
+	unformatted := "package sample\n\nimport \"strings\"\nimport \"fmt\"\n\nfunc Use()  string {return fmt.Sprint(strings.ToUpper(\"x\"))}\n"
+	goPath := filepath.Join(stage, "gen", "sample.go")
+	writeTestFile(t, goPath, unformatted)
+	writeTestFile(t, filepath.Join(stage, "proto", "api.proto"), "syntax = \"proto3\";")
+
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatal(err)
+	}
+
+	formatted, err := os.ReadFile(goPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(formatted) == unformatted {
+		t.Fatal("formatStagedGo left a non-goimports-clean file unchanged")
+	}
+	// The lint's own check must now find nothing to fix.
+	fixed, err := imports.Process(goPath, formatted, &imports.Options{Comments: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(fixed) != string(formatted) {
+		t.Fatalf("lint still reports drift after formatting:\n%s", fixed)
+	}
+	// Idempotent: a second sync produces no further change, so sync-drift passes.
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, goPath, string(formatted))
+	// Non-Go staged input is left untouched.
+	assertTestFile(t, filepath.Join(stage, "proto", "api.proto"), "syntax = \"proto3\";")
+}
 
 func TestSyncTransactionDryRunPredictsAndAppliesExactTree(t *testing.T) {
 	root := t.TempDir()

@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/tools/imports"
 
 	"github.com/bufbuild/protocompile/ast"
 	"github.com/bufbuild/protocompile/parser"
@@ -194,6 +197,16 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		}
 	}
 
+	// buf and the language plugins emit Go that the agent's own lint
+	// (corecode.GoCodeServer, golang.org/x/tools/imports) can still flag as
+	// needing a safe fix, because the two paths pinned different goimports
+	// versions. Run the exact function the lint runs — same x/tools version, so
+	// byte-identical output — over the staged tree so generated code is
+	// lint-clean and sync-drift and lint agree on it.
+	if err := formatStagedGo(transaction.StageRoot()); err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+
 	changed, err := transaction.ChangedFiles()
 	if err != nil {
 		return s.Base.Builder.SyncError(err)
@@ -209,6 +222,39 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 	}
 	response.ChangedFiles = changed
 	return response, nil
+}
+
+// formatStagedGo rewrites every staged .go file through the same goimports pass
+// the lint uses to decide a file "needs Fix". Applied to the generated output
+// before it is compared and swapped in, so the code the agent produces already
+// satisfies the agent's own formatting check. imports.Process leaves an
+// already-clean file untouched, so this is idempotent and keeps sync
+// deterministic.
+func formatStagedGo(root string) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".go" {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		fixed, err := imports.Process(path, content, &imports.Options{Comments: true})
+		if err != nil {
+			return fmt.Errorf("goimports %q: %w", path, err)
+		}
+		if bytes.Equal(content, fixed) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(path, fixed, info.Mode().Perm())
+	})
 }
 
 // generatedScaffoldSelect traverses only the directories required to reach
