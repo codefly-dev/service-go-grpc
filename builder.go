@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"embed"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -230,21 +229,33 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 // satisfies the agent's own formatting check. imports.Process leaves an
 // already-clean file untouched, so this is idempotent and keeps sync
 // deterministic.
+//
+// Formatting at the stage path is a valid stand-in for the lint's later run at
+// the real path because imports.Process is path-independent for this input:
+// with no LocalPrefix and no missing/unused imports — always true of generated
+// protobuf — it reduces to gofmt plus a std/non-std import sort, neither of
+// which depends on the file's location.
 func formatStagedGo(root string) error {
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() || filepath.Ext(path) != ".go" {
+		// Only regular .go files: a symlink ending in .go would be dereferenced
+		// by the os.WriteFile below and truncate its target, possibly outside the
+		// staged tree.
+		if !entry.Type().IsRegular() || filepath.Ext(path) != ".go" {
 			return nil
 		}
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
+		// A file goimports cannot parse is left untouched rather than failing the
+		// whole sync — the lint reports it separately, and sync has no more to add
+		// than it did before this pass existed.
 		fixed, err := imports.Process(path, content, &imports.Options{Comments: true})
 		if err != nil {
-			return fmt.Errorf("goimports %q: %w", path, err)
+			return nil
 		}
 		if bytes.Equal(content, fixed) {
 			return nil

@@ -48,6 +48,42 @@ func TestFormatStagedGoMatchesLint(t *testing.T) {
 	assertTestFile(t, filepath.Join(stage, "proto", "api.proto"), "syntax = \"proto3\";")
 }
 
+// TestFormatStagedGoSkipsUnparseableFile verifies that a .go file goimports
+// cannot parse does not abort the sync and is left untouched.
+func TestFormatStagedGoSkipsUnparseableFile(t *testing.T) {
+	stage := t.TempDir()
+	broken := "package sample\n\nfunc oops( {\n"
+	brokenPath := filepath.Join(stage, "gen", "broken.go")
+	writeTestFile(t, brokenPath, broken)
+
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatalf("unparseable staged file aborted formatting: %v", err)
+	}
+	assertTestFile(t, brokenPath, broken)
+}
+
+// TestFormatStagedGoLeavesSymlinkTargetUntouched verifies that a .go symlink is
+// not dereferenced, so formatting cannot truncate a file outside the tree.
+func TestFormatStagedGoLeavesSymlinkTargetUntouched(t *testing.T) {
+	stage := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	unformatted := "package sample\n\nimport \"fmt\"\n\nfunc Use()  {fmt.Println()}\n"
+	writeTestFile(t, outside, unformatted)
+
+	link := filepath.Join(stage, "gen", "link.go")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, outside, unformatted)
+}
+
 func TestSyncTransactionDryRunPredictsAndAppliesExactTree(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "gen", "changed.go"), "before")
