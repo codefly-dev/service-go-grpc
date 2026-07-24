@@ -6,7 +6,83 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"golang.org/x/tools/imports"
 )
+
+// TestFormatStagedGoMatchesLint proves that generation and lint agree: after
+// formatStagedGo rewrites a staged .go file, the exact goimports pass the lint
+// runs reports it clean, and a second pass is a no-op.
+func TestFormatStagedGoMatchesLint(t *testing.T) {
+	stage := t.TempDir()
+	unformatted := "package sample\n\nimport \"strings\"\nimport \"fmt\"\n\nfunc Use()  string {return fmt.Sprint(strings.ToUpper(\"x\"))}\n"
+	goPath := filepath.Join(stage, "gen", "sample.go")
+	writeTestFile(t, goPath, unformatted)
+	writeTestFile(t, filepath.Join(stage, "proto", "api.proto"), "syntax = \"proto3\";")
+
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatal(err)
+	}
+
+	formatted, err := os.ReadFile(goPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(formatted) == unformatted {
+		t.Fatal("formatStagedGo left a non-goimports-clean file unchanged")
+	}
+	// The lint's own check must now find nothing to fix.
+	fixed, err := imports.Process(goPath, formatted, &imports.Options{Comments: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(fixed) != string(formatted) {
+		t.Fatalf("lint still reports drift after formatting:\n%s", fixed)
+	}
+	// Idempotent: a second sync produces no further change, so sync-drift passes.
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, goPath, string(formatted))
+	// Non-Go staged input is left untouched.
+	assertTestFile(t, filepath.Join(stage, "proto", "api.proto"), "syntax = \"proto3\";")
+}
+
+// TestFormatStagedGoSkipsUnparseableFile verifies that a .go file goimports
+// cannot parse does not abort the sync and is left untouched.
+func TestFormatStagedGoSkipsUnparseableFile(t *testing.T) {
+	stage := t.TempDir()
+	broken := "package sample\n\nfunc oops( {\n"
+	brokenPath := filepath.Join(stage, "gen", "broken.go")
+	writeTestFile(t, brokenPath, broken)
+
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatalf("unparseable staged file aborted formatting: %v", err)
+	}
+	assertTestFile(t, brokenPath, broken)
+}
+
+// TestFormatStagedGoLeavesSymlinkTargetUntouched verifies that a .go symlink is
+// not dereferenced, so formatting cannot truncate a file outside the tree.
+func TestFormatStagedGoLeavesSymlinkTargetUntouched(t *testing.T) {
+	stage := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	unformatted := "package sample\n\nimport \"fmt\"\n\nfunc Use()  {fmt.Println()}\n"
+	writeTestFile(t, outside, unformatted)
+
+	link := filepath.Join(stage, "gen", "link.go")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, outside, unformatted)
+}
 
 func TestSyncTransactionDryRunPredictsAndAppliesExactTree(t *testing.T) {
 	root := t.TempDir()
