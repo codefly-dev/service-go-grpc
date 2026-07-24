@@ -303,6 +303,7 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 			sourceDir := s.GoGrpc.Settings.GoSourceDir()
 			d.SourceDir = sourceDir
 			d.ModuleRoot, d.BuildTarget = golanghelpers.SplitSourceDir(sourceDir)
+			d.WithCGO = s.GoGrpc.Settings.WithCGO
 		})
 }
 
