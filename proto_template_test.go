@@ -109,6 +109,8 @@ func TestGeneratedServiceOmitsRESTImplementationWhenDisabled(t *testing.T) {
 		"rest    *RestServer",
 		"rest:    rest",
 		"if server.rest != nil",
+		"server.rest.Shutdown(ctx)",
+		"server.connect.Shutdown(ctx)",
 	} {
 		if !strings.Contains(string(serverTemplate), want) {
 			t.Errorf("server adapter does not condition REST plumbing on settings: missing %q", want)
@@ -121,6 +123,20 @@ func TestGeneratedServiceOmitsRESTImplementationWhenDisabled(t *testing.T) {
 	}
 	if !strings.Contains(string(restTemplate), "{{- if .Settings.RestEndpoint }}") {
 		t.Error("REST adapter implementation is emitted for gRPC-only services")
+	}
+	for _, templatePath := range []string{
+		"templates/factory/code/pkg/adapters/rest_gen.go.tmpl",
+		"templates/factory/code/pkg/adapters/connect_gen.go.tmpl",
+	} {
+		httpTemplate, err := factoryFS.ReadFile(templatePath)
+		if err != nil {
+			t.Fatalf("read HTTP adapter template: %v", err)
+		}
+		for _, want := range []string{"server *http.Server", "s.server.Shutdown(ctx)"} {
+			if !strings.Contains(string(httpTemplate), want) {
+				t.Errorf("%s does not contain %q", templatePath, want)
+			}
+		}
 	}
 }
 

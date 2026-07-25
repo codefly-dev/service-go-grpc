@@ -11,6 +11,7 @@ import (
 	"codefly-base/plugins"
 	"context"
 	"fmt"
+	"time"
 )
 
 type Server struct {
@@ -76,6 +77,20 @@ func (server *Server) Start(ctx context.Context) error {
 
 func (server *Server) Stop() {
 	fmt.Println("Stopping server...")
+	if server.rest != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := server.rest.Shutdown(ctx); err != nil {
+			fmt.Printf("failed to stop REST server: %v\n", err)
+		}
+		cancel()
+	}
+	if server.connect != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := server.connect.Shutdown(ctx); err != nil {
+			fmt.Printf("failed to stop Connect server: %v\n", err)
+		}
+		cancel()
+	}
 	server.grpc.health.Shutdown()
 	server.grpc.gRPC.GracefulStop()
 }
