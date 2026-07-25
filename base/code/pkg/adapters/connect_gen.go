@@ -23,10 +23,14 @@ import (
 // It handles all three protocols on a single port.
 type ConnectServer struct {
 	config *Configuration
+	server *http.Server
 }
 
 func NewConnectServer(c *Configuration) (*ConnectServer, error) {
-	return &ConnectServer{config: c}, nil
+	return &ConnectServer{
+		config: c,
+		server: &http.Server{Addr: fmt.Sprintf(":%d", *c.EndpointConnectPort)},
+	}, nil
 }
 
 // connectHandler wraps the GrpcServer to implement the Connect handler interface.
@@ -57,10 +61,13 @@ func (s *ConnectServer) Run(ctx context.Context) error {
 	mux.Handle(path, handler)
 
 	// Use h2c for HTTP/2 without TLS (development mode)
-	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: h2c.NewHandler(mux, &http2.Server{}),
+	s.server.Handler = h2c.NewHandler(mux, &http2.Server{})
+	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
 	}
+	return nil
+}
 
-	return server.ListenAndServe()
+func (s *ConnectServer) Shutdown(ctx context.Context) error {
+	return s.server.Shutdown(ctx)
 }

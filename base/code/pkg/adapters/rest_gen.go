@@ -7,9 +7,9 @@ package adapters
 ----------------------------------------------------------------- */
 
 import (
+	"bytes"
 	"codefly-base/pkg/gen"
 	"codefly-base/plugins"
-	"bytes"
 	"context"
 	"fmt"
 	"google.golang.org/grpc/grpclog"
@@ -29,10 +29,14 @@ import (
 
 type RestServer struct {
 	config *Configuration
+	server *http.Server
 }
 
 func NewRestServer(c *Configuration) (*RestServer, error) {
-	server := &RestServer{config: c}
+	server := &RestServer{
+		config: c,
+		server: &http.Server{Addr: fmt.Sprintf(":%d", *c.EndpointHttpPort)},
+	}
 	// Start Rest server (and proxy calls to gRPC server endpoint)
 	return server, nil
 }
@@ -100,7 +104,15 @@ func (s *RestServer) Run(ctx context.Context) error {
 	// Wrap your mux with the CORS handler
 	handler := c.Handler(gwMux)
 
-	return http.ListenAndServe(fmt.Sprintf(":%d", *s.config.EndpointHttpPort), logRequestBody(handler))
+	s.server.Handler = logRequestBody(handler)
+	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
+
+func (s *RestServer) Shutdown(ctx context.Context) error {
+	return s.server.Shutdown(ctx)
 }
 
 type logResponseWriter struct {
