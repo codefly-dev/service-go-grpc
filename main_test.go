@@ -154,7 +154,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 	require.NoError(t, err)
 	networkManager.WithTemporaryPorts()
 
-	networkMappings, err := networkManager.GenerateNetworkMappings(ctx, env, workspace, runtime.Identity, runtime.Endpoints)
+	networkMappings, err := networkManager.GenerateNetworkMappings(ctx, env, workspace, runtime.Identity, runtime.Endpoints, runtimeContext)
 	require.NoError(t, err)
 	require.NotNil(t, networkMappings)
 	require.Equal(t, expectedEndpoints, len(networkMappings))
