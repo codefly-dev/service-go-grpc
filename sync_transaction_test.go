@@ -84,6 +84,25 @@ func TestFormatStagedGoLeavesSymlinkTargetUntouched(t *testing.T) {
 	assertTestFile(t, outside, unformatted)
 }
 
+// TestFormatStagedGoSkipsUnreadableCache proves a non-mutating sync survives
+// the private .cache directory Buf leaves in the staging root even when a
+// containerized generator wrote it as a foreign UID, leaving it unreadable.
+func TestFormatStagedGoSkipsUnreadableCache(t *testing.T) {
+	stage := t.TempDir()
+	writeTestFile(t, filepath.Join(stage, "gen", "sample.go"), "package sample\n")
+	cache := filepath.Join(stage, syncCacheDir, "buf")
+	writeTestFile(t, filepath.Join(cache, "module.bin"), "cached")
+	if err := os.Chmod(filepath.Join(stage, syncCacheDir), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	// Restore permissions so t.TempDir cleanup can remove the tree.
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(stage, syncCacheDir), 0o755) })
+
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatalf("unreadable staged .cache aborted formatting: %v", err)
+	}
+}
+
 func TestSyncTransactionDryRunPredictsAndAppliesExactTree(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "gen", "changed.go"), "before")

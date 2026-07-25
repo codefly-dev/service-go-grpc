@@ -123,6 +123,9 @@ func (transaction *syncTransaction) ChangedFiles() ([]string, error) {
 const (
 	syncIncomingSuffix = ".codefly-sync-incoming"
 	syncBackupSuffix   = ".codefly-sync-backup"
+	// syncCacheDir is the private cache directory Buf writes into the staging
+	// root; it is never a sync target and must be excluded from tree traversal.
+	syncCacheDir = ".cache"
 )
 
 // pendingSwap tracks one changed target through the two-phase apply.
