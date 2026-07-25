@@ -240,6 +240,14 @@ func formatStagedGo(root string) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		// Buf leaves a private .cache directory in the staging root. A
+		// containerized generator can create it as a foreign UID, leaving it
+		// unreadable; descending into it would abort a non-mutating sync with a
+		// permission error. It never holds generator-owned .go output, so skip
+		// it before WalkDir tries to read its entries.
+		if entry.IsDir() && entry.Name() == syncCacheDir {
+			return filepath.SkipDir
+		}
 		// Only regular .go files: a symlink ending in .go would be dereferenced
 		// by the os.WriteFile below and truncate its target, possibly outside the
 		// staged tree.
