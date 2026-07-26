@@ -166,11 +166,11 @@ func NewService() *Service {
 	}
 }
 
-// GoVersion is the Go toolchain version used for container builds.
-const GoVersion = "1.26"
+// GoVersion is the exact Go patch release used for container builds.
+const GoVersion = "1.26.5"
 
-// AlpineVersion is the base Alpine version for container builds.
-const AlpineVersion = "3.21"
+// AlpineVersion is the exact runtime Alpine patch release used for container builds.
+const AlpineVersion = "3.23.5"
 
 // Runtime Image
 var runtimeImage = &configurations.DockerImage{Name: "codeflydev/go", Tag: "0.0.10"}
