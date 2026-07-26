@@ -4,10 +4,17 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	goast "go/ast"
+	"go/format"
+	goparser "go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"golang.org/x/mod/modfile"
+	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/imports"
 
 	"github.com/bufbuild/protocompile/ast"
@@ -199,6 +206,22 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		}
 	}
 
+	// protoc-gen-grpc-gateway emits `pkg.RequestType` for request types declared
+	// in another proto package but omits the import, so the generated .pb.gw.go
+	// does not compile. goimports below cannot repair it: its candidate scan keys
+	// on the import path's last segment (v1), which never matches the package's
+	// own name (jobsv1). Resolve those references against the freshly generated
+	// tree and insert the missing imports before the goimports pass sorts them.
+	moduleImports := make([]string, 0, len(s.GoGrpc.Settings.protocolOutputDirs()))
+	for _, relative := range s.GoGrpc.Settings.protocolOutputDirs() {
+		if relative == moduleRoot || pathContains(moduleRoot, relative) {
+			moduleImports = append(moduleImports, relative)
+		}
+	}
+	if err := addGeneratedCrossPackageImports(transaction.StageRoot(), filepath.Join(s.Location, moduleRoot, "go.mod"), moduleRoot, moduleImports); err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
+
 	// buf and the language plugins emit Go that the agent's own lint
 	// (corecode.GoCodeServer, golang.org/x/tools/imports) can still flag as
 	// needing a safe fix, because the two paths pinned different goimports
@@ -235,9 +258,11 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 //
 // Formatting at the stage path is a valid stand-in for the lint's later run at
 // the real path because imports.Process is path-independent for this input:
-// with no LocalPrefix and no missing/unused imports — always true of generated
-// protobuf — it reduces to gofmt plus a std/non-std import sort, neither of
-// which depends on the file's location.
+// with no LocalPrefix and no missing/unused imports it reduces to gofmt plus a
+// std/non-std import sort, neither of which depends on the file's location.
+// Generated protobuf can reference a cross-package type without importing it
+// (#30); addGeneratedCrossPackageImports runs first and inserts those imports,
+// so the no-missing-imports precondition holds by the time this pass runs.
 func formatStagedGo(root string) error {
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -277,6 +302,154 @@ func formatStagedGo(root string) error {
 		}
 		return os.WriteFile(path, fixed, info.Mode().Perm())
 	})
+}
+
+// addGeneratedCrossPackageImports inserts imports that a generated Go file
+// references but does not declare — the protoc-gen-grpc-gateway cross-package
+// request-type bug (#30). Every such reference resolves to a sibling package in
+// the same freshly generated tree, so goOutputDirs are scanned twice: once to
+// index each generated package by its declared name, then once more to add the
+// missing import to any file that names a package it never imported. goModPath
+// supplies the module path that turns a staged directory into an import path;
+// when go.mod does not exist yet (e.g. during service creation) the repair is
+// skipped, leaving the tree exactly as generated.
+func addGeneratedCrossPackageImports(stageRoot, goModPath, moduleRoot string, goOutputDirs []string) error {
+	modContent, err := os.ReadFile(goModPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	modulePath := modfile.ModulePath(modContent)
+	if modulePath == "" {
+		return nil
+	}
+	byName, err := generatedPackagePaths(stageRoot, filepath.Join(stageRoot, moduleRoot), modulePath, goOutputDirs)
+	if err != nil {
+		return err
+	}
+	for _, relative := range goOutputDirs {
+		err := filepath.WalkDir(filepath.Join(stageRoot, relative), func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if !entry.Type().IsRegular() || filepath.Ext(path) != ".go" {
+				return nil
+			}
+			return insertMissingImports(path, byName)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// generatedPackagePaths maps each generated package's declared name to its
+// import path. A name declared by two packages is dropped: a bare reference to
+// it cannot be resolved to a single import, so it is left for the lint to flag.
+func generatedPackagePaths(stageRoot, stageModuleRoot, modulePath string, goOutputDirs []string) (map[string]string, error) {
+	byName := map[string]string{}
+	ambiguous := map[string]struct{}{}
+	for _, relative := range goOutputDirs {
+		err := filepath.WalkDir(filepath.Join(stageRoot, relative), func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if !entry.Type().IsRegular() || filepath.Ext(path) != ".go" {
+				return nil
+			}
+			file, err := goparser.ParseFile(token.NewFileSet(), path, nil, goparser.PackageClauseOnly)
+			if err != nil {
+				return nil
+			}
+			name := file.Name.Name
+			rel, err := filepath.Rel(stageModuleRoot, filepath.Dir(path))
+			if err != nil {
+				return err
+			}
+			importPath := modulePath + "/" + filepath.ToSlash(rel)
+			if existing, ok := byName[name]; ok && existing != importPath {
+				ambiguous[name] = struct{}{}
+			}
+			byName[name] = importPath
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	for name := range ambiguous {
+		delete(byName, name)
+	}
+	return byName, nil
+}
+
+// insertMissingImports adds an import for every generated package the file
+// names through a selector but never imports. A selector prefix is treated as a
+// package only when it matches a generated package name that is neither the
+// file's own package nor already in its import block; the following goimports
+// pass drops the import again if a local of the same name shadows it, so no
+// scope analysis is needed here.
+func insertMissingImports(path string, byName map[string]string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	fset := token.NewFileSet()
+	file, err := goparser.ParseFile(fset, path, content, goparser.ParseComments)
+	if err != nil {
+		return nil
+	}
+	resolved := map[string]struct{}{file.Name.Name: {}}
+	for _, spec := range file.Imports {
+		resolved[importSpecName(spec)] = struct{}{}
+	}
+	missing := map[string]string{}
+	goast.Inspect(file, func(node goast.Node) bool {
+		selector, ok := node.(*goast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := selector.X.(*goast.Ident)
+		if !ok {
+			return true
+		}
+		if _, ok := resolved[ident.Name]; ok {
+			return true
+		}
+		if importPath, ok := byName[ident.Name]; ok {
+			missing[ident.Name] = importPath
+		}
+		return true
+	})
+	if len(missing) == 0 {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	for name, importPath := range missing {
+		astutil.AddNamedImport(fset, file, name, importPath)
+	}
+	var buffer bytes.Buffer
+	if err := format.Node(&buffer, fset, file); err != nil {
+		return err
+	}
+	if bytes.Equal(content, buffer.Bytes()) {
+		return nil
+	}
+	return os.WriteFile(path, buffer.Bytes(), info.Mode().Perm())
+}
+
+func importSpecName(spec *goast.ImportSpec) string {
+	if spec.Name != nil {
+		return spec.Name.Name
+	}
+	path := strings.Trim(spec.Path.Value, `"`)
+	return path[strings.LastIndex(path, "/")+1:]
 }
 
 // generatedScaffoldSelect traverses only the directories required to reach
