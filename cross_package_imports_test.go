@@ -100,6 +100,82 @@ func TestAddGeneratedCrossPackageImportsSkipsWithoutGoMod(t *testing.T) {
 	assertTestFile(t, gateway, string(before))
 }
 
+// TestAddGeneratedCrossPackageImportsReportsUnreadableGoMod proves a go.mod
+// that exists but cannot be read is surfaced as an error rather than silently
+// disabling the repair — only a missing go.mod is a valid skip. A directory at
+// the go.mod path yields a non-IsNotExist read error on every platform.
+func TestAddGeneratedCrossPackageImportsReportsUnreadableGoMod(t *testing.T) {
+	stage, _ := stageGeneratedTree(t)
+	goModDir := filepath.Join(stage, "code", "go.mod")
+	if err := os.MkdirAll(goModDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := addGeneratedCrossPackageImports(stage, goModDir, "code", []string{"code/pkg/gen"}); err == nil {
+		t.Fatal("unreadable go.mod was silently skipped instead of reported")
+	}
+}
+
+// TestAddGeneratedCrossPackageImportsSkipsOwnPackageSelector proves a selector
+// that names the file's own package is not turned into a self-import, which
+// would not compile.
+func TestAddGeneratedCrossPackageImportsSkipsOwnPackageSelector(t *testing.T) {
+	stage := t.TempDir()
+	goMod := writeGoMod(t, stage, "acc")
+	// A file in package accountsv1 that qualifies a name with its own package.
+	own := filepath.Join(stage, "code", "pkg", "gen", "saas", "accounts", "v1", "self.go")
+	writeTestFile(t, own, "package accountsv1\n\nvar Value = accountsv1.Thing\n")
+	before, err := os.ReadFile(own)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := addGeneratedCrossPackageImports(stage, goMod, "code", []string{"code/pkg/gen"}); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, own, string(before))
+}
+
+// TestAddGeneratedCrossPackageImportsAddsMultiplePackages proves a file missing
+// references to two different generated packages receives both imports and, run
+// through the goimports pass Sync applies next, lands byte-stable regardless of
+// the order the imports were inserted.
+func TestAddGeneratedCrossPackageImportsAddsMultiplePackages(t *testing.T) {
+	stage := t.TempDir()
+	goMod := writeGoMod(t, stage, "acc")
+	writeTestFile(t, filepath.Join(stage, "code", "pkg", "gen", "saas", "jobs", "v1", "jobs.pb.go"),
+		"package jobsv1\n\ntype GetJobRequest struct{}\n")
+	writeTestFile(t, filepath.Join(stage, "code", "pkg", "gen", "saas", "billing", "v1", "billing.pb.go"),
+		"package billingv1\n\ntype GetInvoiceRequest struct{}\n")
+	gateway := filepath.Join(stage, "code", "pkg", "gen", "saas", "accounts", "v1", "platform_admin.pb.gw.go")
+	writeTestFile(t, gateway,
+		"package accountsv1\n\nfunc handle() {\n\tvar job jobsv1.GetJobRequest\n\tvar inv billingv1.GetInvoiceRequest\n\t_, _ = job, inv\n}\n")
+
+	if err := addGeneratedCrossPackageImports(stage, goMod, "code", []string{"code/pkg/gen"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.ReadFile(gateway)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`jobsv1 "acc/pkg/gen/saas/jobs/v1"`, `billingv1 "acc/pkg/gen/saas/billing/v1"`} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("missing import %s in:\n%s", want, out)
+		}
+	}
+	// A repeated pass converges on the same bytes: sync-drift stays clean.
+	if err := addGeneratedCrossPackageImports(stage, goMod, "code", []string{"code/pkg/gen"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := formatStagedGo(stage); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, gateway, string(out))
+}
+
 // TestAddGeneratedCrossPackageImportsSkipsAmbiguousName proves a package name
 // declared by two generated directories is not resolved: the reference could
 // mean either import, so it is left for the lint to flag rather than guessed.

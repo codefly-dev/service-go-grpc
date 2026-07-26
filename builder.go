@@ -255,9 +255,11 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 //
 // Formatting at the stage path is a valid stand-in for the lint's later run at
 // the real path because imports.Process is path-independent for this input:
-// with no LocalPrefix and no missing/unused imports — always true of generated
-// protobuf — it reduces to gofmt plus a std/non-std import sort, neither of
-// which depends on the file's location.
+// with no LocalPrefix and no missing/unused imports it reduces to gofmt plus a
+// std/non-std import sort, neither of which depends on the file's location.
+// Generated protobuf can reference a cross-package type without importing it
+// (#30); addGeneratedCrossPackageImports runs first and inserts those imports,
+// so the no-missing-imports precondition holds by the time this pass runs.
 func formatStagedGo(root string) error {
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -306,12 +308,15 @@ func formatStagedGo(root string) error {
 // index each generated package by its declared name, then once more to add the
 // missing import to any file that names a package it never imported. goModPath
 // supplies the module path that turns a staged directory into an import path;
-// if it cannot be read (e.g. during service creation, before go.mod exists) the
-// repair is skipped, leaving the tree exactly as generated.
+// when go.mod does not exist yet (e.g. during service creation) the repair is
+// skipped, leaving the tree exactly as generated.
 func addGeneratedCrossPackageImports(stageRoot, goModPath, moduleRoot string, goOutputDirs []string) error {
 	modContent, err := os.ReadFile(goModPath)
-	if err != nil {
+	if os.IsNotExist(err) {
 		return nil
+	}
+	if err != nil {
+		return err
 	}
 	modulePath := modfile.ModulePath(modContent)
 	if modulePath == "" {
@@ -380,9 +385,10 @@ func generatedPackagePaths(stageRoot, stageModuleRoot, modulePath string, goOutp
 
 // insertMissingImports adds an import for every generated package the file
 // names through a selector but never imports. A selector prefix is treated as a
-// package only when it matches a generated package name absent from the file's
-// own import block; the following goimports pass drops the import again if a
-// local of the same name shadows it, so no scope analysis is needed here.
+// package only when it matches a generated package name that is neither the
+// file's own package nor already in its import block; the following goimports
+// pass drops the import again if a local of the same name shadows it, so no
+// scope analysis is needed here.
 func insertMissingImports(path string, byName map[string]string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -393,9 +399,9 @@ func insertMissingImports(path string, byName map[string]string) error {
 	if err != nil {
 		return nil
 	}
-	imported := map[string]struct{}{}
+	resolved := map[string]struct{}{file.Name.Name: {}}
 	for _, spec := range file.Imports {
-		imported[importSpecName(spec)] = struct{}{}
+		resolved[importSpecName(spec)] = struct{}{}
 	}
 	missing := map[string]string{}
 	goast.Inspect(file, func(node goast.Node) bool {
@@ -407,7 +413,7 @@ func insertMissingImports(path string, byName map[string]string) error {
 		if !ok {
 			return true
 		}
-		if _, ok := imported[ident.Name]; ok {
+		if _, ok := resolved[ident.Name]; ok {
 			return true
 		}
 		if importPath, ok := byName[ident.Name]; ok {
