@@ -1,6 +1,8 @@
 syntax = "proto3";
 package api;
 
+option go_package = "codefly-base/pkg/gen;gen";
+
 import "google/api/annotations.proto";
 
 message VersionRequest {

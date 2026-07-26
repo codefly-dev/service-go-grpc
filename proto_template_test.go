@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -27,6 +29,85 @@ func TestProtoTemplatePinsGoPackage(t *testing.T) {
 			t.Errorf("proto generation template does not contain %q", setting)
 		}
 	}
+}
+
+// TestProtoTemplateUsesBundledPlugins keeps fresh-service generation off the
+// BSR remote-plugin path. The companion image already pins and ships these
+// binaries; asking the BSR to execute them adds network failure and rate-limit
+// risk without changing generated output.
+func TestProtoTemplateUsesBundledPlugins(t *testing.T) {
+	generationTemplate, err := factoryFS.ReadFile("templates/factory/proto/buf.gen.yaml.tmpl")
+	if err != nil {
+		t.Fatalf("read proto generation template: %v", err)
+	}
+	content := string(generationTemplate)
+	for _, plugin := range []string{"path: protoc-gen-go", "path: protoc-gen-go-grpc", "path: protoc-gen-connect-go"} {
+		if !strings.Contains(content, plugin) {
+			t.Errorf("proto generation template does not use bundled plugin %q", plugin)
+		}
+	}
+	if strings.Contains(content, "plugin: buf.build/") {
+		t.Fatal("proto generation template still delegates a bundled plugin to the BSR")
+	}
+
+	moduleTemplate, err := factoryFS.ReadFile("templates/factory/proto/buf.yaml.tmpl")
+	if err != nil {
+		t.Fatalf("read Buf module template: %v", err)
+	}
+	if strings.Contains(string(moduleTemplate), "buf.build/bufbuild/protovalidate") {
+		t.Fatal("Buf module template declares unused protovalidate sources")
+	}
+}
+
+// TestFactoryDependencyLocksMatchBase makes the runnable base fixture the
+// canonical dependency lock for newly generated services. Keeping a separate,
+// silently stale template lock previously let conformance create services with
+// patched dependencies in base/ but vulnerable versions in fresh projects.
+func TestFactoryDependencyLocksMatchBase(t *testing.T) {
+	baseMod, err := os.ReadFile("base/code/go.mod")
+	if err != nil {
+		t.Fatalf("read base go.mod: %v", err)
+	}
+	templateMod, err := factoryFS.ReadFile("templates/factory/code/go.mod.tmpl")
+	if err != nil {
+		t.Fatalf("read factory go.mod template: %v", err)
+	}
+	renderedMod := bytes.ReplaceAll(templateMod, []byte("{{ .Service.Name.DNSCase }}"), []byte("codefly-base"))
+	if !bytes.Equal(baseMod, renderedMod) {
+		t.Fatal("factory go.mod template drifted from base/code/go.mod")
+	}
+
+	baseSum, err := os.ReadFile("base/code/go.sum")
+	if err != nil {
+		t.Fatalf("read base go.sum: %v", err)
+	}
+	templateSum, err := factoryFS.ReadFile("templates/factory/code/go.sum.tmpl")
+	if err != nil {
+		t.Fatalf("read factory go.sum template: %v", err)
+	}
+	if !bytes.Equal(baseSum, templateSum) {
+		t.Fatal("factory go.sum template drifted from base/code/go.sum")
+	}
+
+	agentMod, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatalf("read agent go.mod: %v", err)
+	}
+	generatedCore := dependencyLine(baseMod, "github.com/codefly-dev/core")
+	agentCore := dependencyLine(agentMod, "github.com/codefly-dev/core")
+	if generatedCore == "" || generatedCore != agentCore {
+		t.Fatalf("generated core dependency %q does not match agent dependency %q", generatedCore, agentCore)
+	}
+}
+
+func dependencyLine(goMod []byte, module string) string {
+	for _, line := range strings.Split(string(goMod), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == module {
+			return fields[0] + " " + fields[1]
+		}
+	}
+	return ""
 }
 
 // TestServiceFlakeCarriesEveryBufPlugin keeps the Nix fallback equivalent to
