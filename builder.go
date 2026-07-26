@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"fmt"
 	goast "go/ast"
 	"go/format"
 	goparser "go/parser"
@@ -174,8 +175,27 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 	if err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
-	buf.WithCache(transaction.StageRoot())
+	// Cache generation inputs outside the source tree but across transactions.
+	// A transaction-local cache disappears after every Sync, forcing repeated
+	// BSR requests even when proto inputs are unchanged.
+	generationCache := filepath.Join(s.Location, ".codefly", "cache")
+	if err := os.MkdirAll(generationCache, 0o755); err != nil {
+		return s.Base.Builder.SyncError(fmt.Errorf("create generation cache: %w", err))
+	}
+	buf.WithCache(generationCache)
 	for _, relative := range s.GoGrpc.Settings.protocolOutputDirs() {
+		// Preserve the current generated tree in the transaction. On a cache
+		// hit Buf intentionally does no work; without this baseline the staged
+		// output would be absent and downstream formatting/comparison would
+		// either fail or interpret the cache hit as deletion of every artifact.
+		actualOutput := filepath.Join(s.Location, relative)
+		if _, err := os.Lstat(actualOutput); err == nil {
+			if err := transaction.CopyInput(relative); err != nil {
+				return s.Base.Builder.SyncError(err)
+			}
+		} else if !os.IsNotExist(err) {
+			return s.Base.Builder.SyncError(fmt.Errorf("stat generated output %q: %w", relative, err))
+		}
 		if err := transaction.TrackDirectory(relative); err != nil {
 			return s.Base.Builder.SyncError(err)
 		}
@@ -655,11 +675,44 @@ func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 		return s.Base.Builder.CreateError(err)
 	}
 
+	// Create must leave a service in the same canonical state as Sync. The
+	// factory contains readable starter artifacts, while Buf and the generated
+	// scaffold transaction own the authoritative protocol output. Running that
+	// transaction before returning prevents a newly added service from failing
+	// the very first sync-drift gate.
+	syncResponse, err := s.Sync(ctx, &builderv0.SyncRequest{})
+	if err != nil {
+		return s.Base.Builder.CreateError(s.Wool.Wrapf(err, "synchronize generated service"))
+	}
+	if err := syncResponseError(syncResponse); err != nil {
+		return s.Base.Builder.CreateError(s.Wool.Wrapf(err, "synchronize generated service"))
+	}
+
 	if err := s.CreateEndpoints(ctx); err != nil {
 		return nil, s.Wool.Wrapf(err, "cannot create endpoints")
 	}
 
 	return s.Base.Builder.CreateResponse(ctx, s.GoGrpc.Settings)
+}
+
+// syncResponseError converts the Builder protocol's in-band lifecycle status
+// into a Go error for internal composition. Builder RPC methods intentionally
+// encode domain failures in their response and return a nil transport error;
+// checking only the second return value would let Create report success after
+// generation failed.
+func syncResponseError(response *builderv0.SyncResponse) error {
+	if response == nil || response.GetState() == nil {
+		return fmt.Errorf("sync returned no status")
+	}
+	state := response.GetState()
+	if state.GetState() == builderv0.SyncStatus_SUCCESS {
+		return nil
+	}
+	message := strings.TrimSpace(state.GetMessage())
+	if message == "" {
+		message = state.GetState().String()
+	}
+	return fmt.Errorf("%s", message)
 }
 
 func (s *Builder) populateSettingsFromAnswers() error {

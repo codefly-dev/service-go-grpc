@@ -131,8 +131,18 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 		}
 	}
 
-	_, err = builder.Create(ctx, &builderv0.CreateRequest{})
+	createResponse, err := builder.Create(ctx, &builderv0.CreateRequest{})
 	require.NoError(t, err)
+	require.Equal(
+		t,
+		builderv0.CreateStatus_CREATED,
+		createResponse.GetState().GetState(),
+		createResponse.GetState().GetMessage(),
+	)
+	syncResponse, err := builder.Sync(ctx, &builderv0.SyncRequest{DryRun: true})
+	require.NoError(t, err)
+	require.Equal(t, builderv0.SyncStatus_SUCCESS, syncResponse.GetState().GetState(), syncResponse.GetState().GetMessage())
+	require.Empty(t, syncResponse.GetChangedFiles(), "a newly created service must already be sync-clean")
 
 	// Now run it
 	runtime := NewRuntime(NewService())
