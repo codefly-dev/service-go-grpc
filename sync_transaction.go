@@ -57,7 +57,17 @@ func (transaction *syncTransaction) Close() error {
 	if transaction == nil || transaction.stageRoot == "" {
 		return nil
 	}
-	return os.RemoveAll(transaction.stageRoot)
+	// os.RemoveAll tears down the whole staging tree except a directory it cannot
+	// list: Buf's private .cache, which a containerized generator running as a
+	// foreign UID can leave unreadable to this process. Such a .cache cannot be
+	// removed without running the generator as the host UID (an upstream fix), so
+	// the residual is an otherwise-empty temp dir the OS reaps — tolerate the
+	// permission error here rather than surfacing an unactionable cleanup failure.
+	err := os.RemoveAll(transaction.stageRoot)
+	if errors.Is(err, fs.ErrPermission) {
+		return nil
+	}
+	return err
 }
 
 func (transaction *syncTransaction) CopyInput(relative string) error {

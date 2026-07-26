@@ -103,6 +103,38 @@ func TestFormatStagedGoSkipsUnreadableCache(t *testing.T) {
 	}
 }
 
+// TestSyncTransactionCloseToleratesUnreadableCache proves Close does not report
+// a cleanup failure when a containerized generator left an unreadable .cache in
+// the staging root. os.RemoveAll still deletes the rest of the tree and fails
+// only on the .cache it cannot list; Close swallows that permission error (the
+// .cache cannot be removed without the generator running as the host UID) and
+// returns nil.
+func TestSyncTransactionCloseToleratesUnreadableCache(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("unreadable directories do not block root")
+	}
+	transaction, err := newSyncTransaction(t.TempDir(), "modules/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := transaction.StageRoot()
+	writeTestFile(t, filepath.Join(stage, "gen", "sample.go"), "package sample\n")
+	cacheDir := filepath.Join(stage, syncCacheDir)
+	writeTestFile(t, filepath.Join(cacheDir, "buf", "module.bin"), "cached")
+	if err := os.Chmod(cacheDir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	// Restore permissions so the temp root can be reaped after the test.
+	t.Cleanup(func() { _ = os.Chmod(cacheDir, 0o755) })
+
+	if err := transaction.Close(); err != nil {
+		t.Fatalf("close aborted on unreadable staged .cache: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stage, "gen")); !os.IsNotExist(err) {
+		t.Fatalf("staged tree not removed alongside unreadable .cache: %v", err)
+	}
+}
+
 func TestSyncTransactionDryRunPredictsAndAppliesExactTree(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "gen", "changed.go"), "before")
