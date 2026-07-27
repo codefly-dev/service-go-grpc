@@ -199,29 +199,27 @@ func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *base
 	_, err = runtime.Start(ctx, &runtimev0.StartRequest{})
 	require.NoError(t, err)
 
-	client := http.Client{Timeout: 200 * time.Millisecond}
-	// Loop and wait for 1 seconds up to do a HTTP request to localhost with /version path
-	tries := 0
-	for {
-		if tries > 10 {
-			t.Fatal("too many tries")
-		}
-		time.Sleep(time.Second)
-
-		// HTTP
+	const readinessTimeout = 30 * time.Second
+	const readinessPollInterval = 200 * time.Millisecond
+	client := http.Client{Timeout: time.Second}
+	deadline := time.Now().Add(readinessTimeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
 		response, err := client.Get(fmt.Sprintf("%s/version", instance.Address))
 		if err != nil {
-			tries++
+			lastErr = err
+			time.Sleep(readinessPollInterval)
 			continue
 		}
 		if response.StatusCode != http.StatusOK {
-			tries++
+			lastErr = fmt.Errorf("version endpoint returned %s", response.Status)
+			response.Body.Close()
+			time.Sleep(readinessPollInterval)
 			continue
 		}
 
-		defer response.Body.Close()
-
 		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
 		require.NoError(t, err)
 
 		var data map[string]interface{}
@@ -235,13 +233,19 @@ func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *base
 		// The gateway proxies grpc.health.v1 as /healthz
 		healthResponse, err := client.Get(fmt.Sprintf("%s/healthz", instance.Address))
 		if err != nil {
-			tries++
+			lastErr = err
+			time.Sleep(readinessPollInterval)
 			continue
 		}
 		healthResponse.Body.Close()
-		require.Equal(t, http.StatusOK, healthResponse.StatusCode)
+		if healthResponse.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("health endpoint returned %s", healthResponse.Status)
+			time.Sleep(readinessPollInterval)
+			continue
+		}
 		return
 	}
+	t.Fatalf("REST endpoint %s was not ready within %s: %v", instance.Address, readinessTimeout, lastErr)
 }
 
 func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev0.ServiceIdentity, networkMappings []*basev0.NetworkMapping) {
@@ -259,13 +263,11 @@ func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, id
 	if !strings.Contains(baseURL, "://") {
 		baseURL = "http://" + baseURL
 	}
-	tries := 0
-	for {
-		if tries > 10 {
-			t.Fatal("connect endpoint: too many tries")
-		}
-		time.Sleep(time.Second)
-
+	const readinessTimeout = 30 * time.Second
+	const readinessPollInterval = 200 * time.Millisecond
+	deadline := time.Now().Add(readinessTimeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
 		procedure := fmt.Sprintf("/api.%sService/Version", shared.ToTitle(identity.Name))
 		req, err := http.NewRequest("POST", baseURL+procedure, strings.NewReader("{}"))
 		require.NoError(t, err)
@@ -274,24 +276,24 @@ func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, id
 
 		response, err := client.Do(req)
 		if err != nil {
-			t.Logf("Connect request to %s failed: %v", req.URL, err)
-			tries++
+			lastErr = err
+			time.Sleep(readinessPollInterval)
 			continue
 		}
 		if response.StatusCode != http.StatusOK {
 			body, readErr := io.ReadAll(response.Body)
-			t.Logf("Connect endpoint returned %s: %s", response.Status, strings.TrimSpace(string(body)))
-			if readErr != nil {
-				t.Logf("reading Connect error response: %v", readErr)
-			}
-			tries++
 			response.Body.Close()
+			if readErr != nil {
+				lastErr = fmt.Errorf("Connect endpoint returned %s and its body could not be read: %w", response.Status, readErr)
+			} else {
+				lastErr = fmt.Errorf("Connect endpoint returned %s: %s", response.Status, strings.TrimSpace(string(body)))
+			}
+			time.Sleep(readinessPollInterval)
 			continue
 		}
 
-		defer response.Body.Close()
-
 		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
 		require.NoError(t, err)
 
 		var data map[string]interface{}
@@ -304,6 +306,7 @@ func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, id
 		t.Log("Connect endpoint working:", version)
 		return
 	}
+	t.Fatalf("Connect endpoint %s was not ready within %s: %v", baseURL, readinessTimeout, lastErr)
 }
 
 func testNoApi(t *testing.T, runtime *Runtime, ctx context.Context, networkMappings []*basev0.NetworkMapping) {
