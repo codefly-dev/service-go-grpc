@@ -6,7 +6,7 @@ toolchain go1.26.4
 
 require (
 	github.com/bufbuild/protocompile v0.14.1
-	github.com/codefly-dev/core v0.2.42
+	github.com/codefly-dev/core v0.2.45
 	github.com/codefly-dev/service-go v0.0.17
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/mod v0.37.0
@@ -68,7 +68,7 @@ require (
 	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/cel-go v0.28.0 // indirect
-	github.com/google/go-github/v37 v37.0.0 // indirect
+	github.com/google/go-github/v89 v89.0.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
