@@ -9,6 +9,16 @@ RUN apk add --no-cache ca-certificates git
 # Set working directory
 WORKDIR /app
 
+{{- if .Workspace }}
+# Workspace-aware services may use local Go module replacements.
+ENV GOWORK=off
+COPY . .
+
+# Download dependencies and build from the service module.
+RUN cd {{ .ModuleRoot }} && go mod download
+RUN cd {{ .ModuleRoot }} && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags='-w -s -extldflags "-static"' -o /app/app {{ .BuildTarget }}
+{{- else }}
 # Copy the source code
 {{ range .Components}}
 COPY {{.}} {{.}}
@@ -29,6 +39,7 @@ RUN if [ -f code/go.mod ]; then \
     else \
       echo "ERROR: no go.mod found" && exit 1; \
     fi
+{{- end }}
 {{- end }}
 
 # Final stage
