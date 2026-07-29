@@ -11,5 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dependency-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify generated-service dependency lock
+        run: go test ./... -run '^Test(FactoryDependencyLocksMatchBase|BaseGeneratedServiceBuildsFromCleanModuleCache)$' -count=1
+
   ci:
+    needs: dependency-lock
     uses: codefly-dev/core/.github/workflows/go-service-ci.yml@main
