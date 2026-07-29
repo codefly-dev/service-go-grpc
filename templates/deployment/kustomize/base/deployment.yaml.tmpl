@@ -51,11 +51,11 @@ spec:
           envFrom:
             - configMapRef:
                 name: cm-{{ .Service.Name.DNSCase }}
-{{- if not .GitOps }}
+{{- if not .Restricted }}
             - secretRef:
                 name: secret-{{ .Service.Name.DNSCase }}
 {{- end }}
-{{- if .GitOps }}
+{{- if .Restricted }}
           env:
 {{- range $key, $reference := .SecretReferences }}
             - name: {{ $key }}
