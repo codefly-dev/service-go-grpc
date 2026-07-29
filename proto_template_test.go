@@ -102,11 +102,14 @@ func TestFactoryDependencyLocksMatchBase(t *testing.T) {
 }
 
 func TestBaseGeneratedServiceBuildsFromCleanModuleCache(t *testing.T) {
+	t.Setenv("GOWORK", filepath.Join(t.TempDir(), "missing.go.work"))
+
 	command := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-modcacherw", "./...")
 	command.Dir = "base/code"
 	command.Env = append(os.Environ(),
 		"GOMODCACHE="+t.TempDir(),
 		"GOCACHE="+t.TempDir(),
+		"GOWORK=off",
 	)
 	output, err := command.CombinedOutput()
 	if err != nil {
