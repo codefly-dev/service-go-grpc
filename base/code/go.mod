@@ -1,19 +1,19 @@
 module codefly-base
 
-go 1.25.0
+go 1.25.12
 
 toolchain go1.26.4
 
 require (
 	buf.build/go/protovalidate v1.2.0
 	connectrpc.com/connect v1.20.0
-	github.com/codefly-dev/core v0.2.51
+	github.com/codefly-dev/core v0.2.52
 	github.com/codefly-dev/sdk-go v0.1.65
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0
 	github.com/rs/cors v1.11.1
 	golang.org/x/net v0.57.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260420184626-e10c466a9529
-	google.golang.org/grpc v1.80.0
+	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -46,7 +46,6 @@ require (
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/yoheimuta/go-protoparser/v4 v4.14.2 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.43.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/sys v0.47.0 // indirect
