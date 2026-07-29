@@ -558,13 +558,43 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
+	configure, err := goDockerTemplating(
+		s.GoGrpc.Settings,
+		s.Identity.WorkspacePath,
+		s.Location,
+	)
+	if err != nil {
+		return s.Base.Builder.BuildError(err)
+	}
 	return golanghelpers.BuildGoDocker(ctx, s.Base.Builder, req, s.Location,
-		requirements, builderFS, GoVersion, AlpineVersion,
-		func(d *golanghelpers.DockerTemplating) {
-			sourceDir := s.GoGrpc.Settings.GoSourceDir()
+		requirements, builderFS, GoVersion, AlpineVersion, configure)
+}
+
+func goDockerTemplating(
+	settings *Settings,
+	workspaceRoot,
+	serviceRoot string,
+) (func(*golanghelpers.DockerTemplating), error) {
+	sourceDir := settings.GoSourceDir()
+	moduleRoot, buildTarget := golanghelpers.SplitSourceDir(sourceDir)
+	if !settings.WithWorkspace {
+		return func(d *golanghelpers.DockerTemplating) {
 			d.SourceDir = sourceDir
-			d.ModuleRoot, d.BuildTarget = golanghelpers.SplitSourceDir(sourceDir)
-		})
+			d.ModuleRoot = moduleRoot
+			d.BuildTarget = buildTarget
+		}, nil
+	}
+	relativeService, err := filepath.Rel(workspaceRoot, serviceRoot)
+	if err != nil || relativeService == ".." || strings.HasPrefix(relativeService, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("service directory %q is outside workspace %q", serviceRoot, workspaceRoot)
+	}
+	return func(d *golanghelpers.DockerTemplating) {
+		d.SourceDir = filepath.ToSlash(filepath.Join(relativeService, sourceDir))
+		d.ModuleRoot = filepath.ToSlash(filepath.Join(relativeService, moduleRoot))
+		d.BuildTarget = buildTarget
+		d.ContextRoot = workspaceRoot
+		d.Workspace = true
+	}, nil
 }
 
 // Upgrade bumps Go module dependencies (go get -u=patch by default,
