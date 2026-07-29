@@ -29,7 +29,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: {{ .Service.Name.DNSCase }}
-          image: image:tag
+          image: {{ .Image }}
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -51,11 +51,22 @@ spec:
           envFrom:
             - configMapRef:
                 name: cm-{{ .Service.Name.DNSCase }}
+{{- if not .GitOps }}
             - secretRef:
                 name: secret-{{ .Service.Name.DNSCase }}
+{{- end }}
+{{- if .GitOps }}
+          env:
+{{- range $key, $reference := .SecretReferences }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $reference.Name }}
+                  key: {{ $reference.Key }}
+{{- end }}
+{{- end }}
           # Conservative defaults — bump per-service in overlay when
-          # workload size is known. Required because saas-starter's
-          # ResourceQuota / LimitRange demand them.
+          # workload size is known.
           resources:
             requests:
               cpu: 100m
