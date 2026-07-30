@@ -74,28 +74,20 @@ spec:
             limits:
               cpu: "1"
               memory: 512Mi
-          # gRPC services that register grpc.health.v1 (which every
-          # go-grpc agent does via core/agents/agents.go's Serve)
-          # respond on either the grpc port (gRPC Check) or the http
-          # port if grpc-gateway is enabled. For broad compatibility
-          # the probes hit a /healthz HTTP path served by the
-          # grpc-gateway on the http port — that's the convention
-          # the go-grpc agent's main.go scaffold sets up.
+          # The generic deployment contract guarantees the listener,
+          # not a product-specific HTTP health route.
           startupProbe:
-            httpGet:
-              path: /healthz
+            tcpSocket:
               port: http
             periodSeconds: 2
             failureThreshold: 30
           readinessProbe:
-            httpGet:
-              path: /healthz
+            tcpSocket:
               port: http
             periodSeconds: 5
             timeoutSeconds: 3
           livenessProbe:
-            httpGet:
-              path: /healthz
+            tcpSocket:
               port: http
             periodSeconds: 30
             timeoutSeconds: 5
