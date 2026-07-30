@@ -4,6 +4,6 @@ kind: Kustomization
 resources:
   - ../../base
   - configmap.yaml
-{{- if not .GitOps }}
+{{- if not .Restricted }}
   - secret.yaml
 {{- end }}
