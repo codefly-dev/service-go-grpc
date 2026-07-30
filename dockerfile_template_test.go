@@ -34,3 +34,23 @@ func TestDockerfileTemplateUsesPinnedMinimalImages(t *testing.T) {
 		t.Fatal("runtime image must retain the CA bundle")
 	}
 }
+
+func TestDockerfileTemplateCarriesModuleFixturesForWorkspaceBuilds(t *testing.T) {
+	t.Parallel()
+
+	template, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	if err != nil {
+		t.Fatalf("read Dockerfile template: %v", err)
+	}
+	source := string(template)
+
+	if !strings.Contains(source, `fixture_root="$(dirname "$(dirname "$(dirname "{{ .ModuleRoot }}")")")/fixtures"`) {
+		t.Fatal("workspace build must locate the containing module fixtures")
+	}
+	if !strings.Contains(source, "if [ -d \"$fixture_root\" ]; then cp -R \"$fixture_root\"/. /app/runtime-fixtures/; fi") {
+		t.Fatal("workspace build must stage only module fixture files when present")
+	}
+	if !strings.Contains(source, "COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures") {
+		t.Fatal("workspace runtime must include the staged module fixtures")
+	}
+}

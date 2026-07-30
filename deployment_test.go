@@ -11,7 +11,7 @@ func TestDeploymentTemplates(t *testing.T) {
 }
 
 func TestAgentVersion(t *testing.T) {
-	if agent.Version != "0.1.25" {
-		t.Fatalf("agent version = %q, want 0.1.25", agent.Version)
+	if agent.Version != "0.1.26" {
+		t.Fatalf("agent version = %q, want 0.1.26", agent.Version)
 	}
 }

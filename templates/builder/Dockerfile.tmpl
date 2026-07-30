@@ -18,6 +18,9 @@ COPY . .
 RUN cd {{ .ModuleRoot }} && go mod download
 RUN cd {{ .ModuleRoot }} && \
     CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags='-w -s -extldflags "-static"' -o /app/app {{ .BuildTarget }}
+RUN fixture_root="$(dirname "$(dirname "$(dirname "{{ .ModuleRoot }}")")")/fixtures"; \
+    mkdir -p /app/runtime-fixtures; \
+    if [ -d "$fixture_root" ]; then cp -R "$fixture_root"/. /app/runtime-fixtures/; fi
 {{- else }}
 # Copy the source code
 {{ range .Components}}
@@ -61,6 +64,9 @@ RUN adduser -D appuser
 
 # Copy the binary from the builder stage
 COPY --chown=appuser --from=builder /app/app .
+{{- if .Workspace }}
+COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures
+{{- end }}
 
 # Use the non-root user
 USER appuser
