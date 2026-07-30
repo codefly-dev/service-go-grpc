@@ -4,6 +4,10 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
+
+	golanghelpers "github.com/codefly-dev/core/runners/golang"
+	"github.com/codefly-dev/core/templates"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDockerfileTemplateUsesPinnedMinimalImages(t *testing.T) {
@@ -53,4 +57,45 @@ func TestDockerfileTemplateCarriesModuleFixturesForWorkspaceBuilds(t *testing.T)
 	if !strings.Contains(source, "COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures") {
 		t.Fatal("workspace runtime must include the staged module fixtures")
 	}
+}
+
+func TestDockerfileTemplatePackagesContainingModuleFixturesForWorkspaceBuilds(t *testing.T) {
+	t.Parallel()
+
+	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	require.NoError(t, err)
+	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+		GoVersion:     GoVersion,
+		AlpineVersion: AlpineVersion,
+		ModuleRoot:    "modules/users/services/accounts/code",
+		BuildTarget:   ".",
+		Workspace:     true,
+	})
+	require.NoError(t, err)
+
+	require.Contains(t, rendered, `-o /app/app .`)
+	require.Contains(t, rendered, `fixture_root="$(dirname "$(dirname "$(dirname "modules/users/services/accounts/code")")")/fixtures"`)
+	require.Contains(t, rendered, `mkdir -p /app/runtime-fixtures`)
+	require.Contains(t, rendered, `if [ -d "$fixture_root" ]; then cp -R "$fixture_root"/. /app/runtime-fixtures/; fi`)
+	require.Contains(t, rendered, `COPY --chown=appuser --from=builder /app/app .`)
+	require.Contains(t, rendered, `COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures`)
+}
+
+func TestDockerfileTemplateLeavesStandaloneRuntimeUnchanged(t *testing.T) {
+	t.Parallel()
+
+	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	require.NoError(t, err)
+	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+		GoVersion:     GoVersion,
+		AlpineVersion: AlpineVersion,
+		ModuleRoot:    "code",
+		BuildTarget:   ".",
+	})
+	require.NoError(t, err)
+
+	require.Contains(t, rendered, `-o /app/app .`)
+	require.Contains(t, rendered, `COPY --chown=appuser --from=builder /app/app .`)
+	require.NotContains(t, rendered, `fixture_root=`)
+	require.NotContains(t, rendered, `runtime-fixtures`)
 }
