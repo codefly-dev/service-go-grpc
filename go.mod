@@ -5,8 +5,9 @@ go 1.25.12
 toolchain go1.26.4
 
 require (
+	buf.build/go/protovalidate v1.2.0
 	github.com/bufbuild/protocompile v0.14.1
-	github.com/codefly-dev/core v0.2.59
+	github.com/codefly-dev/core v0.2.63
 	github.com/codefly-dev/service-go v0.0.17
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/mod v0.37.0
@@ -17,10 +18,10 @@ require (
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260415201107-50325440f8f2.1 // indirect
-	buf.build/go/protovalidate v1.2.0 // indirect
 	cel.dev/expr v0.25.1 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Masterminds/semver v1.5.0 // indirect
+	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
