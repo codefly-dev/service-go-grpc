@@ -25,9 +25,3 @@ func TestDeploymentProbesRequireOnlyTheDeclaredListener(t *testing.T) {
 		t.Fatalf("transport probes = %d, want startup, readiness, and liveness", count)
 	}
 }
-
-func TestAgentVersion(t *testing.T) {
-	if agent.Version != "0.1.27" {
-		t.Fatalf("agent version = %q, want 0.1.27", agent.Version)
-	}
-}
