@@ -8,10 +8,99 @@ import (
 	"testing"
 
 	agenttesting "github.com/codefly-dev/core/agents/testing"
+	"gopkg.in/yaml.v3"
 )
 
 func TestDeploymentTemplates(t *testing.T) {
 	agenttesting.AssertKustomizeTemplates(t, deploymentFS, nil)
+}
+
+// TestDeploymentTemplatesHaveNoOrphans catches source-level orphans: any file
+// under templates/deployment (template or not) that sits outside the two
+// subtrees the kustomize renderer walks (core GenerateGenericKustomize:
+// kustomize/base and kustomize/overlays/environment). Files elsewhere are never
+// rendered, so a stray file silently rots — this guard makes that a build
+// failure. It does not prove a file inside those subtrees is actually applied;
+// TestDeploymentManifestsAreReferenced covers that second orphan class.
+func TestDeploymentTemplatesHaveNoOrphans(t *testing.T) {
+	rendered := []string{
+		"templates/deployment/kustomize/base/",
+		"templates/deployment/kustomize/overlays/environment/",
+	}
+	err := fs.WalkDir(deploymentFS, "templates/deployment", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		for _, prefix := range rendered {
+			if strings.HasPrefix(path, prefix) {
+				return nil
+			}
+		}
+		t.Errorf("orphan template %q is outside the rendered subtrees %v", path, rendered)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk deployment templates: %v", err)
+	}
+}
+
+// TestDeploymentManifestsAreReferenced catches in-tree orphans: a manifest that
+// renders into kustomize/base or the overlay but is not listed in that
+// directory's kustomization.yaml resources. Kustomize silently ignores such a
+// file, so it renders yet never reaches the cluster — exactly the half-wiring
+// that would slip past the source-level guard above (e.g. adding a base
+// role.yaml.tmpl without the matching `- role.yaml` entry).
+func TestDeploymentManifestsAreReferenced(t *testing.T) {
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, nil)
+	// The helper renders the overlay under its environment name ("test").
+	assertManifestsReferenced(t, filepath.Join(dir, "base"))
+	assertManifestsReferenced(t, filepath.Join(dir, "overlays", "test"))
+}
+
+// assertManifestsReferenced fails if any non-empty rendered manifest in dir is
+// absent from that directory's kustomization.yaml resources list. Manifests
+// that render empty under the current parameters (e.g. the ServiceAccount when
+// no spec is given) are conditionally absent from resources too, so they are
+// skipped — content and reference are gated by the same template condition.
+func assertManifestsReferenced(t *testing.T, dir string) {
+	t.Helper()
+	kustomization, err := os.ReadFile(filepath.Join(dir, "kustomization.yaml"))
+	if err != nil {
+		t.Fatalf("read kustomization in %s: %v", dir, err)
+	}
+	var parsed struct {
+		Resources []string `yaml:"resources"`
+	}
+	if err := yaml.Unmarshal(kustomization, &parsed); err != nil {
+		t.Fatalf("parse kustomization in %s: %v", dir, err)
+	}
+	referenced := make(map[string]bool, len(parsed.Resources))
+	for _, resource := range parsed.Resources {
+		referenced[resource] = true
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || name == "kustomization.yaml" {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if strings.TrimSpace(string(content)) == "" {
+			continue
+		}
+		if !referenced[name] {
+			t.Errorf("rendered manifest %q in %s is not in kustomization resources — kustomize drops it, so it never reaches the cluster", name, dir)
+		}
+	}
 }
 
 func TestDeploymentServiceAccountRendering(t *testing.T) {
