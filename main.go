@@ -8,6 +8,7 @@ import (
 	"embed"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/codefly-dev/core/agents"
@@ -80,12 +81,36 @@ type Settings struct {
 // pods run under. This is the passwordless-identity seam: annotations land
 // on the rendered SA object (e.g. an Azure workload-identity client id) and
 // labels stamp the pod template (e.g. azure.workload.identity/use: "true")
-// so the identity webhook can inject the federated token. An empty Name
-// renders no SA object and leaves serviceAccountName unset.
+// so the identity webhook can inject the federated token.
 type ServiceAccountSpec struct {
 	Name        string            `yaml:"name"`
 	Annotations map[string]string `yaml:"annotations,omitempty"`
 	Labels      map[string]string `yaml:"labels,omitempty"`
+}
+
+// dns1123Subdomain matches a Kubernetes ServiceAccount name (an RFC 1123 DNS
+// subdomain).
+var dns1123Subdomain = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+
+// Validate rejects a service-account block that would silently half-apply.
+// Name is mandatory whenever the block is present: annotations render only on
+// the SA object and serviceAccountName binds the pod, both keyed off Name — so
+// annotations or labels without a Name would vanish, or worse stamp the
+// workload-identity label onto a pod still running as the default SA (token
+// minting then has no identity and DB connections fail with no deploy error).
+// Requiring a valid Name keeps the SA object, serviceAccountName, and pod
+// labels consistent and fails a bad name here rather than server-side.
+func (s *ServiceAccountSpec) Validate() error {
+	if s == nil {
+		return nil
+	}
+	if s.Name == "" {
+		return fmt.Errorf("service-account requires a name when set (got annotations/labels but no name)")
+	}
+	if len(s.Name) > 253 || !dns1123Subdomain.MatchString(s.Name) {
+		return fmt.Errorf("service-account name %q must be a DNS-1123 subdomain", s.Name)
+	}
+	return nil
 }
 
 func (s *Settings) Validate() error {
@@ -100,6 +125,9 @@ func (s *Settings) Validate() error {
 		if !filepath.IsLocal(dir) || dir == "." || strings.ContainsAny(dir, "\x00\\") {
 			return fmt.Errorf("protocol output directory %q must stay below the service root", dir)
 		}
+	}
+	if err := s.ServiceAccount.Validate(); err != nil {
+		return err
 	}
 	return nil
 }

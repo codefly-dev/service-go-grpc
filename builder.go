@@ -624,6 +624,10 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
+	if err := s.GoGrpc.Settings.Validate(); err != nil {
+		return s.Base.Builder.DeployError(err)
+	}
+
 	return s.Base.Builder.DeployKustomize(ctx, req, services.KustomizeDeployment{
 		EnvironmentVariables: s.EnvironmentVariables,
 		Templates:            deploymentFS,

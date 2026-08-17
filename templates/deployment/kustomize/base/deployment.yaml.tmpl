@@ -13,11 +13,11 @@ spec:
       labels:
         app: {{ .Service.Name.DNSCase }}
         sha: {{ .Sha }}
-{{- with .Deployment.Parameters }}
+{{- with .Deployment.Parameters }}{{- if .Name }}
 {{- range $key, $value := .Labels }}
         {{ $key }}: {{ $value | quote }}
 {{- end }}
-{{- end }}
+{{- end }}{{- end }}
     spec:
 {{- with .Deployment.Parameters }}{{- if .Name }}
       serviceAccountName: {{ .Name }}
