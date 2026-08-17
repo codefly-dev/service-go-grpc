@@ -14,6 +14,36 @@ func TestDeploymentTemplates(t *testing.T) {
 	agenttesting.AssertKustomizeTemplates(t, deploymentFS, nil)
 }
 
+// TestDeploymentTemplatesHaveNoOrphans fails if any file under
+// templates/deployment sits outside the two subtrees the kustomize renderer
+// walks (core GenerateGenericKustomize: kustomize/base and
+// kustomize/overlays/environment). Files elsewhere are never rendered, so a
+// stray template silently rots — this guard makes that a build failure.
+func TestDeploymentTemplatesHaveNoOrphans(t *testing.T) {
+	rendered := []string{
+		"templates/deployment/kustomize/base/",
+		"templates/deployment/kustomize/overlays/environment/",
+	}
+	err := fs.WalkDir(deploymentFS, "templates/deployment", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		for _, prefix := range rendered {
+			if strings.HasPrefix(path, prefix) {
+				return nil
+			}
+		}
+		t.Errorf("orphan template %q is outside the rendered subtrees %v", path, rendered)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk deployment templates: %v", err)
+	}
+}
+
 func TestDeploymentServiceAccountRendering(t *testing.T) {
 	spec := &ServiceAccountSpec{
 		Name:        "db-reader",
