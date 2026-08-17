@@ -61,6 +61,14 @@ func TestProtoImageSupportsHost(t *testing.T) {
 			isList, supportsHost := protoImageSupportsHost([]byte(tc.manifest))
 			require.Equal(t, tc.wantList, isList)
 			require.Equal(t, tc.wantSupportsHost, supportsHost)
+
+			// requireProtoCompanionImage fails the test loudly when, and only
+			// when, this predicate holds. Locking it here guards the fail-loud
+			// contract: only a manifest list that positively lacks the host arch
+			// (the amd64-only image on arm64) may block; a host-supporting list
+			// (linux/amd64 on CI) and every ambiguous shape must not.
+			blocked := isList && !supportsHost
+			require.Equal(t, tc.wantList && !tc.wantSupportsHost, blocked)
 		})
 	}
 }
@@ -119,14 +127,25 @@ func TestCreateToRunWithConnectNative(t *testing.T) {
 	}
 }
 
-// requireProtoCompanionImage skips a proto-generating integration test when the
-// pinned proto companion image is unavailable for the host platform. The image
-// is a manifest list that currently ships linux/amd64 only, so pulling it on
-// Apple Silicon fails with "no matching manifest for linux/arm64". A test is
-// skipped only when the registry manifest positively proves the host
-// architecture is absent: any ambiguity (image already built locally, manifest
-// unreadable, single-arch image) falls through so CI still fails loudly on a
-// real regression rather than silently masking one.
+// requireProtoCompanionImage fails a proto-generating integration test when the
+// pinned proto companion image cannot be obtained for the host. The image is a
+// manifest list that currently ships linux/amd64 only, so pulling it on Apple
+// Silicon fails with "no matching manifest for linux/arm64".
+//
+// We fail loudly rather than skipping, matching core's testutil.RequireProtoImage:
+// a silently-skipped integration test makes `go test ./...` report ok while the
+// create-to-run path never ran, masking regressions and letting environmental
+// drift hide bugs the test exists to catch. The remedy is in the message — build
+// the image locally for the host arch.
+//
+// Nix could in principle supply the companion on Apple Silicon, but core's
+// runners/companion.detectBackend selects Docker unconditionally whenever the
+// engine is running and never falls back, so an absent host-arch image genuinely
+// blocks proto generation. The failure therefore fires exactly when the real run
+// would fail: Docker is up but cannot get the image for this arch. Any ambiguity
+// (image already built locally, Docker/manifest unreadable — e.g. a Docker-less
+// Nix host, where detectBackend uses Nix and the run succeeds) proceeds so the
+// genuine outcome surfaces on its own terms.
 func requireProtoCompanionImage(t *testing.T, ctx context.Context) {
 	t.Helper()
 
@@ -143,18 +162,19 @@ func requireProtoCompanionImage(t *testing.T, ctx context.Context) {
 		return
 	}
 	if isList, supportsHost := protoImageSupportsHost(manifest); isList && !supportsHost {
-		t.Skipf("proto companion image %s has no linux/%s manifest; run `codefly companion build --all` to build it locally",
+		t.Fatalf("proto companion image %s has no linux/%s manifest; run `codefly companion build --all` to build it locally",
 			ref, runtime.GOARCH)
 	}
 }
 
 // protoImageSupportsHost reports whether a `docker manifest inspect` payload is a
-// multi-arch manifest list (isList) and, if so, whether it carries an entry the
-// host's Docker engine can run (supportsHost). Companion images are always
-// linux, and Docker Desktop's engine architecture matches the host, so the host
-// platform is linux/runtime.GOARCH regardless of runtime.GOOS. Attestation
-// entries (os/arch "unknown") are ignored so they count as neither a real
-// platform nor host support.
+// multi-arch manifest list (isList) and, if so, whether it carries a linux entry
+// for the host architecture (supportsHost). Companion images are linux, and a
+// default `docker pull` of a manifest list will not fall back to a non-host
+// architecture — it fails outright when the host arch is absent, rather than
+// emulating another arch — so the run needs a linux/runtime.GOARCH entry
+// regardless of runtime.GOOS. Attestation entries (os/arch "unknown") are ignored
+// so they count as neither a real platform nor host support.
 func protoImageSupportsHost(manifest []byte) (isList bool, supportsHost bool) {
 	var list struct {
 		Manifests []struct {
