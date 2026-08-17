@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/codefly-dev/core/companions/proto"
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/languages"
@@ -14,7 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
+	"os/exec"
 	"path"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,6 +29,41 @@ import (
 
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 )
+
+func TestProtoImageSupportsHost(t *testing.T) {
+	hostList := fmt.Sprintf(
+		`{"manifests":[{"platform":{"os":"linux","architecture":%q}},{"platform":{"os":"unknown","architecture":"unknown"}}]}`,
+		runtime.GOARCH)
+	// The amd64-only proto manifest as seen from a non-amd64 host.
+	foreignArch := "amd64"
+	if runtime.GOARCH == "amd64" {
+		foreignArch = "arm64"
+	}
+	foreignList := fmt.Sprintf(
+		`{"manifests":[{"platform":{"os":"linux","architecture":%q}},{"platform":{"os":"unknown","architecture":"unknown"}}]}`,
+		foreignArch)
+
+	tests := []struct {
+		name             string
+		manifest         string
+		wantList         bool
+		wantSupportsHost bool
+	}{
+		{"host arch present", hostList, true, true},
+		{"only foreign arch", foreignList, true, false},
+		{"non-linux host arch ignored", fmt.Sprintf(`{"manifests":[{"platform":{"os":"windows","architecture":%q}}]}`, runtime.GOARCH), true, false},
+		{"attestation only", `{"manifests":[{"platform":{"os":"unknown","architecture":"unknown"}}]}`, false, false},
+		{"single arch image", `{"schemaVersion":2,"config":{}}`, false, false},
+		{"unparseable", `not json`, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			isList, supportsHost := protoImageSupportsHost([]byte(tc.manifest))
+			require.Equal(t, tc.wantList, isList)
+			require.Equal(t, tc.wantSupportsHost, supportsHost)
+		})
+	}
+}
 
 func TestSetRuntimeContextNixHintUsesLocalFirst(t *testing.T) {
 	ctx := context.Background()
@@ -81,9 +119,71 @@ func TestCreateToRunWithConnectNative(t *testing.T) {
 	}
 }
 
+// requireProtoCompanionImage skips a proto-generating integration test when the
+// pinned proto companion image is unavailable for the host platform. The image
+// is a manifest list that currently ships linux/amd64 only, so pulling it on
+// Apple Silicon fails with "no matching manifest for linux/arm64". A test is
+// skipped only when the registry manifest positively proves the host
+// architecture is absent: any ambiguity (image already built locally, manifest
+// unreadable, single-arch image) falls through so CI still fails loudly on a
+// real regression rather than silently masking one.
+func requireProtoCompanionImage(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	image, err := proto.CompanionImage(ctx)
+	require.NoError(t, err)
+	ref := image.Name + ":" + image.Tag
+
+	if exec.CommandContext(ctx, "docker", "image", "inspect", ref).Run() == nil {
+		return
+	}
+
+	manifest, err := exec.CommandContext(ctx, "docker", "manifest", "inspect", ref).Output()
+	if err != nil {
+		return
+	}
+	if isList, supportsHost := protoImageSupportsHost(manifest); isList && !supportsHost {
+		t.Skipf("proto companion image %s has no linux/%s manifest; run `codefly companion build --all` to build it locally",
+			ref, runtime.GOARCH)
+	}
+}
+
+// protoImageSupportsHost reports whether a `docker manifest inspect` payload is a
+// multi-arch manifest list (isList) and, if so, whether it carries an entry the
+// host's Docker engine can run (supportsHost). Companion images are always
+// linux, and Docker Desktop's engine architecture matches the host, so the host
+// platform is linux/runtime.GOARCH regardless of runtime.GOOS. Attestation
+// entries (os/arch "unknown") are ignored so they count as neither a real
+// platform nor host support.
+func protoImageSupportsHost(manifest []byte) (isList bool, supportsHost bool) {
+	var list struct {
+		Manifests []struct {
+			Platform struct {
+				OS           string `json:"os"`
+				Architecture string `json:"architecture"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+	if json.Unmarshal(manifest, &list) != nil {
+		return false, false
+	}
+	for _, m := range list.Manifests {
+		if m.Platform.OS == "unknown" || m.Platform.Architecture == "unknown" {
+			continue
+		}
+		isList = true
+		if m.Platform.OS == "linux" && m.Platform.Architecture == runtime.GOARCH {
+			supportsHost = true
+		}
+	}
+	return isList, supportsHost
+}
+
 func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withConnect bool) {
 	wool.SetGlobalLogLevel(wool.DEBUG)
 	ctx := context.Background()
+
+	requireProtoCompanionImage(t, ctx)
 
 	var err error
 	tmpDir := t.TempDir()
