@@ -616,12 +616,24 @@ func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*
 	return s.Base.Builder.UpgradeResponse(res.Changes, res.LockfileDiff)
 }
 
-// Deploy applies the k8s manifests in templates/deployment.
+// Deploy applies the k8s manifests in templates/deployment. It mirrors
+// golanghelpers.DeployGoKubernetes but threads the service-account spec into
+// the templates so pods can run under an annotated, workload-identity SA
+// rather than the namespace default.
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	return golanghelpers.DeployGoKubernetes(ctx, s.Base.Builder, req, s.EnvironmentVariables, deploymentFS)
+	if err := s.GoGrpc.Settings.Validate(); err != nil {
+		return s.Base.Builder.DeployError(err)
+	}
+
+	return s.Base.Builder.DeployKustomize(ctx, req, services.KustomizeDeployment{
+		EnvironmentVariables: s.EnvironmentVariables,
+		Templates:            deploymentFS,
+		Inputs:               services.ApplicationDeploymentInputs(),
+		Parameters:           s.GoGrpc.Settings.ServiceAccount,
+	})
 }
 
 // CreateEndpoints materializes gRPC / REST / Connect Endpoint resources

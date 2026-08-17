@@ -13,7 +13,15 @@ spec:
       labels:
         app: {{ .Service.Name.DNSCase }}
         sha: {{ .Sha }}
+{{- with .Deployment.Parameters }}{{- if .Name }}
+{{- range $key, $value := .Labels }}
+        {{ $key }}: {{ $value | quote }}
+{{- end }}
+{{- end }}{{- end }}
     spec:
+{{- with .Deployment.Parameters }}{{- if .Name }}
+      serviceAccountName: {{ .Name }}
+{{- end }}{{- end }}
       # uid 65532 = nobody/nogroup in distroless and most scratch
       # base images. The codefly Go Dockerfile template (BuildGoDocker
       # in core/runners/golang) produces a static binary on alpine,
