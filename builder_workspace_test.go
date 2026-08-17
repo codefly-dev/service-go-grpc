@@ -14,6 +14,7 @@ func TestGoDockerTemplatingUsesWorkspaceForLocalModuleReplacements(t *testing.T)
 	settings := &Settings{}
 	settings.SourceDir = "code/cmd/server"
 	settings.WithWorkspace = true
+	settings.WithCGO = true
 
 	configure, err := goDockerTemplating(settings, workspace, service)
 	require.NoError(t, err)
@@ -24,6 +25,7 @@ func TestGoDockerTemplatingUsesWorkspaceForLocalModuleReplacements(t *testing.T)
 	require.Equal(t, workspace, docker.ContextRoot)
 	require.Equal(t, "modules/users/services/forge-edge/code", docker.ModuleRoot)
 	require.Equal(t, "./cmd/server", docker.BuildTarget)
+	require.True(t, docker.WithCGO)
 }
 
 func TestGoDockerTemplatingPreservesStandaloneServiceContext(t *testing.T) {
@@ -39,4 +41,5 @@ func TestGoDockerTemplatingPreservesStandaloneServiceContext(t *testing.T) {
 	require.Empty(t, docker.ContextRoot)
 	require.Equal(t, "code", docker.ModuleRoot)
 	require.Equal(t, "./cmd/server", docker.BuildTarget)
+	require.False(t, docker.WithCGO)
 }

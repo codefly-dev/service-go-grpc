@@ -582,6 +582,7 @@ func goDockerTemplating(
 			d.SourceDir = sourceDir
 			d.ModuleRoot = moduleRoot
 			d.BuildTarget = buildTarget
+			d.WithCGO = settings.WithCGO
 		}, nil
 	}
 	relativeService, err := filepath.Rel(workspaceRoot, serviceRoot)
@@ -594,6 +595,7 @@ func goDockerTemplating(
 		d.BuildTarget = buildTarget
 		d.ContextRoot = workspaceRoot
 		d.Workspace = true
+		d.WithCGO = settings.WithCGO
 	}, nil
 }
 
