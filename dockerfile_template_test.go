@@ -99,3 +99,37 @@ func TestDockerfileTemplateLeavesStandaloneRuntimeUnchanged(t *testing.T) {
 	require.NotContains(t, rendered, `fixture_root=`)
 	require.NotContains(t, rendered, `runtime-fixtures`)
 }
+
+func TestDockerfileTemplateHonorsCGOServiceContract(t *testing.T) {
+	t.Parallel()
+
+	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	require.NoError(t, err)
+	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+		GoVersion: GoVersion, AlpineVersion: AlpineVersion,
+		ModuleRoot: "code", BuildTarget: "./cmd/server", WithCGO: true,
+	})
+	require.NoError(t, err)
+
+	require.Contains(t, rendered, `apk add --no-cache ca-certificates git build-base`)
+	require.Contains(t, rendered, `ENV CGO_ENABLED=1`)
+	require.Contains(t, rendered, `go build -ldflags='-w -s' -o /app/app ./cmd/server`)
+	require.NotContains(t, rendered, `extldflags "-static"`)
+}
+
+func TestDockerfileTemplateKeepsNonCGOBuildStatic(t *testing.T) {
+	t.Parallel()
+
+	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	require.NoError(t, err)
+	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+		GoVersion: GoVersion, AlpineVersion: AlpineVersion,
+		ModuleRoot: "code", BuildTarget: "./cmd/server",
+	})
+	require.NoError(t, err)
+
+	require.Contains(t, rendered, `apk add --no-cache ca-certificates git`)
+	require.NotContains(t, rendered, `git build-base`)
+	require.Contains(t, rendered, `ENV CGO_ENABLED=0`)
+	require.Contains(t, rendered, `extldflags "-static"`)
+}
