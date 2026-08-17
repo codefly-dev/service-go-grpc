@@ -585,7 +585,21 @@ func goDockerTemplating(
 			d.WithCGO = settings.WithCGO
 		}, nil
 	}
-	relativeService, err := filepath.Rel(workspaceRoot, serviceRoot)
+	// A workspace may expose a module through a symlink: the canonical
+	// saas-starter checkout keeps its module at module/ and symlinks
+	// modules/<name> -> ../module to satisfy a `layout: modules` workspace.
+	// The build context tars the real tree, so the in-image path must target
+	// the real directory, not a symlink that cannot be followed once copied.
+	// Consumers install real directories, so resolving is a no-op there.
+	// Resolve both roots together or neither: mixing a resolved root with an
+	// unresolved one (e.g. when serviceRoot does not exist on disk yet) would
+	// cross the /var vs /private/var boundary and compute a bogus ".." path.
+	resolvedWorkspace, workspaceErr := filepath.EvalSymlinks(workspaceRoot)
+	resolvedService, serviceErr := filepath.EvalSymlinks(serviceRoot)
+	if workspaceErr != nil || serviceErr != nil {
+		resolvedWorkspace, resolvedService = workspaceRoot, serviceRoot
+	}
+	relativeService, err := filepath.Rel(resolvedWorkspace, resolvedService)
 	if err != nil || relativeService == ".." || strings.HasPrefix(relativeService, ".."+string(filepath.Separator)) {
 		return nil, fmt.Errorf("service directory %q is outside workspace %q", serviceRoot, workspaceRoot)
 	}
