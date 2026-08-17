@@ -69,6 +69,23 @@ type Settings struct {
 	// Field named RuntimeImage (not DockerImage) to avoid colliding with
 	// services.Base.DockerImage(req).
 	RuntimeImage string `yaml:"docker-image"`
+
+	// ServiceAccount binds the workload's pods to a named Kubernetes
+	// ServiceAccount instead of the namespace default. Empty (the default)
+	// leaves pods on the default SA. See ServiceAccountSpec.
+	ServiceAccount *ServiceAccountSpec `yaml:"service-account,omitempty"`
+}
+
+// ServiceAccountSpec configures the Kubernetes ServiceAccount a service's
+// pods run under. This is the passwordless-identity seam: annotations land
+// on the rendered SA object (e.g. an Azure workload-identity client id) and
+// labels stamp the pod template (e.g. azure.workload.identity/use: "true")
+// so the identity webhook can inject the federated token. An empty Name
+// renders no SA object and leaves serviceAccountName unset.
+type ServiceAccountSpec struct {
+	Name        string            `yaml:"name"`
+	Annotations map[string]string `yaml:"annotations,omitempty"`
+	Labels      map[string]string `yaml:"labels,omitempty"`
 }
 
 func (s *Settings) Validate() error {
