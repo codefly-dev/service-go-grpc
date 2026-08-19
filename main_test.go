@@ -17,6 +17,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,17 +63,33 @@ func TestSetRuntimeContextNative(t *testing.T) {
 	}
 }
 
+// protoCompanionMu serializes the proto-generation phase of the parallel
+// create-to-run cases: the shared proto companion names its container purely
+// from a millisecond timestamp, so concurrent generation risks a container
+// name conflict. See its use in testCreateToRun.
+var protoCompanionMu sync.Mutex
+
+// These create-to-run cases each drive the full pipeline — proto companion
+// codegen, a Go/Docker build of the scaffolded service, then a live boot —
+// so a single case runs on the order of a minute. Run serially they overrun
+// the release packaging stage's build timeout; t.Parallel lets the three
+// overlap on their independent temp dirs and temporary ports so the suite's
+// wall-clock is the slowest case, not their sum. The one resource they do
+// share — the proto companion container — is guarded by protoCompanionMu.
 func TestCreateToRunNative(t *testing.T) {
+	t.Parallel()
 	if languages.HasGoRuntime(nil) {
 		testCreateToRun(t, resources.NewRuntimeContextNative(), false)
 	}
 }
 
 func TestCreateToRunDocker(t *testing.T) {
+	t.Parallel()
 	testCreateToRun(t, resources.NewRuntimeContextContainer(), false)
 }
 
 func TestCreateToRunWithConnectNative(t *testing.T) {
+	t.Parallel()
 	// CONNECT support is now in the pinned core (the factory templates
 	// reference standards.CONNECT directly), so the scaffolded service
 	// resolves it — the old t.Skip is no longer warranted.
@@ -131,18 +148,29 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 		}
 	}
 
-	createResponse, err := builder.Create(ctx, &builderv0.CreateRequest{})
-	require.NoError(t, err)
-	require.Equal(
-		t,
-		builderv0.CreateStatus_CREATED,
-		createResponse.GetState().GetState(),
-		createResponse.GetState().GetMessage(),
-	)
-	syncResponse, err := builder.Sync(ctx, &builderv0.SyncRequest{DryRun: true})
-	require.NoError(t, err)
-	require.Equal(t, builderv0.SyncStatus_SUCCESS, syncResponse.GetState().GetState(), syncResponse.GetState().GetMessage())
-	require.Empty(t, syncResponse.GetChangedFiles(), "a newly created service must already be sync-clean")
+	// Proto generation runs the shared proto companion, whose Docker container
+	// is named proto-<unix-milli> with no per-service component (core
+	// companions/proto). Two of these parallel cases generating in the same
+	// millisecond would request the same container name and one would fail with
+	// a name conflict, so serialize just the generation phase; the dominant
+	// build-and-run phase below still overlaps across cases.
+	func() {
+		protoCompanionMu.Lock()
+		defer protoCompanionMu.Unlock()
+
+		createResponse, err := builder.Create(ctx, &builderv0.CreateRequest{})
+		require.NoError(t, err)
+		require.Equal(
+			t,
+			builderv0.CreateStatus_CREATED,
+			createResponse.GetState().GetState(),
+			createResponse.GetState().GetMessage(),
+		)
+		syncResponse, err := builder.Sync(ctx, &builderv0.SyncRequest{DryRun: true})
+		require.NoError(t, err)
+		require.Equal(t, builderv0.SyncStatus_SUCCESS, syncResponse.GetState().GetState(), syncResponse.GetState().GetMessage())
+		require.Empty(t, syncResponse.GetChangedFiles(), "a newly created service must already be sync-clean")
+	}()
 
 	// Now run it
 	runtime := NewRuntime(NewService())
