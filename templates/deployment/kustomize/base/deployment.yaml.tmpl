@@ -13,13 +13,13 @@ spec:
       labels:
         app: {{ .Service.Name.DNSCase }}
         sha: {{ .Sha }}
-{{- with .Deployment.Parameters }}{{- if .Name }}
+{{- with .Deployment.Parameters.ServiceAccount }}{{- if .Name }}
 {{- range $key, $value := .Labels }}
         {{ $key }}: {{ $value | quote }}
 {{- end }}
 {{- end }}{{- end }}
     spec:
-{{- with .Deployment.Parameters }}{{- if .Name }}
+{{- with .Deployment.Parameters.ServiceAccount }}{{- if .Name }}
       serviceAccountName: {{ .Name }}
 {{- end }}{{- end }}
       # uid 65532 = nobody/nogroup in distroless and most scratch
@@ -50,12 +50,20 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           ports:
-            # Match service.yaml.tmpl. http is grpc-gateway (REST
-            # facade), grpc is the raw gRPC listener.
-            - name: http
-              containerPort: 8080
+            # Match service.yaml.tmpl. grpc is the raw gRPC listener, always
+            # served. http (grpc-gateway REST facade) and connect bind only
+            # when their endpoint is enabled — advertise a port only when the
+            # process binds it, so nothing routes to a dead port.
             - name: grpc
               containerPort: 9090
+{{- if .Deployment.Parameters.RestEndpoint }}
+            - name: http
+              containerPort: 8080
+{{- end }}
+{{- if .Deployment.Parameters.ConnectEndpoint }}
+            - name: connect
+              containerPort: 8081
+{{- end }}
           envFrom:
             - configMapRef:
                 name: cm-{{ .Service.Name.DNSCase }}
