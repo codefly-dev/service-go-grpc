@@ -553,21 +553,14 @@ func declaredProtoServices(root string) ([]string, error) {
 	return services, err
 }
 
-// dockerRuntimeAsset is a runtime file or directory copied into the final
-// image. Source is the path within the Docker build context; Dest is where it
-// lands under /app, preserving the asset's layout relative to the service root.
-type dockerRuntimeAsset struct {
-	Source string
-	Dest   string
-}
-
 // dockerTemplating extends the core DockerTemplating with the runtime assets
-// this repo's Dockerfile template copies into the final stage. The core struct
-// has no field for them, so Build renders with this superset instead of going
-// through golanghelpers.BuildGoDocker.
+// this repo's Dockerfile template copies into the final stage. Each entry is a
+// path relative to the Docker build context, which the template reproduces at
+// the same path under /app. The core struct has no field for them, so Build
+// renders with this superset instead of going through golanghelpers.BuildGoDocker.
 type dockerTemplating struct {
 	golanghelpers.DockerTemplating
-	RuntimeAssets []dockerRuntimeAsset
+	RuntimeAssets []string
 }
 
 // Build produces the service's Docker image. Uses a custom DockerTemplating
@@ -601,7 +594,7 @@ func buildGoDocker(
 	requirements *builders.Dependencies,
 	builderFS embed.FS,
 	goVersion, alpineVersion string,
-	assets []dockerRuntimeAsset,
+	assets []string,
 	opts ...func(*golanghelpers.DockerTemplating),
 ) (*builderv0.BuildResponse, error) {
 	w := wool.Get(ctx).In("go-grpc.buildGoDocker")
@@ -687,28 +680,43 @@ func dockerBuilderConfiguration(
 	}, nil
 }
 
+// unsafeAssetChars are byte values that must not appear in a runtime asset
+// path. Whitespace would make the generated `COPY <src> <dest>` tokenize into
+// multiple sources; the glob metacharacters would make Docker expand the source
+// (and leave the destination literal). Both yield a wrong or failing build, so
+// only literal, whitespace-free paths are accepted.
+const unsafeAssetChars = " \t\r\n\x00\\*?[]"
+
+// validateRuntimeAssetPath rejects a declared runtime asset path that is not a
+// clean, local path — absolute, escaping via "..", the service root itself, or
+// carrying a character that would corrupt the generated COPY instruction.
+func validateRuntimeAssetPath(asset string) error {
+	if !filepath.IsLocal(asset) || filepath.Clean(asset) == "." || strings.ContainsAny(asset, unsafeAssetChars) {
+		return fmt.Errorf("runtime asset %q must be a literal path below the service root", asset)
+	}
+	return nil
+}
+
 // runtimeAssets validates the service's declared runtime asset paths and maps
-// each to a Docker build-context source and an in-image destination. A path
-// that is not local (absolute, escaping via "..", or otherwise non-local) is
-// rejected so it cannot generate a COPY that reads outside the context.
-// contextPrefix is the service directory relative to the build-context root:
-// empty when the service is the context, or the service-relative path in a
-// workspace build whose context is the workspace root.
-func runtimeAssets(settings *Settings, contextPrefix string) ([]dockerRuntimeAsset, error) {
+// each to its path within the Docker build context. contextPrefix is the
+// service directory relative to the build-context root: empty when the service
+// is the context, or the service-relative path in a workspace build whose
+// context is the workspace root. The template reproduces each returned path at
+// the same location under /app.
+func runtimeAssets(settings *Settings, contextPrefix string) ([]string, error) {
 	if len(settings.RuntimeAssets) == 0 {
 		return nil, nil
 	}
-	assets := make([]dockerRuntimeAsset, 0, len(settings.RuntimeAssets))
+	assets := make([]string, 0, len(settings.RuntimeAssets))
 	for _, asset := range settings.RuntimeAssets {
-		dest := filepath.ToSlash(filepath.Clean(asset))
-		if !filepath.IsLocal(asset) || dest == "." || strings.ContainsAny(asset, "\x00\\") {
-			return nil, fmt.Errorf("runtime asset %q must stay below the service root", asset)
+		if err := validateRuntimeAssetPath(asset); err != nil {
+			return nil, err
 		}
-		source := dest
+		source := filepath.ToSlash(filepath.Clean(asset))
 		if contextPrefix != "" {
-			source = filepath.ToSlash(filepath.Join(contextPrefix, dest))
+			source = filepath.ToSlash(filepath.Join(contextPrefix, source))
 		}
-		assets = append(assets, dockerRuntimeAsset{Source: source, Dest: dest})
+		assets = append(assets, source)
 	}
 	return assets, nil
 }
@@ -717,7 +725,7 @@ func goDockerTemplating(
 	settings *Settings,
 	workspaceRoot,
 	serviceRoot string,
-) (func(*golanghelpers.DockerTemplating), []dockerRuntimeAsset, error) {
+) (func(*golanghelpers.DockerTemplating), []string, error) {
 	sourceDir := settings.GoSourceDir()
 	moduleRoot, buildTarget := golanghelpers.SplitSourceDir(sourceDir)
 	if !settings.WithWorkspace {

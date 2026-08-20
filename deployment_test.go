@@ -199,6 +199,33 @@ func TestSettingsValidateServiceAccount(t *testing.T) {
 	}
 }
 
+func TestSettingsValidateRuntimeAssets(t *testing.T) {
+	tests := []struct {
+		name    string
+		assets  []string
+		wantErr bool
+	}{
+		{name: "unset", assets: nil, wantErr: false},
+		{name: "valid dir and file", assets: []string{"routing", "config/prod.yaml"}, wantErr: false},
+		{name: "escaping", assets: []string{"../secrets"}, wantErr: true},
+		{name: "absolute", assets: []string{"/etc/passwd"}, wantErr: true},
+		{name: "service root", assets: []string{"."}, wantErr: true},
+		{name: "whitespace", assets: []string{"my config"}, wantErr: true},
+		{name: "glob", assets: []string{"conf*"}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&Settings{RuntimeAssets: tc.assets}).Validate()
+			if tc.wantErr && err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}
+
 func TestDeploymentProbesRequireOnlyTheDeclaredListener(t *testing.T) {
 	template, err := fs.ReadFile(deploymentFS, "templates/deployment/kustomize/base/deployment.yaml.tmpl")
 	if err != nil {

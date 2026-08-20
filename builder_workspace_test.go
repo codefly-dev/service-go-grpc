@@ -78,12 +78,9 @@ func TestGoDockerTemplatingCollectsStandaloneRuntimeAssets(t *testing.T) {
 	_, assets, err := goDockerTemplating(settings, "/workspace", "/workspace/services/accounts")
 	require.NoError(t, err)
 
-	// Standalone service is itself the build context, so source and destination
-	// paths match the declared, service-relative paths.
-	require.Equal(t, []dockerRuntimeAsset{
-		{Source: "routing", Dest: "routing"},
-		{Source: "config/prod.yaml", Dest: "config/prod.yaml"},
-	}, assets)
+	// Standalone service is itself the build context, so the context paths match
+	// the declared, service-relative paths.
+	require.Equal(t, []string{"routing", "config/prod.yaml"}, assets)
 }
 
 func TestGoDockerTemplatingPrefixesWorkspaceRuntimeAssets(t *testing.T) {
@@ -97,15 +94,17 @@ func TestGoDockerTemplatingPrefixesWorkspaceRuntimeAssets(t *testing.T) {
 	_, assets, err := goDockerTemplating(settings, workspace, service)
 	require.NoError(t, err)
 
-	// Workspace build context is the workspace root, so the source is prefixed
-	// with the service-relative path while the destination stays under /app.
-	require.Equal(t, []dockerRuntimeAsset{
-		{Source: "modules/users/services/accounts/routing", Dest: "routing"},
-	}, assets)
+	// Workspace build context is the workspace root, so the context path is
+	// prefixed with the service-relative path. The template reproduces it at the
+	// same path under /app, keeping it a sibling of the module dir.
+	require.Equal(t, []string{"modules/users/services/accounts/routing"}, assets)
 }
 
 func TestGoDockerTemplatingRejectsInvalidRuntimeAsset(t *testing.T) {
-	for _, asset := range []string{"../secrets", "/etc/passwd", ".", ""} {
+	// Traversal/absolute paths escape the context; whitespace and glob
+	// metacharacters would corrupt the generated `COPY <src> <dest>` (extra
+	// tokens or source globbing), so all are rejected before templating.
+	for _, asset := range []string{"../secrets", "/etc/passwd", ".", "", "my config", "tab\ther", "conf*", "a[b]"} {
 		t.Run(asset, func(t *testing.T) {
 			settings := &Settings{}
 			settings.SourceDir = "code"

@@ -135,6 +135,11 @@ func (s *Settings) Validate() error {
 			return fmt.Errorf("protocol output directory %q must stay below the service root", dir)
 		}
 	}
+	for _, asset := range s.RuntimeAssets {
+		if err := validateRuntimeAssetPath(asset); err != nil {
+			return err
+		}
+	}
 	if err := s.ServiceAccount.Validate(); err != nil {
 		return err
 	}

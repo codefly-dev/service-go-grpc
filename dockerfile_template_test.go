@@ -2,6 +2,7 @@ package main
 
 import (
 	"io/fs"
+	"path"
 	"strings"
 	"testing"
 
@@ -81,7 +82,7 @@ func TestDockerfileTemplatePackagesContainingModuleFixturesForWorkspaceBuilds(t 
 	require.Contains(t, rendered, `COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures`)
 }
 
-func TestDockerfileTemplateCopiesRuntimeAssetsIntoFinalStage(t *testing.T) {
+func TestDockerfileTemplateCopiesRuntimeAssetsWhereSourceRelativePathsResolve(t *testing.T) {
 	t.Parallel()
 
 	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
@@ -90,19 +91,27 @@ func TestDockerfileTemplateCopiesRuntimeAssetsIntoFinalStage(t *testing.T) {
 		DockerTemplating: golanghelpers.DockerTemplating{
 			GoVersion:     GoVersion,
 			AlpineVersion: AlpineVersion,
+			SourceDir:     "code",
 			ModuleRoot:    "code",
 			BuildTarget:   ".",
 		},
-		RuntimeAssets: []dockerRuntimeAsset{
-			{Source: "routing", Dest: "routing"},
-			{Source: "config/prod.yaml", Dest: "config/prod.yaml"},
-		},
+		RuntimeAssets: []string{"routing", "config/prod.yaml"},
 	})
 	require.NoError(t, err)
 
 	runtimeStage := rendered[strings.Index(rendered, "# Final stage"):]
-	require.Contains(t, runtimeStage, "COPY --chown=appuser routing routing")
-	require.Contains(t, runtimeStage, "COPY --chown=appuser config/prod.yaml config/prod.yaml")
+	// The binary runs from the source dir (mirroring dev), and assets are placed
+	// at their source-relative path under /app. A service resolving an asset
+	// relative to its working directory — e.g. "../routing/rest" from
+	// /app/code — must therefore land on the copied file. This is the invariant
+	// the flat /app placement violated (finding #1).
+	require.Contains(t, runtimeStage, "WORKDIR /app/code")
+	require.Contains(t, runtimeStage, "COPY --chown=appuser routing /app/routing")
+	require.Contains(t, runtimeStage, "COPY --chown=appuser config/prod.yaml /app/config/prod.yaml")
+
+	const workdir = "/app/code"
+	require.Equal(t, "/app/routing", path.Clean(path.Join(workdir, "../routing")))
+	require.Equal(t, "/app/config/prod.yaml", path.Clean(path.Join(workdir, "..", "config/prod.yaml")))
 }
 
 func TestDockerfileTemplateOmitsRuntimeAssetCopiesWhenNoneDeclared(t *testing.T) {
