@@ -64,13 +64,13 @@ func TestDockerfileTemplatePackagesContainingModuleFixturesForWorkspaceBuilds(t 
 
 	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
 	require.NoError(t, err)
-	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
 		GoVersion:     GoVersion,
 		AlpineVersion: AlpineVersion,
 		ModuleRoot:    "modules/users/services/accounts/code",
 		BuildTarget:   ".",
 		Workspace:     true,
-	})
+	}})
 	require.NoError(t, err)
 
 	require.Contains(t, rendered, `-o /app/app .`)
@@ -81,17 +81,57 @@ func TestDockerfileTemplatePackagesContainingModuleFixturesForWorkspaceBuilds(t 
 	require.Contains(t, rendered, `COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures`)
 }
 
+func TestDockerfileTemplateCopiesRuntimeAssetsIntoFinalStage(t *testing.T) {
+	t.Parallel()
+
+	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	require.NoError(t, err)
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{
+		DockerTemplating: golanghelpers.DockerTemplating{
+			GoVersion:     GoVersion,
+			AlpineVersion: AlpineVersion,
+			ModuleRoot:    "code",
+			BuildTarget:   ".",
+		},
+		RuntimeAssets: []dockerRuntimeAsset{
+			{Source: "routing", Dest: "routing"},
+			{Source: "config/prod.yaml", Dest: "config/prod.yaml"},
+		},
+	})
+	require.NoError(t, err)
+
+	runtimeStage := rendered[strings.Index(rendered, "# Final stage"):]
+	require.Contains(t, runtimeStage, "COPY --chown=appuser routing routing")
+	require.Contains(t, runtimeStage, "COPY --chown=appuser config/prod.yaml config/prod.yaml")
+}
+
+func TestDockerfileTemplateOmitsRuntimeAssetCopiesWhenNoneDeclared(t *testing.T) {
+	t.Parallel()
+
+	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	require.NoError(t, err)
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
+		GoVersion:     GoVersion,
+		AlpineVersion: AlpineVersion,
+		ModuleRoot:    "code",
+		BuildTarget:   ".",
+	}})
+	require.NoError(t, err)
+
+	require.NotContains(t, rendered[strings.Index(rendered, "# Final stage"):], "COPY --chown=appuser routing")
+}
+
 func TestDockerfileTemplateLeavesStandaloneRuntimeUnchanged(t *testing.T) {
 	t.Parallel()
 
 	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
 	require.NoError(t, err)
-	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
 		GoVersion:     GoVersion,
 		AlpineVersion: AlpineVersion,
 		ModuleRoot:    "code",
 		BuildTarget:   ".",
-	})
+	}})
 	require.NoError(t, err)
 
 	require.Contains(t, rendered, `-o /app/app .`)
@@ -105,10 +145,10 @@ func TestDockerfileTemplateHonorsCGOServiceContract(t *testing.T) {
 
 	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
 	require.NoError(t, err)
-	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
 		GoVersion: GoVersion, AlpineVersion: AlpineVersion,
 		ModuleRoot: "code", BuildTarget: "./cmd/server", WithCGO: true,
-	})
+	}})
 	require.NoError(t, err)
 
 	require.Contains(t, rendered, `apk add --no-cache ca-certificates git build-base`)
@@ -122,10 +162,10 @@ func TestDockerfileTemplateKeepsNonCGOBuildStatic(t *testing.T) {
 
 	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
 	require.NoError(t, err)
-	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
 		GoVersion: GoVersion, AlpineVersion: AlpineVersion,
 		ModuleRoot: "code", BuildTarget: "./cmd/server",
-	})
+	}})
 	require.NoError(t, err)
 
 	require.Contains(t, rendered, `apk add --no-cache ca-certificates git`)

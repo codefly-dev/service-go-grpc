@@ -72,6 +72,13 @@ COPY --chown=appuser --from=builder /app/app .
 COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures
 {{- end }}
 
+# Copy declared runtime assets from the build context. Services that read config
+# or data files at startup work in dev via a source-relative fallback; these
+# COPY lines are what carry those files into the image so they resolve under /app.
+{{- range .RuntimeAssets }}
+COPY --chown=appuser {{ .Source }} {{ .Dest }}
+{{- end }}
+
 # Use the non-root user
 USER appuser
 
