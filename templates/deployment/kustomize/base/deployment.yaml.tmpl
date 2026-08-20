@@ -82,21 +82,25 @@ spec:
             limits:
               cpu: "1"
               memory: 512Mi
-          # The generic deployment contract guarantees the listener,
-          # not a product-specific HTTP health route.
+          # The generic deployment contract guarantees the listener, not a
+          # product-specific HTTP health route. Probe grpc, not http: the gRPC
+          # listener is the one endpoint every service serves, while the http
+          # (grpc-gateway) and connect listeners only bind when those endpoints
+          # are enabled. A grpc-only service never binds http, so probing it
+          # fails startup forever and the kubelet restart-loops the pod.
           startupProbe:
             tcpSocket:
-              port: http
+              port: grpc
             periodSeconds: 2
             failureThreshold: 30
           readinessProbe:
             tcpSocket:
-              port: http
+              port: grpc
             periodSeconds: 5
             timeoutSeconds: 3
           livenessProbe:
             tcpSocket:
-              port: http
+              port: grpc
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3

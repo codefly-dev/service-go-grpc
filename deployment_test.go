@@ -238,4 +238,13 @@ func TestDeploymentProbesRequireOnlyTheDeclaredListener(t *testing.T) {
 	if count := strings.Count(source, "tcpSocket:"); count != 3 {
 		t.Fatalf("transport probes = %d, want startup, readiness, and liveness", count)
 	}
+	// grpc is the only listener every service serves; http (grpc-gateway) and
+	// connect bind only when those endpoints are enabled. Probing http would
+	// restart-loop any grpc-only service, so every probe must target grpc.
+	if count := strings.Count(source, "port: grpc"); count != 3 {
+		t.Fatalf("probes targeting the grpc listener = %d, want all three (startup, readiness, liveness)", count)
+	}
+	if strings.Contains(source, "port: http") {
+		t.Fatal("probes must not target the http listener: grpc-only services never bind it")
+	}
 }
