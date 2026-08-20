@@ -55,8 +55,11 @@ FROM alpine:{{ .AlpineVersion }}@sha256:fd791d74b68913cbb027c6546007b3f0d3bc4512
 # Runtime only needs the public CA bundle. Keep build tooling out of the image.
 RUN apk add --no-cache ca-certificates
 
-# Set working directory
-WORKDIR /app
+# Run from the Go source directory, mirroring the dev runner (which starts the
+# binary with its working directory set to the source dir). This is what makes a
+# service's runtime path — e.g. "../routing/rest", anchored at the source dir —
+# resolve to the same file it does in dev.
+WORKDIR /app/{{ .SourceDir }}
 
 # Set environment variables
 {{ range .Envs}}
@@ -70,6 +73,14 @@ RUN adduser -D appuser
 COPY --chown=appuser --from=builder /app/app .
 {{- if .Workspace }}
 COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures
+{{- end }}
+
+# Copy declared runtime assets from the build context, reproducing the source
+# tree under /app so a source-relative reference resolves the same as in dev.
+# Services that read config or data files at startup rely on a source-relative
+# fallback in dev; these COPY lines are what carry those files into the image.
+{{- range .RuntimeAssets }}
+COPY --chown=appuser {{ . }} /app/{{ . }}
 {{- end }}
 
 # Use the non-root user

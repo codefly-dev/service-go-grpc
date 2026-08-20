@@ -64,6 +64,15 @@ type Settings struct {
 	// deleted protobuf declarations.
 	ProtocolOutputDirs []string `yaml:"protocol-output-dirs"`
 
+	// RuntimeAssets lists files or directories, relative to the service root,
+	// that the service reads at runtime and that must ship in the final image
+	// (e.g. "routing" for a service that loads REST routes from routing/rest at
+	// startup). The final stage otherwise carries only the binary, so any asset
+	// living outside the Go module works in dev — where the loader falls back to
+	// a source-relative path — and vanishes in the container. Each path is
+	// reproduced under /app, preserving its layout relative to the service root.
+	RuntimeAssets []string `yaml:"runtime-assets"`
+
 	// RuntimeImage overrides the codefly-built runtime image. Format:
 	// "name:tag". :latest and untagged refs are rejected — pinning is
 	// enforced. Leave empty to use codeflydev/go:<ver> (recommended).
@@ -124,6 +133,11 @@ func (s *Settings) Validate() error {
 	for _, dir := range s.protocolOutputDirs() {
 		if !filepath.IsLocal(dir) || dir == "." || strings.ContainsAny(dir, "\x00\\") {
 			return fmt.Errorf("protocol output directory %q must stay below the service root", dir)
+		}
+	}
+	for _, asset := range s.RuntimeAssets {
+		if err := validateRuntimeAssetPath(asset); err != nil {
+			return err
 		}
 	}
 	if err := s.ServiceAccount.Validate(); err != nil {

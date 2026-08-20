@@ -2,6 +2,7 @@ package main
 
 import (
 	"io/fs"
+	"path"
 	"strings"
 	"testing"
 
@@ -64,13 +65,13 @@ func TestDockerfileTemplatePackagesContainingModuleFixturesForWorkspaceBuilds(t 
 
 	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
 	require.NoError(t, err)
-	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
 		GoVersion:     GoVersion,
 		AlpineVersion: AlpineVersion,
 		ModuleRoot:    "modules/users/services/accounts/code",
 		BuildTarget:   ".",
 		Workspace:     true,
-	})
+	}})
 	require.NoError(t, err)
 
 	require.Contains(t, rendered, `-o /app/app .`)
@@ -81,17 +82,65 @@ func TestDockerfileTemplatePackagesContainingModuleFixturesForWorkspaceBuilds(t 
 	require.Contains(t, rendered, `COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures`)
 }
 
+func TestDockerfileTemplateCopiesRuntimeAssetsWhereSourceRelativePathsResolve(t *testing.T) {
+	t.Parallel()
+
+	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	require.NoError(t, err)
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{
+		DockerTemplating: golanghelpers.DockerTemplating{
+			GoVersion:     GoVersion,
+			AlpineVersion: AlpineVersion,
+			SourceDir:     "code",
+			ModuleRoot:    "code",
+			BuildTarget:   ".",
+		},
+		RuntimeAssets: []string{"routing", "config/prod.yaml"},
+	})
+	require.NoError(t, err)
+
+	runtimeStage := rendered[strings.Index(rendered, "# Final stage"):]
+	// The binary runs from the source dir (mirroring dev), and assets are placed
+	// at their source-relative path under /app. A service resolving an asset
+	// relative to its working directory — e.g. "../routing/rest" from
+	// /app/code — must therefore land on the copied file. This is the invariant
+	// the flat /app placement violated (finding #1).
+	require.Contains(t, runtimeStage, "WORKDIR /app/code")
+	require.Contains(t, runtimeStage, "COPY --chown=appuser routing /app/routing")
+	require.Contains(t, runtimeStage, "COPY --chown=appuser config/prod.yaml /app/config/prod.yaml")
+
+	const workdir = "/app/code"
+	require.Equal(t, "/app/routing", path.Clean(path.Join(workdir, "../routing")))
+	require.Equal(t, "/app/config/prod.yaml", path.Clean(path.Join(workdir, "..", "config/prod.yaml")))
+}
+
+func TestDockerfileTemplateOmitsRuntimeAssetCopiesWhenNoneDeclared(t *testing.T) {
+	t.Parallel()
+
+	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	require.NoError(t, err)
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
+		GoVersion:     GoVersion,
+		AlpineVersion: AlpineVersion,
+		ModuleRoot:    "code",
+		BuildTarget:   ".",
+	}})
+	require.NoError(t, err)
+
+	require.NotContains(t, rendered[strings.Index(rendered, "# Final stage"):], "COPY --chown=appuser routing")
+}
+
 func TestDockerfileTemplateLeavesStandaloneRuntimeUnchanged(t *testing.T) {
 	t.Parallel()
 
 	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
 	require.NoError(t, err)
-	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
 		GoVersion:     GoVersion,
 		AlpineVersion: AlpineVersion,
 		ModuleRoot:    "code",
 		BuildTarget:   ".",
-	})
+	}})
 	require.NoError(t, err)
 
 	require.Contains(t, rendered, `-o /app/app .`)
@@ -105,10 +154,10 @@ func TestDockerfileTemplateHonorsCGOServiceContract(t *testing.T) {
 
 	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
 	require.NoError(t, err)
-	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
 		GoVersion: GoVersion, AlpineVersion: AlpineVersion,
 		ModuleRoot: "code", BuildTarget: "./cmd/server", WithCGO: true,
-	})
+	}})
 	require.NoError(t, err)
 
 	require.Contains(t, rendered, `apk add --no-cache ca-certificates git build-base`)
@@ -122,10 +171,10 @@ func TestDockerfileTemplateKeepsNonCGOBuildStatic(t *testing.T) {
 
 	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
 	require.NoError(t, err)
-	rendered, err := templates.ApplyTemplate(string(source), golanghelpers.DockerTemplating{
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
 		GoVersion: GoVersion, AlpineVersion: AlpineVersion,
 		ModuleRoot: "code", BuildTarget: "./cmd/server",
-	})
+	}})
 	require.NoError(t, err)
 
 	require.Contains(t, rendered, `apk add --no-cache ca-certificates git`)

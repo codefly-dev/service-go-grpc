@@ -9,6 +9,7 @@ import (
 	"go/format"
 	goparser "go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -22,8 +23,10 @@ import (
 	"github.com/bufbuild/protocompile/parser"
 	"github.com/bufbuild/protocompile/reporter"
 	"github.com/codefly-dev/core/agents/communicate"
+	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/agents/services/upgrade"
+	"github.com/codefly-dev/core/builders"
 	"github.com/codefly-dev/core/companions/proto"
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
@@ -550,15 +553,25 @@ func declaredProtoServices(root string) ([]string, error) {
 	return services, err
 }
 
-// Build produces the service's Docker image. Uses the BuildGoDocker
-// helper with a custom DockerTemplating hook to split the Go source
-// directory into module root + build target — go-grpc services may nest
-// their main package under cmd/server rather than at the module root.
+// dockerTemplating extends the core DockerTemplating with the runtime assets
+// this repo's Dockerfile template copies into the final stage. Each entry is a
+// path relative to the Docker build context, which the template reproduces at
+// the same path under /app. The core struct has no field for them, so Build
+// renders with this superset instead of going through golanghelpers.BuildGoDocker.
+type dockerTemplating struct {
+	golanghelpers.DockerTemplating
+	RuntimeAssets []string
+}
+
+// Build produces the service's Docker image. Uses a custom DockerTemplating
+// hook to split the Go source directory into module root + build target —
+// go-grpc services may nest their main package under cmd/server rather than at
+// the module root — and to copy declared runtime assets into the final stage.
 func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*builderv0.BuildResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	configure, err := goDockerTemplating(
+	configure, assets, err := goDockerTemplating(
 		s.GoGrpc.Settings,
 		s.Identity.WorkspacePath,
 		s.Location,
@@ -566,24 +579,166 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	if err != nil {
 		return s.Base.Builder.BuildError(err)
 	}
-	return golanghelpers.BuildGoDocker(ctx, s.Base.Builder, req, s.Location,
-		requirements, builderFS, GoVersion, AlpineVersion, configure)
+	return buildGoDocker(ctx, s.Base.Builder, req, s.Location,
+		requirements, builderFS, GoVersion, AlpineVersion, assets, configure)
+}
+
+// buildGoDocker mirrors golanghelpers.BuildGoDocker but renders the Dockerfile
+// with the local dockerTemplating superset so the final stage can copy runtime
+// assets. The core helper hardcodes its own struct, which carries no such field.
+func buildGoDocker(
+	ctx context.Context,
+	builder *services.BuilderWrapper,
+	req *builderv0.BuildRequest,
+	location string,
+	requirements *builders.Dependencies,
+	builderFS embed.FS,
+	goVersion, alpineVersion string,
+	assets []string,
+	opts ...func(*golanghelpers.DockerTemplating),
+) (*builderv0.BuildResponse, error) {
+	w := wool.Get(ctx).In("go-grpc.buildGoDocker")
+
+	dockerRequest, err := builder.DockerBuildRequest(ctx, req)
+	if err != nil {
+		return builder.BuildError(w.Wrapf(err, "docker build request"))
+	}
+
+	image := builder.DockerImage(dockerRequest)
+	if !dockerhelpers.IsValidDockerImageName(image.Name) {
+		return builder.BuildError(fmt.Errorf("invalid docker image name: %s", image.Name))
+	}
+
+	templating := dockerTemplating{
+		DockerTemplating: golanghelpers.DockerTemplating{
+			Components:    requirements.All(),
+			GoVersion:     goVersion,
+			AlpineVersion: alpineVersion,
+		},
+		RuntimeAssets: assets,
+	}
+	for _, opt := range opts {
+		opt(&templating.DockerTemplating)
+	}
+
+	_ = shared.DeleteFile(ctx, location+"/builder/Dockerfile")
+
+	if err = builder.Templates(ctx, templating, services.WithBuilder(builderFS)); err != nil {
+		return builder.BuildError(err)
+	}
+
+	configuration, err := dockerBuilderConfiguration(location, image, w, templating.DockerTemplating)
+	if err != nil {
+		return builder.BuildError(err)
+	}
+	b, err := dockerhelpers.NewBuilder(configuration)
+	if err != nil {
+		return builder.BuildError(err)
+	}
+	if _, err = b.Build(ctx); err != nil {
+		return builder.BuildError(err)
+	}
+	builder.WithDockerImages(image)
+	return builder.BuildResponse()
+}
+
+// dockerBuilderConfiguration mirrors the core helper of the same shape: it
+// resolves the Docker context root and locates the rendered Dockerfile relative
+// to it, refusing a service directory that escapes the context.
+func dockerBuilderConfiguration(
+	location string,
+	image *resources.DockerImage,
+	output io.Writer,
+	docker golanghelpers.DockerTemplating,
+) (dockerhelpers.BuilderConfiguration, error) {
+	contextRoot := docker.ContextRoot
+	if contextRoot == "" {
+		contextRoot = location
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(contextRoot)
+	if err != nil {
+		return dockerhelpers.BuilderConfiguration{}, fmt.Errorf("resolve Docker context root: %w", err)
+	}
+	resolvedLocation, err := filepath.EvalSymlinks(location)
+	if err != nil {
+		return dockerhelpers.BuilderConfiguration{}, fmt.Errorf("resolve service directory: %w", err)
+	}
+	relative, err := filepath.Rel(resolvedRoot, resolvedLocation)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return dockerhelpers.BuilderConfiguration{}, fmt.Errorf(
+			"service directory %q is outside Docker context root %q",
+			resolvedLocation,
+			resolvedRoot,
+		)
+	}
+	return dockerhelpers.BuilderConfiguration{
+		Root:        resolvedRoot,
+		Dockerfile:  filepath.ToSlash(filepath.Join(relative, "builder", "Dockerfile")),
+		Ignorefile:  filepath.ToSlash(filepath.Join(relative, "builder", "dockerignore")),
+		Destination: image,
+		Output:      output,
+	}, nil
+}
+
+// unsafeAssetChars are byte values that must not appear in a runtime asset
+// path. Whitespace would make the generated `COPY <src> <dest>` tokenize into
+// multiple sources; the glob metacharacters would make Docker expand the source
+// (and leave the destination literal). Both yield a wrong or failing build, so
+// only literal, whitespace-free paths are accepted.
+const unsafeAssetChars = " \t\r\n\x00\\*?[]"
+
+// validateRuntimeAssetPath rejects a declared runtime asset path that is not a
+// clean, local path — absolute, escaping via "..", the service root itself, or
+// carrying a character that would corrupt the generated COPY instruction.
+func validateRuntimeAssetPath(asset string) error {
+	if !filepath.IsLocal(asset) || filepath.Clean(asset) == "." || strings.ContainsAny(asset, unsafeAssetChars) {
+		return fmt.Errorf("runtime asset %q must be a literal path below the service root", asset)
+	}
+	return nil
+}
+
+// runtimeAssets validates the service's declared runtime asset paths and maps
+// each to its path within the Docker build context. contextPrefix is the
+// service directory relative to the build-context root: empty when the service
+// is the context, or the service-relative path in a workspace build whose
+// context is the workspace root. The template reproduces each returned path at
+// the same location under /app.
+func runtimeAssets(settings *Settings, contextPrefix string) ([]string, error) {
+	if len(settings.RuntimeAssets) == 0 {
+		return nil, nil
+	}
+	assets := make([]string, 0, len(settings.RuntimeAssets))
+	for _, asset := range settings.RuntimeAssets {
+		if err := validateRuntimeAssetPath(asset); err != nil {
+			return nil, err
+		}
+		source := filepath.ToSlash(filepath.Clean(asset))
+		if contextPrefix != "" {
+			source = filepath.ToSlash(filepath.Join(contextPrefix, source))
+		}
+		assets = append(assets, source)
+	}
+	return assets, nil
 }
 
 func goDockerTemplating(
 	settings *Settings,
 	workspaceRoot,
 	serviceRoot string,
-) (func(*golanghelpers.DockerTemplating), error) {
+) (func(*golanghelpers.DockerTemplating), []string, error) {
 	sourceDir := settings.GoSourceDir()
 	moduleRoot, buildTarget := golanghelpers.SplitSourceDir(sourceDir)
 	if !settings.WithWorkspace {
+		assets, err := runtimeAssets(settings, "")
+		if err != nil {
+			return nil, nil, err
+		}
 		return func(d *golanghelpers.DockerTemplating) {
 			d.SourceDir = sourceDir
 			d.ModuleRoot = moduleRoot
 			d.BuildTarget = buildTarget
 			d.WithCGO = settings.WithCGO
-		}, nil
+		}, assets, nil
 	}
 	// A workspace may expose a module through a symlink: the canonical
 	// saas-starter checkout keeps its module at module/ and symlinks
@@ -601,7 +756,11 @@ func goDockerTemplating(
 	}
 	relativeService, err := filepath.Rel(resolvedWorkspace, resolvedService)
 	if err != nil || relativeService == ".." || strings.HasPrefix(relativeService, ".."+string(filepath.Separator)) {
-		return nil, fmt.Errorf("service directory %q is outside workspace %q", serviceRoot, workspaceRoot)
+		return nil, nil, fmt.Errorf("service directory %q is outside workspace %q", serviceRoot, workspaceRoot)
+	}
+	assets, err := runtimeAssets(settings, relativeService)
+	if err != nil {
+		return nil, nil, err
 	}
 	return func(d *golanghelpers.DockerTemplating) {
 		d.SourceDir = filepath.ToSlash(filepath.Join(relativeService, sourceDir))
@@ -610,7 +769,7 @@ func goDockerTemplating(
 		d.ContextRoot = workspaceRoot
 		d.Workspace = true
 		d.WithCGO = settings.WithCGO
-	}, nil
+	}, assets, nil
 }
 
 // Upgrade bumps Go module dependencies (go get -u=patch by default,

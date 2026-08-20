@@ -24,7 +24,7 @@ func TestGoDockerTemplatingResolvesSymlinkedModuleToRealPath(t *testing.T) {
 	settings.WithWorkspace = true
 
 	symlinkService := filepath.Join(workspace, "modules", "saas-starter", "services", "accounts")
-	configure, err := goDockerTemplating(settings, workspace, symlinkService)
+	configure, _, err := goDockerTemplating(settings, workspace, symlinkService)
 	require.NoError(t, err)
 	var docker golanghelpers.DockerTemplating
 	configure(&docker)
@@ -42,7 +42,7 @@ func TestGoDockerTemplatingUsesWorkspaceForLocalModuleReplacements(t *testing.T)
 	settings.WithWorkspace = true
 	settings.WithCGO = true
 
-	configure, err := goDockerTemplating(settings, workspace, service)
+	configure, _, err := goDockerTemplating(settings, workspace, service)
 	require.NoError(t, err)
 	var docker golanghelpers.DockerTemplating
 	configure(&docker)
@@ -58,7 +58,7 @@ func TestGoDockerTemplatingPreservesStandaloneServiceContext(t *testing.T) {
 	settings := &Settings{}
 	settings.SourceDir = "code/cmd/server"
 
-	configure, err := goDockerTemplating(settings, "/workspace", "/workspace/modules/users/services/accounts")
+	configure, _, err := goDockerTemplating(settings, "/workspace", "/workspace/modules/users/services/accounts")
 	require.NoError(t, err)
 	var docker golanghelpers.DockerTemplating
 	configure(&docker)
@@ -68,4 +68,50 @@ func TestGoDockerTemplatingPreservesStandaloneServiceContext(t *testing.T) {
 	require.Equal(t, "code", docker.ModuleRoot)
 	require.Equal(t, "./cmd/server", docker.BuildTarget)
 	require.False(t, docker.WithCGO)
+}
+
+func TestGoDockerTemplatingCollectsStandaloneRuntimeAssets(t *testing.T) {
+	settings := &Settings{}
+	settings.SourceDir = "code"
+	settings.RuntimeAssets = []string{"routing", "config/prod.yaml"}
+
+	_, assets, err := goDockerTemplating(settings, "/workspace", "/workspace/services/accounts")
+	require.NoError(t, err)
+
+	// Standalone service is itself the build context, so the context paths match
+	// the declared, service-relative paths.
+	require.Equal(t, []string{"routing", "config/prod.yaml"}, assets)
+}
+
+func TestGoDockerTemplatingPrefixesWorkspaceRuntimeAssets(t *testing.T) {
+	workspace := t.TempDir()
+	service := filepath.Join(workspace, "modules", "users", "services", "accounts")
+	settings := &Settings{}
+	settings.SourceDir = "code"
+	settings.WithWorkspace = true
+	settings.RuntimeAssets = []string{"routing"}
+
+	_, assets, err := goDockerTemplating(settings, workspace, service)
+	require.NoError(t, err)
+
+	// Workspace build context is the workspace root, so the context path is
+	// prefixed with the service-relative path. The template reproduces it at the
+	// same path under /app, keeping it a sibling of the module dir.
+	require.Equal(t, []string{"modules/users/services/accounts/routing"}, assets)
+}
+
+func TestGoDockerTemplatingRejectsInvalidRuntimeAsset(t *testing.T) {
+	// Traversal/absolute paths escape the context; whitespace and glob
+	// metacharacters would corrupt the generated `COPY <src> <dest>` (extra
+	// tokens or source globbing), so all are rejected before templating.
+	for _, asset := range []string{"../secrets", "/etc/passwd", ".", "", "my config", "tab\ther", "conf*", "a[b]"} {
+		t.Run(asset, func(t *testing.T) {
+			settings := &Settings{}
+			settings.SourceDir = "code"
+			settings.RuntimeAssets = []string{asset}
+
+			_, _, err := goDockerTemplating(settings, "/workspace", "/workspace/services/accounts")
+			require.Error(t, err)
+		})
+	}
 }
