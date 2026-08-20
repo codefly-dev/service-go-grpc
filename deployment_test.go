@@ -12,7 +12,7 @@ import (
 )
 
 func TestDeploymentTemplates(t *testing.T) {
-	agenttesting.AssertKustomizeTemplates(t, deploymentFS, nil)
+	agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{})
 }
 
 // TestDeploymentTemplatesHaveNoOrphans catches source-level orphans: any file
@@ -54,7 +54,7 @@ func TestDeploymentTemplatesHaveNoOrphans(t *testing.T) {
 // that would slip past the source-level guard above (e.g. adding a base
 // role.yaml.tmpl without the matching `- role.yaml` entry).
 func TestDeploymentManifestsAreReferenced(t *testing.T) {
-	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, nil)
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{})
 	// The helper renders the overlay under its environment name ("test").
 	assertManifestsReferenced(t, filepath.Join(dir, "base"))
 	assertManifestsReferenced(t, filepath.Join(dir, "overlays", "test"))
@@ -109,7 +109,7 @@ func TestDeploymentServiceAccountRendering(t *testing.T) {
 		Annotations: map[string]string{"azure.workload.identity/client-id": "00000000-0000-0000-0000-000000000000"},
 		Labels:      map[string]string{"azure.workload.identity/use": "true"},
 	}
-	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, spec)
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{ServiceAccount: spec})
 
 	deployment, err := os.ReadFile(filepath.Join(dir, "base", "deployment.yaml"))
 	if err != nil {
@@ -140,12 +140,13 @@ func TestDeploymentServiceAccountRendering(t *testing.T) {
 }
 
 func TestDeploymentWithoutServiceAccountRendersNoSA(t *testing.T) {
-	// Production passes a typed-nil *ServiceAccountSpec (s.GoGrpc.Settings.
-	// ServiceAccount when unset), not an untyped nil — cover both so a future
+	// Production passes DeploymentParameters whose ServiceAccount is a typed-nil
+	// *ServiceAccountSpec (s.GoGrpc.Settings.ServiceAccount when unset). Cover
+	// both the zero-value parameters and an explicit typed-nil field so a future
 	// guard change can't silently regress the default path.
 	for name, params := range map[string]any{
-		"untyped nil": nil,
-		"typed nil":   (*ServiceAccountSpec)(nil),
+		"zero parameters":           DeploymentParameters{},
+		"typed-nil service account": DeploymentParameters{ServiceAccount: (*ServiceAccountSpec)(nil)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, params)
@@ -237,5 +238,62 @@ func TestDeploymentProbesRequireOnlyTheDeclaredListener(t *testing.T) {
 	}
 	if count := strings.Count(source, "tcpSocket:"); count != 3 {
 		t.Fatalf("transport probes = %d, want startup, readiness, and liveness", count)
+	}
+	// grpc is the only listener every service serves; http (grpc-gateway) and
+	// connect bind only when those endpoints are enabled. Probing http would
+	// restart-loop any grpc-only service, so every probe must target grpc.
+	if count := strings.Count(source, "port: grpc"); count != 3 {
+		t.Fatalf("probes targeting the grpc listener = %d, want all three (startup, readiness, liveness)", count)
+	}
+	if strings.Contains(source, "port: http") {
+		t.Fatal("probes must not target the http listener: grpc-only services never bind it")
+	}
+}
+
+// TestDeploymentPortsMatchDeclaredEndpoints pins the container/Service port set
+// to the listeners the process actually binds: grpc always, http only with the
+// REST endpoint, connect only with the Connect endpoint. A port advertised for
+// an unserved listener is the #78 failure — a Service routing to a dead port
+// and, when probed, a pod that restart-loops forever.
+func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
+	type portCheck struct {
+		token   string
+		wantFor func(DeploymentParameters) bool
+	}
+	// Substrings unique to each listener's port block across deployment.yaml
+	// (containerPort) and service.yaml (Service port).
+	checks := []portCheck{
+		{"containerPort: 9090", func(DeploymentParameters) bool { return true }},
+		{"name: grpc-port", func(DeploymentParameters) bool { return true }},
+		{"containerPort: 8080", func(p DeploymentParameters) bool { return p.RestEndpoint }},
+		{"name: http-port", func(p DeploymentParameters) bool { return p.RestEndpoint }},
+		{"containerPort: 8081", func(p DeploymentParameters) bool { return p.ConnectEndpoint }},
+		{"name: connect-port", func(p DeploymentParameters) bool { return p.ConnectEndpoint }},
+	}
+	cases := map[string]DeploymentParameters{
+		"grpc only":      {},
+		"grpc + rest":    {RestEndpoint: true},
+		"grpc + connect": {ConnectEndpoint: true},
+		"all":            {RestEndpoint: true, ConnectEndpoint: true},
+	}
+	for name, params := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, params)
+			deployment, err := os.ReadFile(filepath.Join(dir, "base", "deployment.yaml"))
+			if err != nil {
+				t.Fatalf("read deployment: %v", err)
+			}
+			service, err := os.ReadFile(filepath.Join(dir, "base", "service.yaml"))
+			if err != nil {
+				t.Fatalf("read service: %v", err)
+			}
+			rendered := string(deployment) + string(service)
+			for _, check := range checks {
+				got := strings.Contains(rendered, check.token)
+				if want := check.wantFor(params); got != want {
+					t.Errorf("port token %q present=%v, want %v\n%s", check.token, got, want, rendered)
+				}
+			}
+		})
 	}
 }

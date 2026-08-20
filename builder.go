@@ -789,10 +789,24 @@ func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*
 	return s.Base.Builder.UpgradeResponse(res.Changes, res.LockfileDiff)
 }
 
+// DeploymentParameters carries the go-grpc-specific values the deployment
+// templates consume through .Deployment.Parameters: the optional workload
+// ServiceAccount plus which optional listeners the service serves. The http
+// (grpc-gateway) and connect listeners bind only when their endpoint is
+// enabled, so the templates emit each container/service port and probe only
+// for a port the process actually binds — a grpc-only service must not
+// advertise http, and a connect service must advertise its port.
+type DeploymentParameters struct {
+	ServiceAccount  *ServiceAccountSpec
+	RestEndpoint    bool
+	ConnectEndpoint bool
+}
+
 // Deploy applies the k8s manifests in templates/deployment. It mirrors
-// golanghelpers.DeployGoKubernetes but threads the service-account spec into
-// the templates so pods can run under an annotated, workload-identity SA
-// rather than the namespace default.
+// golanghelpers.DeployGoKubernetes but threads the service-account spec and the
+// service's declared listeners into the templates so pods can run under an
+// annotated, workload-identity SA rather than the namespace default and so the
+// manifest advertises exactly the ports the service serves.
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
@@ -805,7 +819,11 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		EnvironmentVariables: s.EnvironmentVariables,
 		Templates:            deploymentFS,
 		Inputs:               services.ApplicationDeploymentInputs(),
-		Parameters:           s.GoGrpc.Settings.ServiceAccount,
+		Parameters: DeploymentParameters{
+			ServiceAccount:  s.GoGrpc.Settings.ServiceAccount,
+			RestEndpoint:    s.GoGrpc.Settings.RestEndpoint,
+			ConnectEndpoint: s.GoGrpc.Settings.ConnectEndpoint,
+		},
 	})
 }
 

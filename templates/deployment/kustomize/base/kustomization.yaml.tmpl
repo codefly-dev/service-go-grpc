@@ -5,7 +5,7 @@ resources:
 {{- if not .Restricted }}
   - namespace.yaml
 {{- end }}
-{{- with .Deployment.Parameters }}{{- if .Name }}
+{{- with .Deployment.Parameters.ServiceAccount }}{{- if .Name }}
   - serviceaccount.yaml
 {{- end }}{{- end }}
   - deployment.yaml
