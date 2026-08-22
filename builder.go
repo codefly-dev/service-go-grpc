@@ -621,6 +621,21 @@ func buildGoDocker(
 		opt(&templating.DockerTemplating)
 	}
 
+	// When the caller owns the docker build it sends output_directory: the agent
+	// renders its builder/ tree there and returns a reproducible recipe the CLI
+	// runs docker buildx from, so the image is a durable, multi-arch artifact a
+	// consumer can rebuild without this agent's toolchain. A recipe's build
+	// context is the service directory, which the Dockerfile's COPY paths are
+	// written against; a workspace build needs the workspace root as its context
+	// (local module replacements live outside the service), which the recipe
+	// contract cannot express, so it keeps the in-process build.
+	if outputDir := req.GetOutputDirectory(); outputDir != "" && templating.ContextRoot == "" {
+		if err = builder.Templates(ctx, templating, services.WithBuilder(builderFS).WithDestination("%s", outputDir)); err != nil {
+			return builder.BuildError(err)
+		}
+		return emitBuildPlan(builder, outputDir, image)
+	}
+
 	_ = shared.DeleteFile(ctx, location+"/builder/Dockerfile")
 
 	if err = builder.Templates(ctx, templating, services.WithBuilder(builderFS)); err != nil {
@@ -640,6 +655,37 @@ func buildGoDocker(
 	}
 	builder.WithDockerImages(image)
 	return builder.BuildResponse()
+}
+
+// emitBuildPlan records the rendered builder/ directory as a reproducible Docker
+// build recipe instead of building an image in-process. The caller (the CLI)
+// owns running docker buildx from the emitted plan.
+func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *resources.DockerImage) (*builderv0.BuildResponse, error) {
+	plan, err := recipeBuildPlan(outputDir, image)
+	if err != nil {
+		return builder.BuildError(err)
+	}
+	builder.WithBuildPlan(plan)
+	return builder.BuildResponse()
+}
+
+// recipeBuildPlan inventories the rendered builder/ tree at outputDir and returns
+// a single-image build recipe for it. Dockerfile and dockerignore are named
+// relative to outputDir (the caller's builder/ tree); the context is the service
+// directory ("."), which the Dockerfile's COPY paths are written against. The
+// CLI builds the recipe for both linux/amd64 and linux/arm64 and pushes a
+// manifest list. The image reference matches what the in-process path records
+// via WithDockerImages, so the CLI names the same image either way.
+func recipeBuildPlan(outputDir string, image *resources.DockerImage) (*builderv0.DockerBuildPlan, error) {
+	recipe := &builderv0.DockerBuildRecipe{
+		Name:         "app",
+		Dockerfile:   "Dockerfile",
+		Context:      ".",
+		Dockerignore: "dockerignore",
+		Image:        image.FullName(),
+		Platforms:    []string{"linux/amd64", "linux/arm64"},
+	}
+	return services.BuildDockerBuildPlan(outputDir, []*builderv0.DockerBuildRecipe{recipe})
 }
 
 // dockerBuilderConfiguration mirrors the core helper of the same shape: it
