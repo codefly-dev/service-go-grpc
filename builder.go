@@ -621,16 +621,15 @@ func buildGoDocker(
 		opt(&templating.DockerTemplating)
 	}
 
-	// When the caller owns the docker build it sends output_directory: the agent
-	// renders its builder/ tree there and returns a reproducible recipe the CLI
-	// runs docker buildx from, so the image is a durable, multi-arch artifact a
-	// consumer can rebuild without this agent's toolchain. A recipe's build
-	// context is the service directory, which the Dockerfile's COPY paths are
-	// written against; a workspace build needs the workspace root as its context
-	// (local module replacements live outside the service), which the recipe
-	// contract cannot express, so it keeps the in-process build.
-	if outputDir := req.GetOutputDirectory(); outputDir != "" && templating.ContextRoot == "" {
-		if err = builder.Templates(ctx, templating, services.WithBuilder(builderFS).WithDestination("%s", outputDir)); err != nil {
+	// When the caller owns the docker build it sends output_directory: render the
+	// builder/ tree there and hand back a reproducible recipe the CLI runs docker
+	// buildx from, so the image is a durable, multi-arch artifact a consumer can
+	// rebuild without this agent's toolchain. OverrideAll makes a rebuild replace
+	// the previously emitted recipe rather than depend on the templater's default,
+	// so the emitted plan always reflects the current render.
+	if outputDir := req.GetOutputDirectory(); shouldEmitBuildRecipe(outputDir, templating.ContextRoot) {
+		if err = builder.Templates(ctx, templating,
+			services.WithBuilder(builderFS).WithDestination("%s", outputDir).WithOverride(shared.OverrideAll())); err != nil {
 			return builder.BuildError(err)
 		}
 		return emitBuildPlan(builder, outputDir, image)
@@ -655,6 +654,16 @@ func buildGoDocker(
 	}
 	builder.WithDockerImages(image)
 	return builder.BuildResponse()
+}
+
+// shouldEmitBuildRecipe reports whether Build emits a recipe for the caller to
+// build instead of building the image in-process. It requires a caller-owned
+// output directory and a service-directory build context: a workspace build sets
+// a context root (the workspace, where local module replacements live outside the
+// service), which the recipe contract — whose context cannot escape the service
+// directory — cannot express, so such a build stays in-process.
+func shouldEmitBuildRecipe(outputDir, contextRoot string) bool {
+	return outputDir != "" && contextRoot == ""
 }
 
 // emitBuildPlan records the rendered builder/ directory as a reproducible Docker

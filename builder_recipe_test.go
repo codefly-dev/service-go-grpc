@@ -128,4 +128,42 @@ func TestBuildEmitsRecipePlanWhenCallerOwnsBuild(t *testing.T) {
 	require.Equal(t, ".", recipe.GetContext())
 	require.Equal(t, "registry.example.com/mod/svc:0.0.0", recipe.GetImage())
 	require.Equal(t, []string{"linux/amd64", "linux/arm64"}, recipe.GetPlatforms())
+
+	// A rebuild must overwrite the previously emitted recipe. Corrupt the tree
+	// and rebuild: a stale Dockerfile would leave the plan referencing content the
+	// current render never produced, so the emitted tree must not keep the sentinel.
+	require.NoError(t, os.WriteFile(filepath.Join(outputDir, "Dockerfile"), []byte("FROM stale:sentinel\n"), 0o644))
+	resp, err = builder.Build(ctx, &builderv0.BuildRequest{
+		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
+		}},
+		OutputDirectory: outputDir,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetResult().GetDockerBuildPlan())
+	require.NoError(t, services.VerifyDockerBuildPlan(outputDir, resp.GetResult().GetDockerBuildPlan()))
+	rebuilt, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
+	require.NoError(t, err)
+	require.NotContains(t, string(rebuilt), "stale:sentinel")
+}
+
+func TestShouldEmitBuildRecipe(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name        string
+		outputDir   string
+		contextRoot string
+		want        bool
+	}{
+		{"caller owns build, service-directory context", "/out", "", true},
+		{"no output directory keeps the in-process build", "", "", false},
+		{"workspace context cannot be expressed as a recipe", "/out", "/workspace", false},
+		{"no output directory, workspace context", "", "/workspace", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, shouldEmitBuildRecipe(tc.outputDir, tc.contextRoot))
+		})
+	}
 }
