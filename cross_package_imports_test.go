@@ -28,7 +28,7 @@ func stageGeneratedTree(t *testing.T) (string, string) {
 func writeGoMod(t *testing.T, stage, modulePath string) string {
 	t.Helper()
 	goMod := filepath.Join(stage, "code", "go.mod")
-	writeTestFile(t, goMod, "module "+modulePath+"\n\ngo 1.26\n")
+	writeTestFile(t, goMod, "module "+modulePath+"\n\ngo 1.27\n")
 	return goMod
 }
 

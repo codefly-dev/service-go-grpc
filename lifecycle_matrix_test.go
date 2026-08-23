@@ -28,9 +28,9 @@ func TestGoGrpcLifecycle_Matrix(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	// golang:1.26-alpine has the toolchain + /bin/sh, ~370MB. Matches
+	// golang:1.27-alpine has the toolchain + /bin/sh, ~370MB. Matches
 	// what the agent uses for container mode at runtime.
-	img := &resources.DockerImage{Name: "golang", Tag: "1.26-alpine"}
+	img := &resources.DockerImage{Name: "golang", Tag: "1.27-alpine"}
 
 	testmatrix.ForEachEnvironment(t, dir,
 		func(t *testing.T, env runners.RunnerEnvironment) {
