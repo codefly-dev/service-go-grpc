@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"go/format"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,6 +100,31 @@ func TestFactoryDependencyLocksMatchBase(t *testing.T) {
 	agentCore := dependencyLine(agentMod, "github.com/codefly-dev/core")
 	if generatedCore == "" || generatedCore != agentCore {
 		t.Fatalf("generated core dependency %q does not match agent dependency %q", generatedCore, agentCore)
+	}
+}
+
+// TestFactoryGrpcAdapterMatchesBase binds the generated gRPC bootstrap in base/
+// to its factory template. Only go.mod/go.sum were previously drift-checked, so
+// changing the reflection gate (or any other logic) in one copy but not the
+// other would slip through CI as long as it still compiled. This makes such a
+// divergence fail the build instead.
+func TestFactoryGrpcAdapterMatchesBase(t *testing.T) {
+	baseGrpc, err := os.ReadFile("base/code/pkg/adapters/grpc_gen.go")
+	if err != nil {
+		t.Fatalf("read base gRPC adapter: %v", err)
+	}
+	templateGrpc, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/grpc_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read factory gRPC adapter template: %v", err)
+	}
+	rendered := bytes.ReplaceAll(templateGrpc, []byte("{{ .Service.Name.Title }}"), []byte("Web"))
+	rendered = bytes.ReplaceAll(rendered, []byte("{{ .Service.Name.DNSCase }}"), []byte("codefly-base"))
+	formatted, err := format.Source(rendered)
+	if err != nil {
+		t.Fatalf("format rendered gRPC adapter: %v", err)
+	}
+	if !bytes.Equal(baseGrpc, formatted) {
+		t.Fatal("factory gRPC adapter template drifted from base/code/pkg/adapters/grpc_gen.go")
 	}
 }
 
