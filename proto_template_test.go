@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -274,6 +275,26 @@ func TestGeneratedServiceRegistersHealthChecks(t *testing.T) {
 		if !strings.Contains(string(restTemplate), want) {
 			t.Errorf("REST adapter template does not contain %q", want)
 		}
+	}
+}
+
+// TestGeneratedServiceGatesReflectionBehindIsLocal keeps gRPC server
+// reflection — which enumerates every registered service and message for any
+// unauthenticated caller — a local-only discovery aid, so deployed services do
+// not disclose their API shape as needless attack surface.
+func TestGeneratedServiceGatesReflectionBehindIsLocal(t *testing.T) {
+	grpcTemplate, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/grpc_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read gRPC adapter template: %v", err)
+	}
+	content := string(grpcTemplate)
+
+	gated := regexp.MustCompile(`if codefly\.IsLocal\(\) \{\s*reflection\.Register\(grpcServer\)\s*\}`)
+	if !gated.MatchString(content) {
+		t.Error("gRPC adapter template does not gate reflection registration behind codefly.IsLocal()")
+	}
+	if strings.Count(content, "reflection.Register(grpcServer)") != 1 {
+		t.Error("gRPC adapter template registers reflection outside the codefly.IsLocal() gate")
 	}
 }
 

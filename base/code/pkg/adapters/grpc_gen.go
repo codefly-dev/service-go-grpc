@@ -99,7 +99,9 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 		service = c.Service
 	}
 	gen.RegisterWebServiceServer(grpcServer, service)
-	reflection.Register(grpcServer)
+	if codefly.IsLocal() {
+		reflection.Register(grpcServer)
+	}
 	return &s, nil
 }
 
