@@ -200,6 +200,35 @@ func TestSettingsValidateServiceAccount(t *testing.T) {
 	}
 }
 
+func TestSettingsValidateCors(t *testing.T) {
+	tests := []struct {
+		name    string
+		cors    CorsSpec
+		wantErr bool
+	}{
+		{name: "empty", cors: CorsSpec{}, wantErr: false},
+		{name: "allowlist", cors: CorsSpec{AllowedOrigins: []string{"https://app.example.com"}}, wantErr: false},
+		{name: "allow all", cors: CorsSpec{AllowAll: true}, wantErr: false},
+		{name: "wildcard origin", cors: CorsSpec{AllowedOrigins: []string{"*"}}, wantErr: true},
+		{
+			name:    "allow all with allowlist",
+			cors:    CorsSpec{AllowAll: true, AllowedOrigins: []string{"https://app.example.com"}},
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&Settings{Cors: tc.cors}).Validate()
+			if tc.wantErr && err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}
+
 func TestSettingsValidateRuntimeAssets(t *testing.T) {
 	tests := []struct {
 		name    string

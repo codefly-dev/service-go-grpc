@@ -1,7 +1,6 @@
 package adapters
 
 import (
-	"fmt"
 	"github.com/rs/cors"
 )
 
@@ -12,10 +11,8 @@ import (
 ----------------------------------------------------------------- */
 
 func Cors() *cors.Cors {
-	fmt.Println("setting up cors: TODO")
 	return cors.New(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
-		AllowedHeaders: []string{"*"},
+		AllowOriginFunc: func(string) bool { return false },
+		AllowedMethods:  []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
 	})
 }
