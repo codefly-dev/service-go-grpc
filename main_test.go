@@ -145,7 +145,13 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 			RaceConditionDetectionRun: confirm(false),
 			RestEndpointSetting:       confirm(true),
 			ConnectEndpointSetting:    confirm(true),
+			McpEndpointSetting:        confirm(true),
 		}
+		// The allowlist is a YAML-only field (no confirm question), so set it
+		// directly. This makes the generated service resolve a real MCP tool at
+		// startup, exercising the registry lookup in the built binary. The
+		// generated proto service is api.<Title>Service (see api.proto.tmpl).
+		builder.GoGrpc.Settings.McpMethods = []string{fmt.Sprintf("api.%sService/Version", shared.ToTitle(identity.Name))}
 	}
 
 	// Proto generation runs the shared proto companion, whose Docker container

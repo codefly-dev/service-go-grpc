@@ -10,7 +10,37 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"text/template"
 )
+
+// renderFactoryTemplate executes a factory template the way the generator does,
+// with the base fixture's identity ("codefly-base" / "Web") and the given MCP
+// configuration. It lets drift tests compare a real render — including the
+// conditional MCP blocks — against the checked-in base fixture.
+func renderFactoryTemplate(t *testing.T, content []byte, mcpEndpoint bool, mcpMethods []string) []byte {
+	t.Helper()
+	type name struct{ DNSCase, Title, CamelCase string }
+	ctx := struct {
+		Service  struct{ Name name }
+		Settings struct {
+			McpEndpoint bool
+			McpMethods  []string
+		}
+	}{}
+	ctx.Service.Name = name{DNSCase: "codefly-base", Title: "Web", CamelCase: "web"}
+	ctx.Settings.McpEndpoint = mcpEndpoint
+	ctx.Settings.McpMethods = mcpMethods
+
+	tmpl, err := template.New("factory").Parse(string(content))
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctx); err != nil {
+		t.Fatalf("execute template: %v", err)
+	}
+	return buf.Bytes()
+}
 
 // TestProtoTemplatePinsGoPackage prevents a versioned protobuf namespace from
 // silently changing the Go package imported by generated service adapters.
@@ -75,9 +105,16 @@ func TestFactoryDependencyLocksMatchBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read factory go.mod template: %v", err)
 	}
-	renderedMod := bytes.ReplaceAll(templateMod, []byte("{{ .Service.Name.DNSCase }}"), []byte("codefly-base"))
+	// base is the MCP-enabled fixture, so the enabled render must match it
+	// byte-for-byte. The disabled render must omit every MCP dependency so that
+	// MCP-off services carry none of the MCP SDK tree.
+	renderedMod := renderFactoryTemplate(t, templateMod, true, nil)
 	if !bytes.Equal(baseMod, renderedMod) {
-		t.Fatal("factory go.mod template drifted from base/code/go.mod")
+		t.Fatalf("factory go.mod template (mcp on) drifted from base/code/go.mod\n--- base ---\n%s\n--- rendered ---\n%s", baseMod, renderedMod)
+	}
+	disabledMod := renderFactoryTemplate(t, templateMod, false, nil)
+	if bytes.Contains(disabledMod, []byte("modelcontextprotocol")) {
+		t.Fatal("MCP-disabled go.mod still requires the MCP SDK")
 	}
 
 	baseSum, err := os.ReadFile("base/code/go.sum")
@@ -88,8 +125,15 @@ func TestFactoryDependencyLocksMatchBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read factory go.sum template: %v", err)
 	}
-	if !bytes.Equal(baseSum, templateSum) {
-		t.Fatal("factory go.sum template drifted from base/code/go.sum")
+	renderedSum := renderFactoryTemplate(t, templateSum, true, nil)
+	if !bytes.Equal(baseSum, renderedSum) {
+		t.Fatalf("factory go.sum template (mcp on) drifted from base/code/go.sum\n--- base ---\n%s\n--- rendered ---\n%s", baseSum, renderedSum)
+	}
+	disabledSum := renderFactoryTemplate(t, templateSum, false, nil)
+	for _, mod := range []string{"modelcontextprotocol", "jsonschema-go", "uritemplate", "golang-jwt", "segmentio", "golang.org/x/oauth2"} {
+		if bytes.Contains(disabledSum, []byte(mod)) {
+			t.Fatalf("MCP-disabled go.sum still pins %q", mod)
+		}
 	}
 
 	agentMod, err := os.ReadFile("go.mod")
@@ -125,6 +169,36 @@ func TestFactoryGrpcAdapterMatchesBase(t *testing.T) {
 	}
 	if !bytes.Equal(baseGrpc, formatted) {
 		t.Fatal("factory gRPC adapter template drifted from base/code/pkg/adapters/grpc_gen.go")
+	}
+}
+
+// TestFactoryMcpAdapterMatchesBase binds the proto-derived MCP adapter in base/
+// to its factory template. The MCP adapter is always generated (the mount is
+// gated in rest_gen), so this file carries no template conditionals — only the
+// module-name substitution — and must render byte-for-byte to the base copy.
+func TestFactoryMcpAdapterMatchesBase(t *testing.T) {
+	baseMcp, err := os.ReadFile("base/code/pkg/adapters/mcp_gen.go")
+	if err != nil {
+		t.Fatalf("read base MCP adapter: %v", err)
+	}
+	templateMcp, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/mcp_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read factory MCP adapter template: %v", err)
+	}
+	// base ships the MCP-enabled adapter with a single allowlisted method.
+	rendered := renderFactoryTemplate(t, templateMcp, true, []string{"api.WebService/Version"})
+	formatted, err := format.Source(rendered)
+	if err != nil {
+		t.Fatalf("format rendered MCP adapter: %v", err)
+	}
+	if !bytes.Equal(baseMcp, formatted) {
+		t.Fatalf("factory MCP adapter template drifted from base/code/pkg/adapters/mcp_gen.go\n--- base ---\n%s\n--- rendered ---\n%s", baseMcp, formatted)
+	}
+
+	// With MCP disabled the template renders to nothing, so no file (and no MCP
+	// dependency) is emitted.
+	if disabled := renderFactoryTemplate(t, templateMcp, false, nil); strings.TrimSpace(string(disabled)) != "" {
+		t.Fatalf("MCP-disabled adapter template should render empty, got:\n%s", disabled)
 	}
 }
 
@@ -343,7 +417,7 @@ func TestGeneratedScaffoldTargetsRequireGeneratedRoot(t *testing.T) {
 	protoRoot := filepath.Join(root, "proto")
 	writeTestFile(t, filepath.Join(protoRoot, "api.proto"), "syntax = \"proto3\"; service WidgetService {}\n")
 	writeTestFile(t, filepath.Join(root, "code", "main.go"), "package main\n")
-	targets, err := generatedScaffoldTargets(root, protoRoot, "WidgetService")
+	targets, err := generatedScaffoldTargets(root, protoRoot, "WidgetService", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +426,7 @@ func TestGeneratedScaffoldTargetsRequireGeneratedRoot(t *testing.T) {
 	}
 
 	writeTestFile(t, filepath.Join(root, "code", "main.go"), "// This code is generated by the agent\npackage main\n")
-	targets, err = generatedScaffoldTargets(root, protoRoot, "WidgetService")
+	targets, err = generatedScaffoldTargets(root, protoRoot, "WidgetService", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,8 +443,20 @@ func TestGeneratedScaffoldTargetsRequireGeneratedRoot(t *testing.T) {
 		t.Fatalf("generated scaffold targets = %v, want %v", targets, want)
 	}
 
+	// With MCP enabled, mcp_gen.go joins the tracked scaffold set so its
+	// allowlist stays in sync; with MCP off it must not be tracked (it is not
+	// generated at all).
+	targets, err = generatedScaffoldTargets(root, protoRoot, "WidgetService", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMcp := append(append([]string(nil), want...), filepath.Join("code", "pkg", "adapters", "mcp_gen.go"))
+	if !reflect.DeepEqual(targets, wantMcp) {
+		t.Fatalf("generated scaffold targets (mcp) = %v, want %v", targets, wantMcp)
+	}
+
 	writeTestFile(t, filepath.Join(protoRoot, "extra.proto"), "syntax = \"proto3\"; service OtherService {}\n")
-	targets, err = generatedScaffoldTargets(root, protoRoot, "WidgetService")
+	targets, err = generatedScaffoldTargets(root, protoRoot, "WidgetService", false)
 	if err != nil {
 		t.Fatal(err)
 	}

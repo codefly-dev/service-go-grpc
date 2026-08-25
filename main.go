@@ -50,6 +50,17 @@ type Settings struct {
 
 	RestEndpoint    bool `yaml:"rest-endpoint"`
 	ConnectEndpoint bool `yaml:"connect-endpoint"`
+	// McpEndpoint mounts proto-derived MCP tools on the REST listener at /mcp.
+	// The exposed RPCs are named by McpMethods; their JSON Schemas are derived
+	// from the protobuf descriptors. It rides the REST HTTP listener, so it
+	// requires rest-endpoint. Off by default: enabling MCP widens the service's
+	// exposed surface and must be a deliberate choice.
+	McpEndpoint bool `yaml:"mcp-endpoint"`
+	// McpMethods is the explicit allowlist of unary RPCs exposed as MCP tools,
+	// each in "package.Service/Method" form (e.g. "api.WebService/Version").
+	// It is the final exposure gate: only listed methods become tools, and an
+	// empty list (the default) exposes nothing even when mcp-endpoint is on.
+	McpMethods []string `yaml:"mcp-methods"`
 	// ProtocolSourceDir locates the Buf source directory relative to the
 	// service root. The default is "proto"; nested Go modules may opt into a
 	// path such as "code/proto" without moving their public protocol tree.
@@ -140,6 +151,14 @@ func (s *Settings) Validate() error {
 			return err
 		}
 	}
+	// MCP is served on the REST HTTP listener; without it there is no listener
+	// to mount /mcp on, so the toggle would silently do nothing.
+	if s.McpEndpoint && !s.RestEndpoint {
+		return fmt.Errorf("mcp-endpoint requires rest-endpoint (MCP is mounted on the REST listener)")
+	}
+	if err := validateMcpMethods(s.McpMethods); err != nil {
+		return err
+	}
 	if err := s.ServiceAccount.Validate(); err != nil {
 		return err
 	}
@@ -167,6 +186,7 @@ const (
 	RaceConditionDetectionRun = golanghelpers.SettingRaceConditionDetectionRun
 	RestEndpointSetting       = "rest-endpoint"
 	ConnectEndpointSetting    = "connect-endpoint"
+	McpEndpointSetting        = "mcp-endpoint"
 )
 
 // Service is the go-grpc specialization. It embeds *goservice.Service to

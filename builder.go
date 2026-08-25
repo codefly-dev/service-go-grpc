@@ -153,7 +153,7 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		return s.Base.Builder.SyncError(err)
 	}
 
-	scaffoldTargets, err := generatedScaffoldTargets(s.Location, filepath.Join(s.Location, protoDir), s.Information.Service.Name.Title+"Service")
+	scaffoldTargets, err := generatedScaffoldTargets(s.Location, filepath.Join(s.Location, protoDir), s.Information.Service.Name.Title+"Service", s.GoGrpc.Settings.McpEndpoint)
 	if err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
@@ -162,6 +162,7 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		generated := services.WithFactory(factoryFS).
 			WithPathSelect(generatedScaffoldSelect()).
 			WithOverride(shared.OverrideAll()).
+			WithSkipEmptyRender().
 			WithDestination("%s", transaction.StageRoot())
 		if err := s.Templates(ctx, create, generated); err != nil {
 			return s.Base.Builder.SyncError(err)
@@ -492,7 +493,7 @@ func (generatedScaffoldSelection) Keep(name string) bool {
 	}
 }
 
-func generatedScaffoldTargets(root, protoRoot, expectedService string) ([]string, error) {
+func generatedScaffoldTargets(root, protoRoot, expectedService string, mcpEndpoint bool) ([]string, error) {
 	mainPath := filepath.Join(root, "code", "main.go")
 	contents, err := os.ReadFile(mainPath)
 	if os.IsNotExist(err) {
@@ -511,7 +512,7 @@ func generatedScaffoldTargets(root, protoRoot, expectedService string) ([]string
 	if len(services) != 1 || services[0] != expectedService {
 		return nil, nil
 	}
-	return []string{
+	targets := []string{
 		filepath.Join("code", "main.go"),
 		filepath.Join("code", "pkg", "adapters", "connect_gen.go"),
 		filepath.Join("code", "pkg", "adapters", "cors_gen.go"),
@@ -519,7 +520,14 @@ func generatedScaffoldTargets(root, protoRoot, expectedService string) ([]string
 		filepath.Join("code", "pkg", "adapters", "rest_gen.go"),
 		filepath.Join("code", "pkg", "adapters", "server_gen.go"),
 		filepath.Join("code", "plugins", "registry_gen.go"),
-	}, nil
+	}
+	// mcp_gen.go is only generated when MCP is enabled; tracking it as a sync
+	// target keeps its allowlist in step with the service configuration on
+	// every sync (it is otherwise never re-rendered after Create).
+	if mcpEndpoint {
+		targets = append(targets, filepath.Join("code", "pkg", "adapters", "mcp_gen.go"))
+	}
+	return targets, nil
 }
 
 func declaredProtoServices(root string) ([]string, error) {
@@ -752,6 +760,31 @@ func validateRuntimeAssetPath(asset string) error {
 	return nil
 }
 
+// validateMcpMethods enforces the shape of the MCP tool allowlist so malformed
+// or duplicate selectors fail at configuration time rather than at service
+// startup. Each entry must be "package.Service/Method": a package-qualified
+// service name, a slash, and a method. Existence against the actual proto is
+// checked at runtime against the full compiled descriptor registry, because a
+// build-time check limited to the primary proto file would wrongly reject a
+// valid selector naming a service declared in another proto file.
+func validateMcpMethods(methods []string) error {
+	seen := make(map[string]bool, len(methods))
+	for _, selector := range methods {
+		service, method, ok := strings.Cut(selector, "/")
+		if !ok || service == "" || method == "" {
+			return fmt.Errorf("mcp method selector %q must be \"package.Service/Method\"", selector)
+		}
+		if !strings.Contains(service, ".") {
+			return fmt.Errorf("mcp method selector %q must include the proto package (e.g. \"api.WebService/Version\")", selector)
+		}
+		if seen[selector] {
+			return fmt.Errorf("duplicate mcp method selector %q", selector)
+		}
+		seen[selector] = true
+	}
+	return nil
+}
+
 // runtimeAssets validates the service's declared runtime asset paths and maps
 // each to its path within the Docker build context. contextPrefix is the
 // service directory relative to the build-context root: empty when the service
@@ -922,7 +955,7 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 	return nil
 }
 
-// Options returns the five-question set shown during `codefly add service`.
+// Options returns the six-question set shown during `codefly add service`.
 func (s *Builder) Options() []*agentv0.Question {
 	return []*agentv0.Question{
 		communicate.NewConfirm(&agentv0.Message{Name: HotReload, Message: "Code hot-reload (Recommended)?", Description: "codefly can restart your service when code changes are detected 🔎"}, true),
@@ -930,6 +963,7 @@ func (s *Builder) Options() []*agentv0.Question {
 		communicate.NewConfirm(&agentv0.Message{Name: RaceConditionDetectionRun, Message: "Start with race condition detection?", Description: "Build the go binary with race condition detection"}, false),
 		communicate.NewConfirm(&agentv0.Message{Name: RestEndpointSetting, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC definition -- the easiest way to do REST"}, true),
 		communicate.NewConfirm(&agentv0.Message{Name: ConnectEndpointSetting, Message: "Connect endpoint (browser-native RPC)?", Description: "Expose a ConnectRPC endpoint for type-safe browser clients — serves Connect, gRPC, and gRPC-Web on a single port"}, false),
+		communicate.NewConfirm(&agentv0.Message{Name: McpEndpointSetting, Message: "MCP tools (proto-derived)?", Description: "Expose your gRPC unary RPCs as MCP tools at /mcp on the REST listener — requires the REST endpoint"}, false),
 	}
 }
 
@@ -961,7 +995,7 @@ func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 	ignore := shared.NewIgnore("go.work*", "service.generation.codefly.yaml")
 	override := shared.OverrideException(shared.NewIgnore("*.proto"))
 
-	if err := s.Templates(ctx, create, services.WithFactory(factoryFS).WithPathSelect(ignore).WithOverride(override)); err != nil {
+	if err := s.Templates(ctx, create, services.WithFactory(factoryFS).WithPathSelect(ignore).WithOverride(override).WithSkipEmptyRender()); err != nil {
 		return s.Base.Builder.CreateError(err)
 	}
 
@@ -1022,6 +1056,9 @@ func (s *Builder) populateSettingsFromAnswers() error {
 	if s.GoGrpc.Settings.ConnectEndpoint, err = communicate.Confirm(s.answers, ConnectEndpointSetting); err != nil {
 		return err
 	}
+	if s.GoGrpc.Settings.McpEndpoint, err = communicate.Confirm(s.answers, McpEndpointSetting); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1043,10 +1080,13 @@ func (s *Builder) populateSettingsFromDefaults() error {
 	if s.GoGrpc.Settings.ConnectEndpoint, err = communicate.GetDefaultConfirm(opts, ConnectEndpointSetting); err != nil {
 		return err
 	}
+	if s.GoGrpc.Settings.McpEndpoint, err = communicate.GetDefaultConfirm(opts, McpEndpointSetting); err != nil {
+		return err
+	}
 	return nil
 }
 
-// Communicate collects answers for the five Options questions.
+// Communicate collects answers for the six Options questions.
 func (s *Builder) Communicate(stream builderv0.Builder_CommunicateServer) error {
 	asker := communicate.NewQuestionAsker(stream)
 	answers, err := asker.RunSequence(s.Options())

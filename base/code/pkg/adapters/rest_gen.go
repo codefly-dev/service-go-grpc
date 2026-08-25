@@ -101,8 +101,19 @@ func (s *RestServer) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to register health check handler: %w", err)
 	}
 
+	// Mount the proto-derived MCP tools on the same listener, forwarding tool
+	// calls to the in-process gRPC server.
+	mcpConn, err := grpc.NewClient(fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts...)
+	if err != nil {
+		return fmt.Errorf("failed to create MCP gRPC client connection: %w", err)
+	}
+	mcpHandler, err := NewMCPHandler(mcpConn)
+	if err != nil {
+		return fmt.Errorf("failed to build MCP handler: %w", err)
+	}
+
 	// Wrap your mux with the CORS handler
-	handler := c.Handler(gwMux)
+	handler := c.Handler(MCPRouter(mcpHandler, gwMux))
 
 	s.server.Handler = logRequestBody(handler)
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
