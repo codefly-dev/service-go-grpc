@@ -50,11 +50,11 @@ type Settings struct {
 
 	RestEndpoint    bool `yaml:"rest-endpoint"`
 	ConnectEndpoint bool `yaml:"connect-endpoint"`
-	// McpEndpoint mounts proto-derived MCP tools on the REST listener at /mcp.
-	// The exposed RPCs are named by McpMethods; their JSON Schemas are derived
-	// from the protobuf descriptors. It rides the REST HTTP listener, so it
-	// requires rest-endpoint. Off by default: enabling MCP widens the service's
-	// exposed surface and must be a deliberate choice.
+	// McpEndpoint exposes proto-derived MCP tools on a dedicated MCP endpoint
+	// (its own port), independent of REST. The exposed RPCs are named by
+	// McpMethods; their JSON Schemas are derived from the protobuf descriptors.
+	// Off by default: enabling MCP widens the service's exposed surface and must
+	// be a deliberate choice.
 	McpEndpoint bool `yaml:"mcp-endpoint"`
 	// McpMethods is the explicit allowlist of unary RPCs exposed as MCP tools,
 	// each in "package.Service/Method" form (e.g. "api.WebService/Version").
@@ -151,11 +151,6 @@ func (s *Settings) Validate() error {
 			return err
 		}
 	}
-	// MCP is served on the REST HTTP listener; without it there is no listener
-	// to mount /mcp on, so the toggle would silently do nothing.
-	if s.McpEndpoint && !s.RestEndpoint {
-		return fmt.Errorf("mcp-endpoint requires rest-endpoint (MCP is mounted on the REST listener)")
-	}
 	if err := validateMcpMethods(s.McpMethods); err != nil {
 		return err
 	}
@@ -201,6 +196,7 @@ type Service struct {
 	GrpcEndpoint    *basev0.Endpoint
 	RestEndpoint    *basev0.Endpoint
 	ConnectEndpoint *basev0.Endpoint
+	McpEndpoint     *basev0.Endpoint
 }
 
 // GetAgentInformation overrides generic to add HTTP/GRPC protocols and

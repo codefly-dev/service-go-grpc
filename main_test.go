@@ -48,6 +48,17 @@ func TestSetRuntimeContextNixHintUsesLocalFirst(t *testing.T) {
 	}
 }
 
+// TestSettingsValidateMcpWithoutRest proves MCP no longer rides the REST
+// listener: mcp-endpoint is valid on its own (it has a dedicated endpoint), and
+// the allowlist is still validated.
+func TestSettingsValidateMcpWithoutRest(t *testing.T) {
+	valid := &Settings{McpEndpoint: true, McpMethods: []string{"api.WebService/Version"}}
+	require.NoError(t, valid.Validate())
+
+	badMethods := &Settings{McpEndpoint: true, McpMethods: []string{"no-slash"}}
+	require.Error(t, badMethods.Validate())
+}
+
 func TestSetRuntimeContextNative(t *testing.T) {
 	ctx := context.Background()
 
@@ -189,7 +200,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 
 	expectedEndpoints := 2 // grpc + rest
 	if withConnect {
-		expectedEndpoints = 3 // grpc + rest + connect
+		expectedEndpoints = 4 // grpc + rest + connect + mcp
 	}
 	require.Equal(t, expectedEndpoints, len(runtime.Endpoints))
 
@@ -217,6 +228,9 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 
 	// Test Connect endpoint (if configured)
 	testConnectEndpoint(t, runtime, ctx, identity, networkMappings)
+
+	// Test MCP endpoint (if configured)
+	testMcpEndpoint(t, runtime, ctx, identity, networkMappings)
 
 	// Test
 	test, err := runtime.Test(ctx, &runtimev0.TestRequest{})
@@ -341,6 +355,58 @@ func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, id
 		return
 	}
 	t.Fatalf("Connect endpoint %s was not ready within %s: %v", baseURL, readinessTimeout, lastErr)
+}
+
+func testMcpEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev0.ServiceIdentity, networkMappings []*basev0.NetworkMapping) {
+	if runtime.GoGrpc.McpEndpoint == nil {
+		t.Log("no mcp endpoint configured, skipping mcp test")
+		return
+	}
+
+	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.GoGrpc.McpEndpoint, resources.NewNativeNetworkAccess())
+	require.NoError(t, err)
+
+	baseURL := instance.Address
+	if !strings.Contains(baseURL, "://") {
+		baseURL = "http://" + baseURL
+	}
+
+	client := http.Client{Timeout: 2 * time.Second}
+	const readinessTimeout = 30 * time.Second
+	const readinessPollInterval = 200 * time.Millisecond
+	deadline := time.Now().Add(readinessTimeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		// MCP rides its own Streamable HTTP listener at /mcp. A same-origin
+		// initialize proves the dedicated port is bound and serving MCP.
+		req, err := http.NewRequest(http.MethodPost, baseURL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+
+		response, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			time.Sleep(readinessPollInterval)
+			continue
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("MCP endpoint returned %s", response.Status)
+			time.Sleep(readinessPollInterval)
+			continue
+		}
+
+		// A non-/mcp path on the dedicated listener is not served.
+		other, err := client.Get(baseURL + "/version")
+		require.NoError(t, err)
+		other.Body.Close()
+		require.Equal(t, http.StatusNotFound, other.StatusCode)
+
+		t.Log("MCP endpoint working on", instance.Address)
+		return
+	}
+	t.Fatalf("MCP endpoint %s was not ready within %s: %v", baseURL, readinessTimeout, lastErr)
 }
 
 func testNoApi(t *testing.T, runtime *Runtime, ctx context.Context, networkMappings []*basev0.NetworkMapping) {

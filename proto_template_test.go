@@ -173,9 +173,9 @@ func TestFactoryGrpcAdapterMatchesBase(t *testing.T) {
 }
 
 // TestFactoryMcpAdapterMatchesBase binds the proto-derived MCP adapter in base/
-// to its factory template. The MCP adapter is always generated (the mount is
-// gated in rest_gen), so this file carries no template conditionals — only the
-// module-name substitution — and must render byte-for-byte to the base copy.
+// to its factory template. The whole file is gated behind mcp-endpoint (it runs
+// on its own dedicated port), so the enabled render must match the base copy
+// byte-for-byte while the disabled render is empty.
 func TestFactoryMcpAdapterMatchesBase(t *testing.T) {
 	baseMcp, err := os.ReadFile("base/code/pkg/adapters/mcp_gen.go")
 	if err != nil {
@@ -335,6 +335,76 @@ func TestGeneratedServiceOmitsRESTImplementationWhenDisabled(t *testing.T) {
 			if !strings.Contains(string(httpTemplate), want) {
 				t.Errorf("%s does not contain %q", templatePath, want)
 			}
+		}
+	}
+}
+
+// TestGeneratedServiceServesMcpOnDedicatedPort pins the decoupling of MCP from
+// the REST listener: MCP is discovered from its own codefly endpoint, wired as a
+// standalone http.Server gated on mcp-endpoint, and is no longer mounted on the
+// REST gateway.
+func TestGeneratedServiceServesMcpOnDedicatedPort(t *testing.T) {
+	mainTemplate, err := factoryFS.ReadFile("templates/factory/code/main.go.tmpl")
+	if err != nil {
+		t.Fatalf("read main template: %v", err)
+	}
+	for _, want := range []string{
+		"if .Settings.McpEndpoint",
+		"API(standards.MCP).NetworkInstance()",
+		"config.EndpointMcpPort = shared.Pointer(net.Port)",
+	} {
+		if !strings.Contains(string(mainTemplate), want) {
+			t.Errorf("main template does not read the MCP network instance: missing %q", want)
+		}
+	}
+
+	grpcTemplate, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/grpc_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read gRPC adapter template: %v", err)
+	}
+	if !strings.Contains(string(grpcTemplate), "EndpointMcpPort     *uint16") {
+		t.Error("Configuration does not carry a dedicated MCP port")
+	}
+
+	serverTemplate, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/server_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read server adapter template: %v", err)
+	}
+	for _, want := range []string{
+		"if .Settings.McpEndpoint",
+		"mcp     *MCPServer",
+		"NewMCPServer(config)",
+		"server.mcp.Run(ctx)",
+		"server.mcp.Shutdown(ctx)",
+	} {
+		if !strings.Contains(string(serverTemplate), want) {
+			t.Errorf("server adapter does not wire the dedicated MCP server: missing %q", want)
+		}
+	}
+
+	mcpTemplate, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/mcp_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read MCP adapter template: %v", err)
+	}
+	for _, want := range []string{
+		"{{- if .Settings.McpEndpoint -}}",
+		"type MCPServer struct",
+		"func NewMCPServer(c *Configuration) (*MCPServer, error)",
+		"server: &http.Server{Addr: fmt.Sprintf(\":%d\", *c.EndpointMcpPort)}",
+		"MCPRouter(mcpHandler, http.NotFoundHandler())",
+	} {
+		if !strings.Contains(string(mcpTemplate), want) {
+			t.Errorf("MCP adapter does not serve on its own listener: missing %q", want)
+		}
+	}
+
+	restTemplate, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/rest_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read REST adapter template: %v", err)
+	}
+	for _, unexpected := range []string{"NewMCPHandler", "MCPRouter", "EndpointMcpPort"} {
+		if strings.Contains(string(restTemplate), unexpected) {
+			t.Errorf("REST adapter still references MCP (%q) after decoupling", unexpected)
 		}
 	}
 }

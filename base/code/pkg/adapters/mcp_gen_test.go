@@ -67,9 +67,9 @@ func TestMCPServerHonorsAllowlist(t *testing.T) {
 	conn := startGRPC(t)
 
 	// Default allowlist exposes exactly Version.
-	server, err := NewMCPServer(conn)
+	server, err := newMCPToolServer(conn)
 	if err != nil {
-		t.Fatalf("NewMCPServer: %v", err)
+		t.Fatalf("newMCPToolServer: %v", err)
 	}
 	if server == nil {
 		t.Fatal("nil server")
@@ -80,12 +80,12 @@ func TestMCPServerHonorsAllowlist(t *testing.T) {
 	t.Cleanup(func() { mcpAllowedMethods = restore })
 
 	mcpAllowedMethods = nil
-	if _, err := NewMCPServer(conn); err != nil {
+	if _, err := newMCPToolServer(conn); err != nil {
 		t.Fatalf("empty allowlist should build an empty server, got %v", err)
 	}
 
 	mcpAllowedMethods = []string{"api.WebService/DoesNotExist"}
-	if _, err := NewMCPServer(conn); err == nil {
+	if _, err := newMCPToolServer(conn); err == nil {
 		t.Fatal("unknown selector should fail the server build")
 	}
 }
@@ -160,15 +160,15 @@ func TestMCPCrossOriginRejected(t *testing.T) {
 	}
 }
 
-// TestMCPRouterLeavesRestPathsUntouched verifies the router delegates only
-// /mcp (and subpaths) to MCP and passes every other path to the REST handler
+// TestMCPRouterDispatchesOnlyMcpPaths verifies the router delegates only /mcp
+// (and subpaths) to MCP and passes every other path to the next handler
 // verbatim, without http.ServeMux path rewriting.
-func TestMCPRouterLeavesRestPathsUntouched(t *testing.T) {
-	var restGot string
-	rest := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { restGot = r.URL.Path })
+func TestMCPRouterDispatchesOnlyMcpPaths(t *testing.T) {
+	var nextGot string
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { nextGot = r.URL.Path })
 	var mcpHit bool
 	mcpH := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { mcpHit = true })
-	router := MCPRouter(mcpH, rest)
+	router := MCPRouter(mcpH, next)
 
 	for _, tc := range []struct {
 		path    string
@@ -180,15 +180,15 @@ func TestMCPRouterLeavesRestPathsUntouched(t *testing.T) {
 		{"/mcpother", false}, // must NOT be captured by the /mcp prefix
 		{"/version/../x", false},
 	} {
-		restGot, mcpHit = "", false
+		nextGot, mcpHit = "", false
 		req := httptest.NewRequest(http.MethodPost, "http://x"+tc.path, nil)
 		req.URL.Path = tc.path // preserve raw path (no cleaning)
 		router.ServeHTTP(httptest.NewRecorder(), req)
 		if tc.wantMCP && !mcpHit {
 			t.Errorf("%s: expected MCP handler", tc.path)
 		}
-		if !tc.wantMCP && restGot != tc.path {
-			t.Errorf("%s: expected REST handler to receive verbatim path, got %q", tc.path, restGot)
+		if !tc.wantMCP && nextGot != tc.path {
+			t.Errorf("%s: expected next handler to receive verbatim path, got %q", tc.path, nextGot)
 		}
 	}
 }

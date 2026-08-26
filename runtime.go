@@ -128,6 +128,13 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		}
 	}
 
+	if s.GoGrpc.Settings.McpEndpoint {
+		s.GoGrpc.McpEndpoint, err = resources.FindMCPEndpoint(ctx, s.Endpoints)
+		if err != nil {
+			return s.Base.Runtime.LoadErrorf(err, "finding mcp endpoint")
+		}
+	}
+
 	// Register agent commands
 	s.registerCommands()
 
@@ -191,6 +198,14 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 				return s.Wool.Wrapf(err, "cannot find connect network instance")
 			}
 			env.WithPort(ctx, connectInstance.Port)
+		}
+
+		if s.GoGrpc.Settings.McpEndpoint {
+			mcpInstance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.McpEndpoint, resources.NewContainerNetworkAccess())
+			if err != nil {
+				return s.Wool.Wrapf(err, "cannot find mcp network instance")
+			}
+			env.WithPort(ctx, mcpInstance.Port)
 		}
 	}
 
@@ -297,6 +312,23 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		}
 
 		s.Infof("Connect will run on %s", net.Address)
+	}
+
+	if s.GoGrpc.Settings.McpEndpoint {
+		nm, err = resources.FindNetworkMapping(ctx, s.NetworkMappings, s.GoGrpc.McpEndpoint)
+		if err != nil {
+			return s.Base.Runtime.InitError(err)
+		}
+		if err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess()); err != nil {
+			return s.Base.Runtime.InitError(err)
+		}
+
+		net, err = resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.McpEndpoint, resources.NewNativeNetworkAccess())
+		if err != nil {
+			return s.Base.Runtime.InitError(err)
+		}
+
+		s.Infof("MCP will run on %s", net.Address)
 	}
 
 	endpointAccesses := s.EnvironmentVariables.Endpoints()
