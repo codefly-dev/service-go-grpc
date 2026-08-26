@@ -87,8 +87,9 @@ type Settings struct {
 
 	// Cors drives the generated REST listener's cross-origin policy. The zero
 	// value (no `cors:` block) denies every cross-origin request — a
-	// same-origin default. See CorsSpec.
-	Cors CorsSpec `yaml:"cors,omitempty"`
+	// same-origin default. See CorsSpec. No omitempty: a struct value is never
+	// "empty" to the YAML encoder, so the tag would be a silent no-op.
+	Cors CorsSpec `yaml:"cors"`
 }
 
 // CorsSpec drives the CORS policy baked into the generated REST adapter
@@ -113,20 +114,42 @@ type CorsSpec struct {
 	AllowAll bool `yaml:"allow-all,omitempty"`
 }
 
-// Validate rejects a CORS block that would silently widen access. A literal
-// "*" origin is refused so the wildcard cannot slip in as an allowlist entry —
-// it must go through AllowAll — and AllowAll cannot be combined with an
-// allowlist that it would silently ignore.
+// Validate rejects a CORS block that would silently widen access or silently
+// drop configuration. A literal "*" origin is refused so the wildcard cannot
+// slip in as an allowlist entry — it must go through AllowAll. Any field the
+// generated adapter would ignore is a hard error rather than a no-op, because a
+// setting that vanishes is worse than one that fails loudly.
 func (c CorsSpec) Validate() error {
 	for _, origin := range c.AllowedOrigins {
 		if origin == "*" {
 			return fmt.Errorf(`cors: use allow-all instead of a "*" allowed-origins entry`)
 		}
 	}
-	if c.AllowAll && len(c.AllowedOrigins) > 0 {
-		return fmt.Errorf("cors: allow-all cannot be combined with allowed-origins")
+	if c.AllowAll {
+		// allow-all is the "everything" policy; the generated adapter emits a
+		// wildcard and ignores any allowlist, so a supplied one would silently
+		// vanish. Reject the combination instead.
+		if len(c.AllowedOrigins) > 0 || len(c.AllowedHeaders) > 0 {
+			return fmt.Errorf("cors: allow-all cannot be combined with allowed-origins or allowed-headers")
+		}
+		return nil
+	}
+	// A header allowlist only takes effect alongside an origin allowlist. With
+	// no origins the policy denies every cross-origin request and the configured
+	// headers would never reach the generated adapter — fail rather than drop.
+	if len(c.AllowedHeaders) > 0 && len(c.AllowedOrigins) == 0 {
+		return fmt.Errorf("cors: allowed-headers requires allowed-origins")
 	}
 	return nil
+}
+
+// DeniesCrossOrigin reports whether this spec resolves to the default
+// same-origin policy — no explicit allowlist and no allow-all opt-in — under
+// which the generated adapter refuses every cross-origin request. It gates the
+// Sync-time warning that flags this behavior change to services regenerating an
+// older, wildcard-open adapter.
+func (c CorsSpec) DeniesCrossOrigin() bool {
+	return !c.AllowAll && len(c.AllowedOrigins) == 0
 }
 
 // ServiceAccountSpec configures the Kubernetes ServiceAccount a service's

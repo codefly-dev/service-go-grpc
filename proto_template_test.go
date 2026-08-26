@@ -10,7 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"text/template"
+
+	"github.com/codefly-dev/core/templates"
 )
 
 // TestProtoTemplatePinsGoPackage prevents a versioned protobuf namespace from
@@ -129,23 +130,24 @@ func TestFactoryGrpcAdapterMatchesBase(t *testing.T) {
 	}
 }
 
+// renderCorsTemplate renders the CORS adapter template through the same core
+// engine (templates.ApplyTemplate) the generation pipeline uses, so the test
+// exercises its funcMap — including the quote helper the template relies on to
+// escape configured origins/headers — rather than a bare text/template that
+// would silently diverge from production.
 func renderCorsTemplate(t *testing.T, settings *Settings) string {
 	t.Helper()
 	raw, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/cors_gen.go.tmpl")
 	if err != nil {
 		t.Fatalf("read cors adapter template: %v", err)
 	}
-	tmpl, err := template.New("cors").Parse(string(raw))
+	rendered, err := templates.ApplyTemplate(string(raw), CreateConfiguration{Settings: settings})
 	if err != nil {
-		t.Fatalf("parse cors adapter template: %v", err)
+		t.Fatalf("apply cors adapter template: %v", err)
 	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, CreateConfiguration{Settings: settings}); err != nil {
-		t.Fatalf("execute cors adapter template: %v", err)
-	}
-	formatted, err := format.Source(buf.Bytes())
+	formatted, err := format.Source([]byte(rendered))
 	if err != nil {
-		t.Fatalf("format rendered cors adapter: %v\n%s", err, buf.String())
+		t.Fatalf("format rendered cors adapter: %v\n%s", err, rendered)
 	}
 	return string(formatted)
 }
@@ -187,6 +189,15 @@ func TestGeneratedServiceCorsIsConfigurable(t *testing.T) {
 	}
 	if strings.Contains(allowlisted, `"*"`) {
 		t.Errorf("allowlisted CORS policy leaked a wildcard:\n%s", allowlisted)
+	}
+
+	// An origin carrying a quote/backslash must be escaped into the generated Go
+	// string literal, not spliced in raw — otherwise the generated service fails
+	// to compile. renderCorsTemplate fails on invalid Go, so reaching the assert
+	// already proves the render is well-formed.
+	escaped := renderCorsTemplate(t, &Settings{Cors: CorsSpec{AllowedOrigins: []string{`https://a"b\c`}}})
+	if !strings.Contains(escaped, `"https://a\"b\\c"`) {
+		t.Errorf("origin was not safely quoted into generated policy:\n%s", escaped)
 	}
 
 	permissive := renderCorsTemplate(t, &Settings{Cors: CorsSpec{AllowAll: true}})

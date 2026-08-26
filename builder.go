@@ -158,6 +158,13 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		return s.Base.Builder.SyncError(err)
 	}
 	if len(scaffoldTargets) > 0 {
+		// Regenerating the REST adapter replaces any older, wildcard-open CORS
+		// policy with the same-origin default. That silently blocks cross-origin
+		// callers a service may have depended on, so surface the change and the
+		// opt-in rather than letting it fail only in the browser.
+		if s.GoGrpc.Settings.RestEndpoint && s.GoGrpc.Settings.Cors.DeniesCrossOrigin() {
+			s.Wool.Warn("REST CORS defaults to same-origin: the regenerated adapter refuses all cross-origin requests. Set cors.allowed-origins or cors.allow-all in settings to permit cross-origin access.")
+		}
 		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
 		generated := services.WithFactory(factoryFS).
 			WithPathSelect(generatedScaffoldSelect()).

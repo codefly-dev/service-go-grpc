@@ -19,14 +19,14 @@ func Cors() *cors.Cors {
 {{- else if .Settings.Cors.AllowedOrigins }}
 		AllowedOrigins: []string{
 {{- range .Settings.Cors.AllowedOrigins }}
-			"{{ . }}",
+			{{ . | quote }},
 {{- end }}
 		},
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
 {{- if .Settings.Cors.AllowedHeaders }}
 		AllowedHeaders: []string{
 {{- range .Settings.Cors.AllowedHeaders }}
-			"{{ . }}",
+			{{ . | quote }},
 {{- end }}
 		},
 {{- end }}
