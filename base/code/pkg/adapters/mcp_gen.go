@@ -50,24 +50,26 @@ var mcpAllowedMethods = []string{
 type MCPServer struct {
 	config *Configuration
 	server *http.Server
+	conn   *grpc.ClientConn
 }
 
 func NewMCPServer(c *Configuration) (*MCPServer, error) {
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	conn, err := grpc.NewClient(fmt.Sprintf("0.0.0.0:%d", c.EndpointGrpcPort), opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create MCP gRPC client connection: %w", err)
+	}
 	return &MCPServer{
 		config: c,
 		server: &http.Server{Addr: fmt.Sprintf(":%d", *c.EndpointMcpPort)},
+		conn:   conn,
 	}, nil
 }
 
 func (s *MCPServer) Run(_ context.Context) error {
 	fmt.Println("Starting MCP server at", *s.config.EndpointMcpPort)
 
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
-	conn, err := grpc.NewClient(fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts...)
-	if err != nil {
-		return fmt.Errorf("failed to create MCP gRPC client connection: %w", err)
-	}
-	mcpHandler, err := NewMCPHandler(conn)
+	mcpHandler, err := NewMCPHandler(s.conn)
 	if err != nil {
 		return fmt.Errorf("failed to build MCP handler: %w", err)
 	}
@@ -82,8 +84,14 @@ func (s *MCPServer) Run(_ context.Context) error {
 	return nil
 }
 
+// Shutdown stops the HTTP listener and closes the gRPC client connection that
+// tool calls are forwarded over, so the connection does not outlive the server.
 func (s *MCPServer) Shutdown(ctx context.Context) error {
-	return s.server.Shutdown(ctx)
+	err := s.server.Shutdown(ctx)
+	if connErr := s.conn.Close(); connErr != nil && err == nil {
+		err = connErr
+	}
+	return err
 }
 
 // MCPRouter dispatches MCPPath (and its subpaths) to the MCP handler and every
