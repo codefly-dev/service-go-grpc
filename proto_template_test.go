@@ -409,6 +409,68 @@ func TestGeneratedServiceServesMcpOnDedicatedPort(t *testing.T) {
 	}
 }
 
+// TestGeneratedServiceServesMcpWithoutRest pins the headline acceptance of #89:
+// mcp-endpoint no longer requires rest-endpoint. It renders the wiring templates
+// with MCP on and REST off and asserts the output is valid Go that wires the
+// dedicated MCP server while omitting REST entirely — the combination that
+// riding the REST listener made impossible.
+func TestGeneratedServiceServesMcpWithoutRest(t *testing.T) {
+	render := func(name string) string {
+		content, err := factoryFS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		type nameParts struct{ DNSCase, Title, CamelCase string }
+		ctx := struct {
+			Service  struct{ Name nameParts }
+			Settings struct {
+				RestEndpoint    bool
+				ConnectEndpoint bool
+				McpEndpoint     bool
+				McpMethods      []string
+			}
+		}{}
+		ctx.Service.Name = nameParts{DNSCase: "codefly-base", Title: "Web", CamelCase: "web"}
+		ctx.Settings.McpEndpoint = true
+		ctx.Settings.McpMethods = []string{"api.WebService/Version"}
+
+		tmpl, err := template.New("factory").Parse(string(content))
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, ctx); err != nil {
+			t.Fatalf("execute %s: %v", name, err)
+		}
+		// format.Source parses the render; it fails on any stray ungated REST
+		// reference or broken MCP wiring left behind when REST is disabled.
+		if _, err := format.Source(buf.Bytes()); err != nil {
+			t.Fatalf("%s rendered invalid Go with mcp-on/rest-off: %v\n%s", name, err, buf.String())
+		}
+		return buf.String()
+	}
+
+	server := render("templates/factory/code/pkg/adapters/server_gen.go.tmpl")
+	for _, want := range []string{"mcp     *MCPServer", "NewMCPServer(config)", "server.mcp.Run(ctx)", "server.mcp.Shutdown(ctx)"} {
+		if !strings.Contains(server, want) {
+			t.Errorf("server adapter (mcp on, rest off) does not wire MCP: missing %q", want)
+		}
+	}
+	for _, unexpected := range []string{"RestServer", "NewRestServer", "server.rest"} {
+		if strings.Contains(server, unexpected) {
+			t.Errorf("server adapter (rest off) still references REST: %q", unexpected)
+		}
+	}
+
+	mainGo := render("templates/factory/code/main.go.tmpl")
+	if !strings.Contains(mainGo, "config.EndpointMcpPort") {
+		t.Error("main (mcp on) does not read the dedicated MCP port")
+	}
+	if strings.Contains(mainGo, "EndpointHttpPort") {
+		t.Error("main (rest off) still reads the REST port")
+	}
+}
+
 // TestGeneratedServiceRegistersHealthChecks keeps the grpc.health.v1 service
 // and the /healthz gateway route that the kustomize deployment probes target.
 func TestGeneratedServiceRegistersHealthChecks(t *testing.T) {
