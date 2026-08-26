@@ -880,14 +880,15 @@ func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*
 // DeploymentParameters carries the go-grpc-specific values the deployment
 // templates consume through .Deployment.Parameters: the optional workload
 // ServiceAccount plus which optional listeners the service serves. The http
-// (grpc-gateway) and connect listeners bind only when their endpoint is
+// (grpc-gateway), connect, and mcp listeners bind only when their endpoint is
 // enabled, so the templates emit each container/service port and probe only
 // for a port the process actually binds — a grpc-only service must not
-// advertise http, and a connect service must advertise its port.
+// advertise http, and a connect or mcp service must advertise its port.
 type DeploymentParameters struct {
 	ServiceAccount  *ServiceAccountSpec
 	RestEndpoint    bool
 	ConnectEndpoint bool
+	McpEndpoint     bool
 }
 
 // Deploy applies the k8s manifests in templates/deployment. It mirrors
@@ -911,6 +912,7 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			ServiceAccount:  s.GoGrpc.Settings.ServiceAccount,
 			RestEndpoint:    s.GoGrpc.Settings.RestEndpoint,
 			ConnectEndpoint: s.GoGrpc.Settings.ConnectEndpoint,
+			McpEndpoint:     s.GoGrpc.Settings.McpEndpoint,
 		},
 	})
 }
@@ -952,6 +954,17 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 		s.GoGrpc.ConnectEndpoint.Api = standards.CONNECT
 		s.Endpoints = append(s.Endpoints, s.GoGrpc.ConnectEndpoint)
 	}
+
+	if s.GoGrpc.Settings.McpEndpoint {
+		endpoint = s.Base.BaseEndpoint(standards.MCP)
+		s.GoGrpc.McpEndpoint, err = resources.NewAPI(ctx, endpoint, resources.ToHTTPAPI(&basev0.HttpAPI{}))
+		if err != nil {
+			return s.Wool.Wrapf(err, "cannot create mcp api")
+		}
+		// NewAPI maps HttpAPI → "http"; override to the actual protocol tag.
+		s.GoGrpc.McpEndpoint.Api = standards.MCP
+		s.Endpoints = append(s.Endpoints, s.GoGrpc.McpEndpoint)
+	}
 	return nil
 }
 
@@ -963,7 +976,7 @@ func (s *Builder) Options() []*agentv0.Question {
 		communicate.NewConfirm(&agentv0.Message{Name: RaceConditionDetectionRun, Message: "Start with race condition detection?", Description: "Build the go binary with race condition detection"}, false),
 		communicate.NewConfirm(&agentv0.Message{Name: RestEndpointSetting, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC definition -- the easiest way to do REST"}, true),
 		communicate.NewConfirm(&agentv0.Message{Name: ConnectEndpointSetting, Message: "Connect endpoint (browser-native RPC)?", Description: "Expose a ConnectRPC endpoint for type-safe browser clients — serves Connect, gRPC, and gRPC-Web on a single port"}, false),
-		communicate.NewConfirm(&agentv0.Message{Name: McpEndpointSetting, Message: "MCP tools (proto-derived)?", Description: "Expose your gRPC unary RPCs as MCP tools at /mcp on the REST listener — requires the REST endpoint"}, false),
+		communicate.NewConfirm(&agentv0.Message{Name: McpEndpointSetting, Message: "MCP tools (proto-derived)?", Description: "Expose your gRPC unary RPCs as MCP tools on a dedicated MCP endpoint with its own port — independent of REST"}, false),
 	}
 }
 

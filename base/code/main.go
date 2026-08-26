@@ -78,6 +78,9 @@ func main() {
 	if net := codefly.For(ctx).WithDefaultNetwork().API(standards.CONNECT).NetworkInstance(); net != nil {
 		config.EndpointConnectPort = shared.Pointer(net.Port)
 	}
+	if net := codefly.For(ctx).WithDefaultNetwork().API(standards.MCP).NetworkInstance(); net != nil {
+		config.EndpointMcpPort = shared.Pointer(net.Port)
+	}
 	if configure != nil {
 		clean, err := configure(ctx, config)
 		if err != nil {

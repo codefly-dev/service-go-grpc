@@ -18,6 +18,7 @@ type Server struct {
 	grpc    *GrpcServer
 	rest    *RestServer
 	connect *ConnectServer
+	mcp     *MCPServer
 }
 
 func NewServer(config *Configuration) (*Server, error) {
@@ -48,10 +49,19 @@ func NewServer(config *Configuration) (*Server, error) {
 		}
 	}
 
+	var mcp *MCPServer
+	if config.EndpointMcpPort != nil {
+		mcp, err = NewMCPServer(config)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &Server{
 		grpc:    grpc,
 		rest:    rest,
 		connect: conn,
+		mcp:     mcp,
 	}, nil
 }
 
@@ -67,6 +77,14 @@ func (server *Server) Start(ctx context.Context) error {
 	if server.connect != nil {
 		go func() {
 			err := server.connect.Run(ctx)
+			if err != nil {
+				panic(err)
+			}
+		}()
+	}
+	if server.mcp != nil {
+		go func() {
+			err := server.mcp.Run(ctx)
 			if err != nil {
 				panic(err)
 			}
@@ -88,6 +106,13 @@ func (server *Server) Stop() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := server.connect.Shutdown(ctx); err != nil {
 			fmt.Printf("failed to stop Connect server: %v\n", err)
+		}
+		cancel()
+	}
+	if server.mcp != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := server.mcp.Shutdown(ctx); err != nil {
+			fmt.Printf("failed to stop MCP server: %v\n", err)
 		}
 		cancel()
 	}

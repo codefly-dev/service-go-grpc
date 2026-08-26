@@ -26,6 +26,7 @@ import (
 	codefly "github.com/codefly-dev/sdk-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -33,8 +34,8 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-// MCPPath is the HTTP path the MCP Streamable HTTP endpoint is mounted at,
-// riding the same listener as the REST gateway.
+// MCPPath is the HTTP path the MCP Streamable HTTP endpoint is served at on the
+// dedicated MCP listener.
 const MCPPath = "/mcp"
 
 // mcpAllowedMethods is the explicit allowlist of unary RPCs exposed as MCP
@@ -46,10 +47,52 @@ var mcpAllowedMethods = []string{
 {{- end }}
 }
 
+// MCPServer serves the proto-derived MCP tools over Streamable HTTP on the
+// service's own dedicated MCP port, independent of the REST gateway. Tool calls
+// are forwarded to the in-process gRPC listener.
+type MCPServer struct {
+	config *Configuration
+	server *http.Server
+}
+
+func NewMCPServer(c *Configuration) (*MCPServer, error) {
+	return &MCPServer{
+		config: c,
+		server: &http.Server{Addr: fmt.Sprintf(":%d", *c.EndpointMcpPort)},
+	}, nil
+}
+
+func (s *MCPServer) Run(_ context.Context) error {
+	fmt.Println("Starting MCP server at", *s.config.EndpointMcpPort)
+
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	conn, err := grpc.NewClient(fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts...)
+	if err != nil {
+		return fmt.Errorf("failed to create MCP gRPC client connection: %w", err)
+	}
+	mcpHandler, err := NewMCPHandler(conn)
+	if err != nil {
+		return fmt.Errorf("failed to build MCP handler: %w", err)
+	}
+
+	// Serve MCP only at MCPPath (and its subpaths); every other path 404s. The
+	// path contract is unchanged from when MCP rode the REST listener — only the
+	// port is now dedicated.
+	s.server.Handler = MCPRouter(mcpHandler, http.NotFoundHandler())
+	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
+
+func (s *MCPServer) Shutdown(ctx context.Context) error {
+	return s.server.Shutdown(ctx)
+}
+
 // MCPRouter dispatches MCPPath (and its subpaths) to the MCP handler and every
 // other request to next. It intentionally does not use http.ServeMux, whose
-// path cleaning and trailing-slash redirects would change the REST gateway's
-// routing behavior for non-MCP paths.
+// path cleaning and trailing-slash redirects would change request routing for
+// non-MCP paths.
 func MCPRouter(mcpHandler, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == MCPPath || strings.HasPrefix(r.URL.Path, MCPPath+"/") {
@@ -67,7 +110,7 @@ func MCPRouter(mcpHandler, next http.Handler) http.Handler {
 // configured tool cannot be built so the service fails loudly rather than
 // serving a broken tool surface.
 func NewMCPHandler(grpcConn grpc.ClientConnInterface) (http.Handler, error) {
-	server, err := NewMCPServer(grpcConn)
+	server, err := newMCPToolServer(grpcConn)
 	if err != nil {
 		return nil, err
 	}
@@ -81,13 +124,13 @@ func NewMCPHandler(grpcConn grpc.ClientConnInterface) (http.Handler, error) {
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, opts), nil
 }
 
-// NewMCPServer registers one MCP tool per allowlisted unary RPC. Selectors are
-// resolved against the global protobuf registry, so RPCs from any compiled
+// newMCPToolServer registers one MCP tool per allowlisted unary RPC. Selectors
+// are resolved against the global protobuf registry, so RPCs from any compiled
 // proto file are reachable regardless of filename. A selector that names a
 // missing service or method is a configuration error and fails the build of
 // the server. Streaming RPCs are skipped until MCP stream semantics are
 // deliberately supported.
-func NewMCPServer(grpcConn grpc.ClientConnInterface) (*mcp.Server, error) {
+func newMCPToolServer(grpcConn grpc.ClientConnInterface) (*mcp.Server, error) {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "{{ .Service.Name.DNSCase }}",
 		Version: codefly.ServiceVersion(),

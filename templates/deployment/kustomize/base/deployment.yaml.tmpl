@@ -51,9 +51,9 @@ spec:
               type: RuntimeDefault
           ports:
             # Match service.yaml.tmpl. grpc is the raw gRPC listener, always
-            # served. http (grpc-gateway REST facade) and connect bind only
-            # when their endpoint is enabled — advertise a port only when the
-            # process binds it, so nothing routes to a dead port.
+            # served. http (grpc-gateway REST facade), connect, and mcp bind
+            # only when their endpoint is enabled — advertise a port only when
+            # the process binds it, so nothing routes to a dead port.
             - name: grpc
               containerPort: 9090
 {{- if .Deployment.Parameters.RestEndpoint }}
@@ -63,6 +63,10 @@ spec:
 {{- if .Deployment.Parameters.ConnectEndpoint }}
             - name: connect
               containerPort: 8081
+{{- end }}
+{{- if .Deployment.Parameters.McpEndpoint }}
+            - name: mcp
+              containerPort: 8082
 {{- end }}
           envFrom:
             - configMapRef:

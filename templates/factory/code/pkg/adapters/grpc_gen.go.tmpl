@@ -60,6 +60,7 @@ type Configuration struct {
 	EndpointGrpcPort    uint16
 	EndpointHttpPort    *uint16
 	EndpointConnectPort *uint16
+	EndpointMcpPort     *uint16
 	// GRPCServerOptions installs transport policy such as authentication,
 	// authorization, telemetry, and rate limiting before the listener starts.
 	GRPCServerOptions []grpc.ServerOption

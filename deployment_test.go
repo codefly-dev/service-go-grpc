@@ -252,9 +252,10 @@ func TestDeploymentProbesRequireOnlyTheDeclaredListener(t *testing.T) {
 
 // TestDeploymentPortsMatchDeclaredEndpoints pins the container/Service port set
 // to the listeners the process actually binds: grpc always, http only with the
-// REST endpoint, connect only with the Connect endpoint. A port advertised for
-// an unserved listener is the #78 failure — a Service routing to a dead port
-// and, when probed, a pod that restart-loops forever.
+// REST endpoint, connect only with the Connect endpoint, mcp only with the MCP
+// endpoint. A port advertised for an unserved listener is the #78 failure — a
+// Service routing to a dead port and, when probed, a pod that restart-loops
+// forever.
 func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 	type portCheck struct {
 		token   string
@@ -269,12 +270,15 @@ func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 		{"name: http-port", func(p DeploymentParameters) bool { return p.RestEndpoint }},
 		{"containerPort: 8081", func(p DeploymentParameters) bool { return p.ConnectEndpoint }},
 		{"name: connect-port", func(p DeploymentParameters) bool { return p.ConnectEndpoint }},
+		{"containerPort: 8082", func(p DeploymentParameters) bool { return p.McpEndpoint }},
+		{"name: mcp-port", func(p DeploymentParameters) bool { return p.McpEndpoint }},
 	}
 	cases := map[string]DeploymentParameters{
 		"grpc only":      {},
 		"grpc + rest":    {RestEndpoint: true},
 		"grpc + connect": {ConnectEndpoint: true},
-		"all":            {RestEndpoint: true, ConnectEndpoint: true},
+		"grpc + mcp":     {McpEndpoint: true},
+		"all":            {RestEndpoint: true, ConnectEndpoint: true, McpEndpoint: true},
 	}
 	for name, params := range cases {
 		t.Run(name, func(t *testing.T) {
