@@ -84,6 +84,72 @@ type Settings struct {
 	// ServiceAccount instead of the namespace default. Empty (the default)
 	// leaves pods on the default SA. See ServiceAccountSpec.
 	ServiceAccount *ServiceAccountSpec `yaml:"service-account,omitempty"`
+
+	// Cors drives the generated REST listener's cross-origin policy. The zero
+	// value (no `cors:` block) denies every cross-origin request — a
+	// same-origin default. See CorsSpec. No omitempty: a struct value is never
+	// "empty" to the YAML encoder, so the tag would be a silent no-op.
+	Cors CorsSpec `yaml:"cors"`
+}
+
+// CorsSpec drives the CORS policy baked into the generated REST adapter
+// (pkg/adapters/cors_gen.go). That file is agent-owned and must not be edited
+// by hand, so cross-origin access is configured here instead. The zero value
+// is a same-origin policy: every cross-origin request is refused.
+type CorsSpec struct {
+	// AllowedOrigins is the exact cross-origin allowlist. Empty (the default)
+	// refuses every cross-origin request; same-origin traffic is unaffected.
+	// A literal "*" is rejected by Validate — reach for AllowAll instead so the
+	// wildcard is a deliberate, greppable choice rather than an allowlist typo.
+	AllowedOrigins []string `yaml:"allowed-origins,omitempty"`
+
+	// AllowedHeaders overrides the request headers a cross-origin caller may
+	// send. Empty falls back to the rs/cors safe defaults (Accept,
+	// Content-Type, X-Requested-With).
+	AllowedHeaders []string `yaml:"allowed-headers,omitempty"`
+
+	// AllowAll restores the permissive wildcard policy (any origin, any
+	// header). It is the documented dev-mode escape hatch; anything reachable
+	// beyond localhost should carry an explicit AllowedOrigins allowlist.
+	AllowAll bool `yaml:"allow-all,omitempty"`
+}
+
+// Validate rejects a CORS block that would silently widen access or silently
+// drop configuration. A literal "*" origin is refused so the wildcard cannot
+// slip in as an allowlist entry — it must go through AllowAll. Any field the
+// generated adapter would ignore is a hard error rather than a no-op, because a
+// setting that vanishes is worse than one that fails loudly.
+func (c CorsSpec) Validate() error {
+	for _, origin := range c.AllowedOrigins {
+		if origin == "*" {
+			return fmt.Errorf(`cors: use allow-all instead of a "*" allowed-origins entry`)
+		}
+	}
+	if c.AllowAll {
+		// allow-all is the "everything" policy; the generated adapter emits a
+		// wildcard and ignores any allowlist, so a supplied one would silently
+		// vanish. Reject the combination instead.
+		if len(c.AllowedOrigins) > 0 || len(c.AllowedHeaders) > 0 {
+			return fmt.Errorf("cors: allow-all cannot be combined with allowed-origins or allowed-headers")
+		}
+		return nil
+	}
+	// A header allowlist only takes effect alongside an origin allowlist. With
+	// no origins the policy denies every cross-origin request and the configured
+	// headers would never reach the generated adapter — fail rather than drop.
+	if len(c.AllowedHeaders) > 0 && len(c.AllowedOrigins) == 0 {
+		return fmt.Errorf("cors: allowed-headers requires allowed-origins")
+	}
+	return nil
+}
+
+// DeniesCrossOrigin reports whether this spec resolves to the default
+// same-origin policy — no explicit allowlist and no allow-all opt-in — under
+// which the generated adapter refuses every cross-origin request. It gates the
+// Sync-time warning that flags this behavior change to services regenerating an
+// older, wildcard-open adapter.
+func (c CorsSpec) DeniesCrossOrigin() bool {
+	return !c.AllowAll && len(c.AllowedOrigins) == 0
 }
 
 // ServiceAccountSpec configures the Kubernetes ServiceAccount a service's
@@ -141,6 +207,9 @@ func (s *Settings) Validate() error {
 		}
 	}
 	if err := s.ServiceAccount.Validate(); err != nil {
+		return err
+	}
+	if err := s.Cors.Validate(); err != nil {
 		return err
 	}
 	return nil

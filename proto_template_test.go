@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/codefly-dev/core/templates"
 )
 
 // TestProtoTemplatePinsGoPackage prevents a versioned protobuf namespace from
@@ -125,6 +127,84 @@ func TestFactoryGrpcAdapterMatchesBase(t *testing.T) {
 	}
 	if !bytes.Equal(baseGrpc, formatted) {
 		t.Fatal("factory gRPC adapter template drifted from base/code/pkg/adapters/grpc_gen.go")
+	}
+}
+
+// renderCorsTemplate renders the CORS adapter template through the same core
+// engine (templates.ApplyTemplate) the generation pipeline uses, so the test
+// exercises its funcMap — including the quote helper the template relies on to
+// escape configured origins/headers — rather than a bare text/template that
+// would silently diverge from production.
+func renderCorsTemplate(t *testing.T, settings *Settings) string {
+	t.Helper()
+	raw, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/cors_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read cors adapter template: %v", err)
+	}
+	rendered, err := templates.ApplyTemplate(string(raw), CreateConfiguration{Settings: settings})
+	if err != nil {
+		t.Fatalf("apply cors adapter template: %v", err)
+	}
+	formatted, err := format.Source([]byte(rendered))
+	if err != nil {
+		t.Fatalf("format rendered cors adapter: %v\n%s", err, rendered)
+	}
+	return string(formatted)
+}
+
+// TestFactoryCorsAdapterMatchesBase keeps the checked-in base adapter equal to
+// the template's default (no `cors:` block) rendering, so the safe same-origin
+// default cannot silently drift back toward the old wildcard placeholder.
+func TestFactoryCorsAdapterMatchesBase(t *testing.T) {
+	baseCors, err := os.ReadFile("base/code/pkg/adapters/cors_gen.go")
+	if err != nil {
+		t.Fatalf("read base cors adapter: %v", err)
+	}
+	rendered := renderCorsTemplate(t, &Settings{})
+	if rendered != string(baseCors) {
+		t.Fatalf("factory cors adapter template drifted from base/code/pkg/adapters/cors_gen.go\n--- rendered ---\n%s", rendered)
+	}
+}
+
+// TestGeneratedServiceCorsIsConfigurable pins the CORS contract: fresh services
+// default to a non-wildcard same-origin policy, an allowlist is baked from
+// settings, and allow-all restores the permissive wildcard escape hatch.
+func TestGeneratedServiceCorsIsConfigurable(t *testing.T) {
+	def := renderCorsTemplate(t, &Settings{})
+	if strings.Contains(def, `"*"`) {
+		t.Errorf("default CORS policy ships a wildcard:\n%s", def)
+	}
+	if !strings.Contains(def, "AllowOriginFunc: func(string) bool { return false }") {
+		t.Errorf("default CORS policy does not deny cross-origin requests:\n%s", def)
+	}
+
+	allowlisted := renderCorsTemplate(t, &Settings{Cors: CorsSpec{
+		AllowedOrigins: []string{"https://app.example.com"},
+		AllowedHeaders: []string{"Authorization"},
+	}})
+	for _, want := range []string{`"https://app.example.com"`, `"Authorization"`} {
+		if !strings.Contains(allowlisted, want) {
+			t.Errorf("configured CORS value %q not baked into policy:\n%s", want, allowlisted)
+		}
+	}
+	if strings.Contains(allowlisted, `"*"`) {
+		t.Errorf("allowlisted CORS policy leaked a wildcard:\n%s", allowlisted)
+	}
+
+	// An origin carrying a quote/backslash must be escaped into the generated Go
+	// string literal, not spliced in raw — otherwise the generated service fails
+	// to compile. renderCorsTemplate fails on invalid Go, so reaching the assert
+	// already proves the render is well-formed.
+	escaped := renderCorsTemplate(t, &Settings{Cors: CorsSpec{AllowedOrigins: []string{`https://a"b\c`}}})
+	if !strings.Contains(escaped, `"https://a\"b\\c"`) {
+		t.Errorf("origin was not safely quoted into generated policy:\n%s", escaped)
+	}
+
+	permissive := renderCorsTemplate(t, &Settings{Cors: CorsSpec{AllowAll: true}})
+	for _, want := range []string{`AllowedOrigins: []string{"*"}`, `AllowedHeaders: []string{"*"}`} {
+		if !strings.Contains(permissive, want) {
+			t.Errorf("allow-all CORS policy missing %q:\n%s", want, permissive)
+		}
 	}
 }
 

@@ -200,6 +200,69 @@ func TestSettingsValidateServiceAccount(t *testing.T) {
 	}
 }
 
+func TestSettingsValidateCors(t *testing.T) {
+	tests := []struct {
+		name    string
+		cors    CorsSpec
+		wantErr bool
+	}{
+		{name: "empty", cors: CorsSpec{}, wantErr: false},
+		{name: "allowlist", cors: CorsSpec{AllowedOrigins: []string{"https://app.example.com"}}, wantErr: false},
+		{name: "allow all", cors: CorsSpec{AllowAll: true}, wantErr: false},
+		{name: "wildcard origin", cors: CorsSpec{AllowedOrigins: []string{"*"}}, wantErr: true},
+		{
+			name:    "allowlist with headers",
+			cors:    CorsSpec{AllowedOrigins: []string{"https://app.example.com"}, AllowedHeaders: []string{"Authorization"}},
+			wantErr: false,
+		},
+		{
+			name:    "allow all with allowlist",
+			cors:    CorsSpec{AllowAll: true, AllowedOrigins: []string{"https://app.example.com"}},
+			wantErr: true,
+		},
+		{
+			name:    "allow all with headers",
+			cors:    CorsSpec{AllowAll: true, AllowedHeaders: []string{"Authorization"}},
+			wantErr: true,
+		},
+		{
+			name:    "headers without origins",
+			cors:    CorsSpec{AllowedHeaders: []string{"Authorization"}},
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&Settings{Cors: tc.cors}).Validate()
+			if tc.wantErr && err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCorsSpecDeniesCrossOrigin(t *testing.T) {
+	tests := []struct {
+		name string
+		cors CorsSpec
+		want bool
+	}{
+		{name: "zero value", cors: CorsSpec{}, want: true},
+		{name: "allow all", cors: CorsSpec{AllowAll: true}, want: false},
+		{name: "allowlist", cors: CorsSpec{AllowedOrigins: []string{"https://app.example.com"}}, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cors.DeniesCrossOrigin(); got != tc.want {
+				t.Fatalf("DeniesCrossOrigin() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSettingsValidateRuntimeAssets(t *testing.T) {
 	tests := []struct {
 		name    string
