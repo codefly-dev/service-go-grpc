@@ -71,5 +71,56 @@ codefly test service
 | `race-condition-detection-run` | Enable Go race detector |
 | `rest-endpoint` | Generate REST gateway alongside gRPC |
 | `cors` | REST cross-origin policy: `allowed-origins` allowlist, optional `allowed-headers`, `allow-all` dev escape hatch (defaults to same-origin) |
+| `health` | Which health contract the Kubernetes probes speak: `mode: grpc` (default for newly created services), `mode: http` with an explicit `path`, or `mode: tcp` |
 | `with-cgo` | Enable CGO for native dependencies |
 | `with-workspace` | Use Go workspace mode |
+
+## Kubernetes health probes
+
+`health` declares the contract the rendered readiness and startup probes speak.
+The agent probes what the service says it serves and never invents a route:
+
+```yaml
+health:
+  mode: grpc              # calls grpc.health.v1.Health on the gRPC port
+  grpc-service: acme.v1.OrderService   # optional; defaults to the server-wide entry
+```
+
+```yaml
+health:
+  mode: http              # GETs a route this service actually serves
+  path: /readyz
+  port: http              # http (grpc-gateway REST) or connect; defaults to http
+```
+
+```yaml
+health:
+  mode: tcp               # opens the gRPC port and nothing more
+```
+
+Liveness is transport-only in every mode. It asks whether the process is
+wedged, never whether a dependency is reachable — a service reporting
+NOT_SERVING because something downstream is down should leave load balancing,
+not be restarted into a cascade.
+
+### Migration
+
+- **Newly created services** declare `mode: grpc`: the scaffolded server
+  registers `grpc.health.v1.Health` and reports SERVING, so an open port no
+  longer counts as ready.
+- **Existing services** carry no `health` block and keep transport-only probes.
+  Regenerating does not add one. Add `health: {mode: grpc}` once the service
+  serves the generated gRPC adapter (`pkg/adapters/grpc_gen.go`) — a
+  hand-written server that never registers the health service would fail every
+  probe.
+- **`mode: grpc` requires a kubelet that speaks gRPC probes** — Kubernetes 1.24
+  (beta, on by default) or later, GA in 1.27. Older clusters reject the probe;
+  declare `mode: tcp` there rather than expecting a silent downgrade. The
+  built-in probe also dials in plaintext, so a gRPC listener behind TLS or
+  per-call authentication cannot use it.
+- **`mode: http` cannot express a stricter predicate than the kubelet's** —
+  any 2xx or 3xx response passes. An exact status or a response-body check is
+  not available from a built-in probe.
+
+Probes are rendered into the standard pod template, so the usual overlay
+customization and secret-free manifests are unaffected.

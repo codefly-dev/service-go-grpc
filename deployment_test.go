@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -9,6 +10,10 @@ import (
 
 	agenttesting "github.com/codefly-dev/core/agents/testing"
 	"gopkg.in/yaml.v3"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	k8syaml "sigs.k8s.io/yaml"
 )
 
 func TestDeploymentTemplates(t *testing.T) {
@@ -290,7 +295,13 @@ func TestSettingsValidateRuntimeAssets(t *testing.T) {
 	}
 }
 
-func TestDeploymentProbesRequireOnlyTheDeclaredListener(t *testing.T) {
+// TestDeploymentProbesNeverInventARoute keeps the two invariants that survive
+// every health mode: the generic deployment contract guarantees listeners, not
+// routes, so no probe may reference a route this agent made up (#58), and
+// liveness must stay transport-only whatever the service declares — a semantic
+// liveness probe restarts a pod whose only problem is an unreachable
+// dependency, cascading one outage into many.
+func TestDeploymentProbesNeverInventARoute(t *testing.T) {
 	template, err := fs.ReadFile(deploymentFS, "templates/deployment/kustomize/base/deployment.yaml.tmpl")
 	if err != nil {
 		t.Fatalf("read deployment template: %v", err)
@@ -299,17 +310,218 @@ func TestDeploymentProbesRequireOnlyTheDeclaredListener(t *testing.T) {
 	if strings.Contains(source, "/healthz") {
 		t.Fatal("generic deployment must not require a product-specific health route")
 	}
-	if count := strings.Count(source, "tcpSocket:"); count != 3 {
-		t.Fatalf("transport probes = %d, want startup, readiness, and liveness", count)
+	for _, params := range map[string]DeploymentParameters{
+		"transport": {Health: (*HealthSpec)(nil).Normalized()},
+		"grpc":      {Health: (&HealthSpec{Mode: HealthModeGrpc}).Normalized()},
+		"http":      {RestEndpoint: true, Health: (&HealthSpec{Mode: HealthModeHTTP, Path: "/healthz"}).Normalized()},
+	} {
+		liveness := renderProbes(t, params).LivenessProbe
+		if liveness.TCPSocket == nil {
+			t.Fatalf("liveness must stay transport-only, got %+v", liveness.ProbeHandler)
+		}
+		if liveness.TCPSocket.Port.StrVal != "grpc" {
+			t.Errorf("liveness probes port %v, want the always-served grpc listener", liveness.TCPSocket.Port)
+		}
 	}
-	// grpc is the only listener every service serves; http (grpc-gateway) and
-	// connect bind only when those endpoints are enabled. Probing http would
-	// restart-loop any grpc-only service, so every probe must target grpc.
-	if count := strings.Count(source, "port: grpc"); count != 3 {
-		t.Fatalf("probes targeting the grpc listener = %d, want all three (startup, readiness, liveness)", count)
+}
+
+// TestDeploymentProbesRenderTheDeclaredHealthContract is the acceptance matrix:
+// each declared capability renders the probe that speaks it, and a service that
+// declares nothing keeps the transport-only probes it has always had. Startup
+// and readiness follow the declaration; liveness never does.
+func TestDeploymentProbesRenderTheDeclaredHealthContract(t *testing.T) {
+	grpcProbe := func(service string) corev1.ProbeHandler {
+		// The kubelet takes a number here, never a port name.
+		handler := corev1.GRPCAction{Port: 9090}
+		if service != "" {
+			handler.Service = &service
+		}
+		return corev1.ProbeHandler{GRPC: &handler}
 	}
-	if strings.Contains(source, "port: http") {
-		t.Fatal("probes must not target the http listener: grpc-only services never bind it")
+	httpProbe := func(path, port string) corev1.ProbeHandler {
+		return corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: path, Port: intstr.FromString(port)}}
+	}
+	transportProbe := corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString("grpc")}}
+
+	cases := map[string]struct {
+		params DeploymentParameters
+		want   corev1.ProbeHandler
+	}{
+		"grpc only, semantic health": {
+			params: DeploymentParameters{Health: (&HealthSpec{Mode: HealthModeGrpc}).Normalized()},
+			want:   grpcProbe(""),
+		},
+		"grpc + gateway, semantic health": {
+			params: DeploymentParameters{RestEndpoint: true, Health: (&HealthSpec{Mode: HealthModeGrpc}).Normalized()},
+			want:   grpcProbe(""),
+		},
+		"named gRPC health service": {
+			params: DeploymentParameters{Health: (&HealthSpec{Mode: HealthModeGrpc, GrpcService: "acme.v1.OrderService"}).Normalized()},
+			want:   grpcProbe("acme.v1.OrderService"),
+		},
+		"legacy customized server, transport only": {
+			params: DeploymentParameters{Health: (*HealthSpec)(nil).Normalized()},
+			want:   transportProbe,
+		},
+		"explicitly declared transport only": {
+			params: DeploymentParameters{Health: (&HealthSpec{Mode: HealthModeTransport}).Normalized()},
+			want:   transportProbe,
+		},
+		"explicit HTTP health": {
+			params: DeploymentParameters{
+				RestEndpoint: true,
+				Health:       (&HealthSpec{Mode: HealthModeHTTP, Path: "/readyz"}).Normalized(),
+			},
+			want: httpProbe("/readyz", "http"),
+		},
+		"explicit HTTP health on connect": {
+			params: DeploymentParameters{
+				ConnectEndpoint: true,
+				Health:          (&HealthSpec{Mode: HealthModeHTTP, Path: "/readyz", Port: "connect"}).Normalized(),
+			},
+			want: httpProbe("/readyz", "connect"),
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			container := renderProbes(t, tc.params)
+			for probe, got := range map[string]corev1.ProbeHandler{
+				"startupProbe":   container.StartupProbe.ProbeHandler,
+				"readinessProbe": container.ReadinessProbe.ProbeHandler,
+			} {
+				if diff := fmt.Sprint(got); diff != fmt.Sprint(tc.want) {
+					t.Errorf("%s = %s, want %s", probe, diff, fmt.Sprint(tc.want))
+				}
+			}
+		})
+	}
+}
+
+// renderProbes renders the base deployment and returns the container it
+// declares. Decoding is strict against the real Kubernetes API types, so a
+// probe this agent renders with a misspelled field, a wrong type (the kubelet
+// takes a number for a gRPC probe's port, never a port name), or a handler the
+// schema does not know fails here rather than at apply time.
+func renderProbes(t *testing.T, params DeploymentParameters) corev1.Container {
+	t.Helper()
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, params)
+	rendered, err := os.ReadFile(filepath.Join(dir, "base", "deployment.yaml"))
+	if err != nil {
+		t.Fatalf("read deployment: %v", err)
+	}
+	var deployment appsv1.Deployment
+	if err := k8syaml.UnmarshalStrict(rendered, &deployment); err != nil {
+		t.Fatalf("rendered deployment is not a valid Deployment: %v\n%s", err, rendered)
+	}
+	containers := deployment.Spec.Template.Spec.Containers
+	if len(containers) != 1 {
+		t.Fatalf("want exactly one container, got %d:\n%s", len(containers), rendered)
+	}
+	container := containers[0]
+	for name, probe := range map[string]*corev1.Probe{
+		"startupProbe":   container.StartupProbe,
+		"readinessProbe": container.ReadinessProbe,
+		"livenessProbe":  container.LivenessProbe,
+	} {
+		if probe == nil {
+			t.Fatalf("container has no %s:\n%s", name, rendered)
+		}
+	}
+	return container
+}
+
+// TestSettingsValidateHealth covers the declarations that must fail before they
+// reach a cluster: an unsupported mode, a half-written block, a route on a
+// listener the process never binds (#78), and fields belonging to another mode
+// — each of which would otherwise render a probe that can never pass.
+func TestSettingsValidateHealth(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings Settings
+		wantErr  string
+	}{
+		{name: "undeclared", settings: Settings{}},
+		{name: "transport", settings: Settings{Health: &HealthSpec{Mode: HealthModeTransport}}},
+		{name: "grpc", settings: Settings{Health: &HealthSpec{Mode: HealthModeGrpc}}},
+		{
+			name:     "grpc with service name",
+			settings: Settings{Health: &HealthSpec{Mode: HealthModeGrpc, GrpcService: "acme.v1.OrderService"}},
+		},
+		{
+			name:     "http on the rest listener",
+			settings: Settings{RestEndpoint: true, Health: &HealthSpec{Mode: HealthModeHTTP, Path: "/readyz"}},
+		},
+		{
+			name:     "http on the connect listener",
+			settings: Settings{ConnectEndpoint: true, Health: &HealthSpec{Mode: HealthModeHTTP, Path: "/readyz", Port: "connect"}},
+		},
+		{
+			name:     "unsupported mode",
+			settings: Settings{Health: &HealthSpec{Mode: "sql"}},
+			wantErr:  `unsupported mode "sql"`,
+		},
+		{
+			name:     "missing mode",
+			settings: Settings{Health: &HealthSpec{Path: "/readyz"}},
+			wantErr:  "mode is required",
+		},
+		{
+			name:     "http without a path",
+			settings: Settings{RestEndpoint: true, Health: &HealthSpec{Mode: HealthModeHTTP}},
+			wantErr:  "requires an absolute path",
+		},
+		{
+			name:     "http with a relative path",
+			settings: Settings{RestEndpoint: true, Health: &HealthSpec{Mode: HealthModeHTTP, Path: "readyz"}},
+			wantErr:  "requires an absolute path",
+		},
+		{
+			name:     "http on an unbound rest listener",
+			settings: Settings{Health: &HealthSpec{Mode: HealthModeHTTP, Path: "/readyz"}},
+			wantErr:  "requires rest-endpoint: true",
+		},
+		{
+			name:     "http on an unbound connect listener",
+			settings: Settings{RestEndpoint: true, Health: &HealthSpec{Mode: HealthModeHTTP, Path: "/readyz", Port: "connect"}},
+			wantErr:  "requires connect-endpoint: true",
+		},
+		{
+			name:     "http on an unknown listener",
+			settings: Settings{RestEndpoint: true, Health: &HealthSpec{Mode: HealthModeHTTP, Path: "/readyz", Port: "grpc"}},
+			wantErr:  `port "grpc" is not a listener`,
+		},
+		{
+			name:     "grpc with an http route",
+			settings: Settings{RestEndpoint: true, Health: &HealthSpec{Mode: HealthModeGrpc, Path: "/readyz"}},
+			wantErr:  "takes no path or port",
+		},
+		{
+			name:     "http with a grpc service name",
+			settings: Settings{RestEndpoint: true, Health: &HealthSpec{Mode: HealthModeHTTP, Path: "/readyz", GrpcService: "acme.v1.OrderService"}},
+			wantErr:  "takes no grpc-service",
+		},
+		{
+			name:     "transport with a grpc service name",
+			settings: Settings{Health: &HealthSpec{Mode: HealthModeTransport, GrpcService: "acme.v1.OrderService"}},
+			wantErr:  "takes no grpc-service, path, or port",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.settings.Health.Validate(tc.settings.RestEndpoint, tc.settings.ConnectEndpoint)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected validation error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected validation error containing %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q does not mention %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -166,6 +167,14 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 			createResponse.GetState().GetState(),
 			createResponse.GetState().GetMessage(),
 		)
+		// The scaffolded server registers grpc.health.v1.Health, so the
+		// service it creates must say so — that declaration is what turns the
+		// rendered Kubernetes probes from transport-only into semantic ones.
+		require.Equal(t, HealthModeGrpc, builder.GoGrpc.Settings.Health.Mode)
+		spec, err := os.ReadFile(path.Join(tmpDir, "mod", service.Name, "service.codefly.yaml"))
+		require.NoError(t, err)
+		require.Contains(t, string(spec), "mode: grpc")
+
 		syncResponse, err := builder.Sync(ctx, &builderv0.SyncRequest{DryRun: true})
 		require.NoError(t, err)
 		require.Equal(t, builderv0.SyncStatus_SUCCESS, syncResponse.GetState().GetState(), syncResponse.GetState().GetMessage())
