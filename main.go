@@ -90,6 +90,12 @@ type Settings struct {
 	// same-origin default. See CorsSpec. No omitempty: a struct value is never
 	// "empty" to the YAML encoder, so the tag would be a silent no-op.
 	Cors CorsSpec `yaml:"cors"`
+
+	// Health declares which health contract the service actually serves, so
+	// the Kubernetes manifests probe that contract instead of guessing. Absent
+	// means transport-only: a service customized before this declaration
+	// existed keeps the probes it has always had. See HealthSpec.
+	Health *HealthSpec `yaml:"health,omitempty"`
 }
 
 // CorsSpec drives the CORS policy baked into the generated REST adapter
@@ -152,6 +158,159 @@ func (c CorsSpec) DeniesCrossOrigin() bool {
 	return !c.AllowAll && len(c.AllowedOrigins) == 0
 }
 
+// HealthMode names the health contract a service declares it serves. The
+// deployment templates render the Kubernetes probe that speaks that contract:
+// a transport probe proves only that a listener accepts connections, while the
+// semantic modes prove the application answers.
+type HealthMode string
+
+const (
+	// HealthModeTransport opens a TCP connection to the gRPC listener. It
+	// proves the socket is bound and nothing more, so an application wedged
+	// behind an accepted connection still reads as healthy. It is the mode a
+	// service keeps when it declares no health block.
+	HealthModeTransport HealthMode = "tcp"
+
+	// HealthModeGrpc calls the standard gRPC health service
+	// (grpc.health.v1.Health) that the generated server registers, and is
+	// ready only on SERVING. The kubelet speaks this natively from Kubernetes
+	// 1.24 (beta, on by default) and 1.27 (GA); on anything older the probe is
+	// rejected, so a cluster that predates it must declare tcp explicitly
+	// rather than have a semantic predicate silently downgraded. The built-in
+	// probe also dials in plaintext: a gRPC listener behind TLS or per-call
+	// authentication cannot be probed this way.
+	HealthModeGrpc HealthMode = "grpc"
+
+	// HealthModeHTTP issues a GET against a route the service declares it
+	// serves. The kubelet accepts any 2xx or 3xx response; a stricter
+	// predicate (an exact status, a response body) is not expressible with a
+	// built-in probe.
+	HealthModeHTTP HealthMode = "http"
+)
+
+// HealthSpec is the declared health capability the deployment manifests render
+// probes from. Mode is mandatory whenever the block is present — a health block
+// with no mode is a half-written declaration, not a request for the default.
+//
+// Only readiness and startup follow the declared mode. Liveness stays
+// transport-only in every mode: a semantic liveness probe reports "a
+// dependency is unavailable" as "this process is wedged", and the kubelet
+// answers that by restarting pods that were working fine.
+type HealthSpec struct {
+	Mode HealthMode `yaml:"mode"`
+
+	// GrpcService names the entry to check in the gRPC health service. Empty
+	// (the default) checks the server-wide entry, which the generated server
+	// registers alongside the per-service one; set it to a fully qualified
+	// proto service name to gate readiness on that service alone. Validate
+	// constrains it to that shape, and the template quotes it: the value is
+	// interpolated straight into a rendered manifest.
+	GrpcService string `yaml:"grpc-service,omitempty"`
+
+	// Path is the HTTP route to probe. It has no default: the generic
+	// deployment contract guarantees a listener, never a route, so a route
+	// this agent invented would 404 on every service that does not happen to
+	// serve it. Validate constrains it to URL path characters, and the
+	// template quotes it, for the same reason as GrpcService.
+	Path string `yaml:"path,omitempty"`
+
+	// Port selects which HTTP listener serves Path: "http" (the grpc-gateway
+	// REST facade) or "connect". Defaults to "http".
+	Port string `yaml:"port,omitempty"`
+}
+
+// healthPortEndpoints maps an HTTP health port to the setting that binds it.
+var healthPortEndpoints = map[string]string{"http": RestEndpointSetting, "connect": ConnectEndpointSetting}
+
+// grpcServiceName matches a fully qualified protobuf service name, which is the
+// only thing the gRPC health service can be keyed by.
+var grpcServiceName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+
+// healthRoutePath matches an absolute URL path built from RFC 3986 path
+// characters. It excludes whitespace, control characters, and "#" — all of
+// which change what the rendered manifest means rather than what it probes.
+var healthRoutePath = regexp.MustCompile(`^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$`)
+
+// validateHealth rejects a health declaration the rendered probes could not
+// honor. It reads the service's own listener settings, so a route on a port the
+// process never opens fails here rather than as a pod that restart-loops
+// forever against a closed port. Fields belonging to another mode are refused
+// rather than ignored: a silently dropped predicate is how a service ends up
+// believing it checks more than it does.
+func (s *Settings) validateHealth() error {
+	h := s.Health
+	if h == nil {
+		return nil
+	}
+	switch h.Mode {
+	case HealthModeTransport:
+		if h.GrpcService != "" || h.Path != "" || h.Port != "" {
+			return fmt.Errorf("health: mode %q takes no grpc-service, path, or port", h.Mode)
+		}
+	case HealthModeGrpc:
+		if h.Path != "" || h.Port != "" {
+			return fmt.Errorf("health: mode %q takes no path or port — it probes the gRPC listener", h.Mode)
+		}
+		if h.GrpcService != "" && !grpcServiceName.MatchString(h.GrpcService) {
+			return fmt.Errorf("health: grpc-service %q must be a fully qualified protobuf service name", h.GrpcService)
+		}
+	case HealthModeHTTP:
+		if h.GrpcService != "" {
+			return fmt.Errorf("health: mode %q takes no grpc-service", h.Mode)
+		}
+		if !strings.HasPrefix(h.Path, "/") {
+			return fmt.Errorf("health: mode %q requires an absolute path the service serves (got %q)", h.Mode, h.Path)
+		}
+		if !healthRoutePath.MatchString(h.Path) {
+			return fmt.Errorf("health: path %q must be a URL path — no whitespace, control characters, or %q", h.Path, "#")
+		}
+		port := h.Port
+		if port == "" {
+			port = "http"
+		}
+		setting, known := healthPortEndpoints[port]
+		if !known {
+			return fmt.Errorf("health: port %q is not a listener this service can bind (want http or connect)", port)
+		}
+		if (port == "http" && !s.RestEndpoint) || (port == "connect" && !s.ConnectEndpoint) {
+			return fmt.Errorf("health: port %q requires %s: true", port, setting)
+		}
+	case "":
+		return fmt.Errorf("health: mode is required (%s, %s, or %s)", HealthModeTransport, HealthModeGrpc, HealthModeHTTP)
+	default:
+		return fmt.Errorf("health: unsupported mode %q (want %s, %s, or %s)", h.Mode, HealthModeTransport, HealthModeGrpc, HealthModeHTTP)
+	}
+	return nil
+}
+
+// Handler reports the mode the templates render a probe for. It fails on an
+// unset mode rather than falling back: the zero value of the rendered spec
+// would otherwise mean "transport" here while meaning "incomplete declaration"
+// to validateHealth, so a parameter set built without Normalized would quietly
+// downgrade a service's semantic probes to a TCP connect. Returning an error
+// makes template execution fail instead.
+func (h HealthSpec) Handler() (HealthMode, error) {
+	switch h.Mode {
+	case HealthModeTransport, HealthModeGrpc, HealthModeHTTP:
+		return h.Mode, nil
+	}
+	return "", fmt.Errorf("health: deployment parameters carry no health mode; Normalized must resolve one before rendering")
+}
+
+// Normalized resolves the declaration the deployment templates render from. A
+// missing block resolves to transport-only, so a service written before this
+// declaration existed renders exactly the probes it renders today.
+func (h *HealthSpec) Normalized() HealthSpec {
+	if h == nil {
+		return HealthSpec{Mode: HealthModeTransport}
+	}
+	resolved := *h
+	if resolved.Mode == HealthModeHTTP && resolved.Port == "" {
+		resolved.Port = "http"
+	}
+	return resolved
+}
+
 // ServiceAccountSpec configures the Kubernetes ServiceAccount a service's
 // pods run under. This is the passwordless-identity seam: annotations land
 // on the rendered SA object (e.g. an Azure workload-identity client id) and
@@ -210,6 +369,9 @@ func (s *Settings) Validate() error {
 		return err
 	}
 	if err := s.Cors.Validate(); err != nil {
+		return err
+	}
+	if err := s.validateHealth(); err != nil {
 		return err
 	}
 	return nil

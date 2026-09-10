@@ -853,22 +853,25 @@ func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*
 
 // DeploymentParameters carries the go-grpc-specific values the deployment
 // templates consume through .Deployment.Parameters: the optional workload
-// ServiceAccount plus which optional listeners the service serves. The http
-// (grpc-gateway) and connect listeners bind only when their endpoint is
-// enabled, so the templates emit each container/service port and probe only
-// for a port the process actually binds — a grpc-only service must not
-// advertise http, and a connect service must advertise its port.
+// ServiceAccount, which optional listeners the service serves, and the health
+// contract it declares. The http (grpc-gateway) and connect listeners bind
+// only when their endpoint is enabled, so the templates emit each
+// container/service port and probe only for a port the process actually binds
+// — a grpc-only service must not advertise http, and a connect service must
+// advertise its port.
 type DeploymentParameters struct {
 	ServiceAccount  *ServiceAccountSpec
 	RestEndpoint    bool
 	ConnectEndpoint bool
+	Health          HealthSpec
 }
 
 // Deploy applies the k8s manifests in templates/deployment. It mirrors
-// golanghelpers.DeployGoKubernetes but threads the service-account spec and the
-// service's declared listeners into the templates so pods can run under an
-// annotated, workload-identity SA rather than the namespace default and so the
-// manifest advertises exactly the ports the service serves.
+// golanghelpers.DeployGoKubernetes but threads the service-account spec, the
+// service's declared listeners, and its declared health contract into the
+// templates so pods can run under an annotated, workload-identity SA rather
+// than the namespace default, the manifest advertises exactly the ports the
+// service serves, and the probes speak the health contract the service serves.
 func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
@@ -885,6 +888,7 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			ServiceAccount:  s.GoGrpc.Settings.ServiceAccount,
 			RestEndpoint:    s.GoGrpc.Settings.RestEndpoint,
 			ConnectEndpoint: s.GoGrpc.Settings.ConnectEndpoint,
+			Health:          s.GoGrpc.Settings.Health.Normalized(),
 		},
 	})
 }
@@ -947,6 +951,24 @@ type CreateConfiguration struct {
 	Envs     []string
 }
 
+// declareHealthCapability records that the scaffolded gRPC server registers
+// grpc.health.v1.Health, so a service created from it gets semantic probes
+// instead of transport-only ones.
+//
+// An existing declaration always wins. Load populates Settings from the
+// service's own service.codefly.yaml before Create runs, so a service that has
+// already been created arrives here carrying whatever health contract its
+// author wrote — and CreateResponse persists these settings back to that file.
+// Overwriting would rewrite a customized service's "tcp" into "grpc" and then
+// probe it for a health service it may never have registered. Sync does not
+// call this at all, for the same reason.
+func (s *Builder) declareHealthCapability() {
+	if s.GoGrpc.Settings.Health != nil {
+		return
+	}
+	s.GoGrpc.Settings.Health = &HealthSpec{Mode: HealthModeGrpc}
+}
+
 // Create applies factory templates and creates the gRPC endpoint resources.
 // Overrides generic Create: go-grpc scaffolding needs .proto preservation
 // and endpoint creation after template application.
@@ -963,6 +985,8 @@ func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 			return s.Base.Builder.CreateError(err)
 		}
 	}
+
+	s.declareHealthCapability()
 
 	create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
 	ignore := shared.NewIgnore("go.work*", "service.generation.codefly.yaml")

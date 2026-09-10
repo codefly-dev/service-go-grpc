@@ -1,3 +1,21 @@
+{{- define "healthProbeHandler" }}
+{{- $mode := .Handler }}
+{{- if eq $mode "grpc" }}
+            grpc:
+              port: 9090
+{{- with .GrpcService }}
+              service: {{ . | quote }}
+{{- end }}
+{{- else if eq $mode "http" }}
+            httpGet:
+              path: {{ .Path | quote }}
+              port: {{ .Port }}
+{{- else }}
+            tcpSocket:
+              port: grpc
+{{- end }}
+{{- end }}
+{{- $health := .Deployment.Parameters.Health -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -90,22 +108,25 @@ spec:
             limits:
               cpu: "1"
               memory: 512Mi
-          # The generic deployment contract guarantees the listener, not a
-          # product-specific HTTP health route. Probe grpc, not http: the gRPC
-          # listener is the one endpoint every service serves, while the http
-          # (grpc-gateway) and connect listeners only bind when those endpoints
-          # are enabled. A grpc-only service never binds http, so probing it
-          # fails startup forever and the kubelet restart-loops the pod.
+          # Startup and readiness speak the health contract the service
+          # declares (spec.health), never one this agent invented: a route or a
+          # listener the process does not serve fails forever and the kubelet
+          # restart-loops the pod. Undeclared means transport-only, so a
+          # service customized before semantic health existed keeps the probes
+          # it has always had.
           startupProbe:
-            tcpSocket:
-              port: grpc
+{{- template "healthProbeHandler" $health }}
             periodSeconds: 2
             failureThreshold: 30
           readinessProbe:
-            tcpSocket:
-              port: grpc
+{{- template "healthProbeHandler" $health }}
             periodSeconds: 5
             timeoutSeconds: 3
+          # Liveness stays transport-only whatever health the service declares.
+          # It answers "is this process wedged", never "is a dependency
+          # reachable": a service that reports NOT_SERVING because something
+          # downstream is unavailable must drop out of load balancing, not be
+          # restarted — restarting it cascades an outage across every consumer.
           livenessProbe:
             tcpSocket:
               port: grpc
