@@ -1,3 +1,20 @@
+{{- define "healthProbeHandler" }}
+{{- $mode := .Handler }}
+{{- if eq $mode "grpc" }}
+            grpc:
+              port: 9090
+{{- with .GrpcService }}
+              service: {{ . | quote }}
+{{- end }}
+{{- else if eq $mode "http" }}
+            httpGet:
+              path: {{ .Path | quote }}
+              port: {{ .Port }}
+{{- else }}
+            tcpSocket:
+              port: grpc
+{{- end }}
+{{- end }}
 {{- $health := .Deployment.Parameters.Health -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -98,37 +115,11 @@ spec:
           # service customized before semantic health existed keeps the probes
           # it has always had.
           startupProbe:
-{{- if eq $health.Mode "grpc" }}
-            grpc:
-              port: 9090
-{{- with $health.GrpcService }}
-              service: {{ . }}
-{{- end }}
-{{- else if eq $health.Mode "http" }}
-            httpGet:
-              path: {{ $health.Path }}
-              port: {{ $health.Port }}
-{{- else }}
-            tcpSocket:
-              port: grpc
-{{- end }}
+{{- template "healthProbeHandler" $health }}
             periodSeconds: 2
             failureThreshold: 30
           readinessProbe:
-{{- if eq $health.Mode "grpc" }}
-            grpc:
-              port: 9090
-{{- with $health.GrpcService }}
-              service: {{ . }}
-{{- end }}
-{{- else if eq $health.Mode "http" }}
-            httpGet:
-              path: {{ $health.Path }}
-              port: {{ $health.Port }}
-{{- else }}
-            tcpSocket:
-              port: grpc
-{{- end }}
+{{- template "healthProbeHandler" $health }}
             periodSeconds: 5
             timeoutSeconds: 3
           # Liveness stays transport-only whatever health the service declares.

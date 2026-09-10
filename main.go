@@ -202,13 +202,16 @@ type HealthSpec struct {
 	// GrpcService names the entry to check in the gRPC health service. Empty
 	// (the default) checks the server-wide entry, which the generated server
 	// registers alongside the per-service one; set it to a fully qualified
-	// proto service name to gate readiness on that service alone.
+	// proto service name to gate readiness on that service alone. Validate
+	// constrains it to that shape, and the template quotes it: the value is
+	// interpolated straight into a rendered manifest.
 	GrpcService string `yaml:"grpc-service,omitempty"`
 
 	// Path is the HTTP route to probe. It has no default: the generic
 	// deployment contract guarantees a listener, never a route, so a route
 	// this agent invented would 404 on every service that does not happen to
-	// serve it.
+	// serve it. Validate constrains it to URL path characters, and the
+	// template quotes it, for the same reason as GrpcService.
 	Path string `yaml:"path,omitempty"`
 
 	// Port selects which HTTP listener serves Path: "http" (the grpc-gateway
@@ -219,13 +222,23 @@ type HealthSpec struct {
 // healthPortEndpoints maps an HTTP health port to the setting that binds it.
 var healthPortEndpoints = map[string]string{"http": RestEndpointSetting, "connect": ConnectEndpointSetting}
 
-// Validate rejects a health declaration the rendered probes could not honor.
-// rest and connect report which optional HTTP listeners the service binds, so
-// a route on a port the process never opens fails here rather than as a pod
-// that restart-loops forever against a closed port. Fields belonging to another
-// mode are refused rather than ignored: a silently dropped predicate is how a
-// service ends up believing it checks more than it does.
-func (h *HealthSpec) Validate(rest, connect bool) error {
+// grpcServiceName matches a fully qualified protobuf service name, which is the
+// only thing the gRPC health service can be keyed by.
+var grpcServiceName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+
+// healthRoutePath matches an absolute URL path built from RFC 3986 path
+// characters. It excludes whitespace, control characters, and "#" — all of
+// which change what the rendered manifest means rather than what it probes.
+var healthRoutePath = regexp.MustCompile(`^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$`)
+
+// validateHealth rejects a health declaration the rendered probes could not
+// honor. It reads the service's own listener settings, so a route on a port the
+// process never opens fails here rather than as a pod that restart-loops
+// forever against a closed port. Fields belonging to another mode are refused
+// rather than ignored: a silently dropped predicate is how a service ends up
+// believing it checks more than it does.
+func (s *Settings) validateHealth() error {
+	h := s.Health
 	if h == nil {
 		return nil
 	}
@@ -238,12 +251,18 @@ func (h *HealthSpec) Validate(rest, connect bool) error {
 		if h.Path != "" || h.Port != "" {
 			return fmt.Errorf("health: mode %q takes no path or port — it probes the gRPC listener", h.Mode)
 		}
+		if h.GrpcService != "" && !grpcServiceName.MatchString(h.GrpcService) {
+			return fmt.Errorf("health: grpc-service %q must be a fully qualified protobuf service name", h.GrpcService)
+		}
 	case HealthModeHTTP:
 		if h.GrpcService != "" {
 			return fmt.Errorf("health: mode %q takes no grpc-service", h.Mode)
 		}
 		if !strings.HasPrefix(h.Path, "/") {
 			return fmt.Errorf("health: mode %q requires an absolute path the service serves (got %q)", h.Mode, h.Path)
+		}
+		if !healthRoutePath.MatchString(h.Path) {
+			return fmt.Errorf("health: path %q must be a URL path — no whitespace, control characters, or %q", h.Path, "#")
 		}
 		port := h.Port
 		if port == "" {
@@ -253,7 +272,7 @@ func (h *HealthSpec) Validate(rest, connect bool) error {
 		if !known {
 			return fmt.Errorf("health: port %q is not a listener this service can bind (want http or connect)", port)
 		}
-		if (port == "http" && !rest) || (port == "connect" && !connect) {
+		if (port == "http" && !s.RestEndpoint) || (port == "connect" && !s.ConnectEndpoint) {
 			return fmt.Errorf("health: port %q requires %s: true", port, setting)
 		}
 	case "":
@@ -262,6 +281,20 @@ func (h *HealthSpec) Validate(rest, connect bool) error {
 		return fmt.Errorf("health: unsupported mode %q (want %s, %s, or %s)", h.Mode, HealthModeTransport, HealthModeGrpc, HealthModeHTTP)
 	}
 	return nil
+}
+
+// Handler reports the mode the templates render a probe for. It fails on an
+// unset mode rather than falling back: the zero value of the rendered spec
+// would otherwise mean "transport" here while meaning "incomplete declaration"
+// to validateHealth, so a parameter set built without Normalized would quietly
+// downgrade a service's semantic probes to a TCP connect. Returning an error
+// makes template execution fail instead.
+func (h HealthSpec) Handler() (HealthMode, error) {
+	switch h.Mode {
+	case HealthModeTransport, HealthModeGrpc, HealthModeHTTP:
+		return h.Mode, nil
+	}
+	return "", fmt.Errorf("health: deployment parameters carry no health mode; Normalized must resolve one before rendering")
 }
 
 // Normalized resolves the declaration the deployment templates render from. A
@@ -338,7 +371,7 @@ func (s *Settings) Validate() error {
 	if err := s.Cors.Validate(); err != nil {
 		return err
 	}
-	if err := s.Health.Validate(s.RestEndpoint, s.ConnectEndpoint); err != nil {
+	if err := s.validateHealth(); err != nil {
 		return err
 	}
 	return nil

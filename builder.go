@@ -951,6 +951,24 @@ type CreateConfiguration struct {
 	Envs     []string
 }
 
+// declareHealthCapability records that the scaffolded gRPC server registers
+// grpc.health.v1.Health, so a service created from it gets semantic probes
+// instead of transport-only ones.
+//
+// An existing declaration always wins. Load populates Settings from the
+// service's own service.codefly.yaml before Create runs, so a service that has
+// already been created arrives here carrying whatever health contract its
+// author wrote — and CreateResponse persists these settings back to that file.
+// Overwriting would rewrite a customized service's "tcp" into "grpc" and then
+// probe it for a health service it may never have registered. Sync does not
+// call this at all, for the same reason.
+func (s *Builder) declareHealthCapability() {
+	if s.GoGrpc.Settings.Health != nil {
+		return
+	}
+	s.GoGrpc.Settings.Health = &HealthSpec{Mode: HealthModeGrpc}
+}
+
 // Create applies factory templates and creates the gRPC endpoint resources.
 // Overrides generic Create: go-grpc scaffolding needs .proto preservation
 // and endpoint creation after template application.
@@ -968,12 +986,7 @@ func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 		}
 	}
 
-	// The scaffolded gRPC server registers grpc.health.v1.Health, so the
-	// service created from it declares that capability and gets semantic
-	// probes. Sync deliberately does not do this: a service scaffolded before
-	// the declaration existed may have replaced that server, so regenerating
-	// must not start asserting a health implementation it may not have.
-	s.GoGrpc.Settings.Health = &HealthSpec{Mode: HealthModeGrpc}
+	s.declareHealthCapability()
 
 	create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
 	ignore := shared.NewIgnore("go.work*", "service.generation.codefly.yaml")

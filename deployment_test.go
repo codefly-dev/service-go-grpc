@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -16,8 +16,14 @@ import (
 	k8syaml "sigs.k8s.io/yaml"
 )
 
+// undeclaredHealth is what a service that declares no health block resolves to.
+// Rendering requires a resolved contract — the zero value is refused — so tests
+// that are not about health still go through the same resolution production
+// does.
+func undeclaredHealth() HealthSpec { return (*HealthSpec)(nil).Normalized() }
+
 func TestDeploymentTemplates(t *testing.T) {
-	agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{})
+	agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{Health: undeclaredHealth()})
 }
 
 // TestDeploymentTemplatesHaveNoOrphans catches source-level orphans: any file
@@ -59,7 +65,7 @@ func TestDeploymentTemplatesHaveNoOrphans(t *testing.T) {
 // that would slip past the source-level guard above (e.g. adding a base
 // role.yaml.tmpl without the matching `- role.yaml` entry).
 func TestDeploymentManifestsAreReferenced(t *testing.T) {
-	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{})
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{Health: undeclaredHealth()})
 	// The helper renders the overlay under its environment name ("test").
 	assertManifestsReferenced(t, filepath.Join(dir, "base"))
 	assertManifestsReferenced(t, filepath.Join(dir, "overlays", "test"))
@@ -114,7 +120,7 @@ func TestDeploymentServiceAccountRendering(t *testing.T) {
 		Annotations: map[string]string{"azure.workload.identity/client-id": "00000000-0000-0000-0000-000000000000"},
 		Labels:      map[string]string{"azure.workload.identity/use": "true"},
 	}
-	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{ServiceAccount: spec})
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{ServiceAccount: spec, Health: undeclaredHealth()})
 
 	deployment, err := os.ReadFile(filepath.Join(dir, "base", "deployment.yaml"))
 	if err != nil {
@@ -150,8 +156,8 @@ func TestDeploymentWithoutServiceAccountRendersNoSA(t *testing.T) {
 	// both the zero-value parameters and an explicit typed-nil field so a future
 	// guard change can't silently regress the default path.
 	for name, params := range map[string]any{
-		"zero parameters":           DeploymentParameters{},
-		"typed-nil service account": DeploymentParameters{ServiceAccount: (*ServiceAccountSpec)(nil)},
+		"zero parameters":           DeploymentParameters{Health: undeclaredHealth()},
+		"typed-nil service account": DeploymentParameters{ServiceAccount: (*ServiceAccountSpec)(nil), Health: undeclaredHealth()},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, params)
@@ -315,7 +321,7 @@ func TestDeploymentProbesNeverInventARoute(t *testing.T) {
 		"grpc":      {Health: (&HealthSpec{Mode: HealthModeGrpc}).Normalized()},
 		"http":      {RestEndpoint: true, Health: (&HealthSpec{Mode: HealthModeHTTP, Path: "/healthz"}).Normalized()},
 	} {
-		liveness := renderProbes(t, params).LivenessProbe
+		liveness := renderContainer(t, params).LivenessProbe
 		if liveness.TCPSocket == nil {
 			t.Fatalf("liveness must stay transport-only, got %+v", liveness.ProbeHandler)
 		}
@@ -384,25 +390,25 @@ func TestDeploymentProbesRenderTheDeclaredHealthContract(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			container := renderProbes(t, tc.params)
+			container := renderContainer(t, tc.params)
 			for probe, got := range map[string]corev1.ProbeHandler{
 				"startupProbe":   container.StartupProbe.ProbeHandler,
 				"readinessProbe": container.ReadinessProbe.ProbeHandler,
 			} {
-				if diff := fmt.Sprint(got); diff != fmt.Sprint(tc.want) {
-					t.Errorf("%s = %s, want %s", probe, diff, fmt.Sprint(tc.want))
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Errorf("%s = %+v, want %+v", probe, got, tc.want)
 				}
 			}
 		})
 	}
 }
 
-// renderProbes renders the base deployment and returns the container it
+// renderContainer renders the base deployment and returns the container it
 // declares. Decoding is strict against the real Kubernetes API types, so a
 // probe this agent renders with a misspelled field, a wrong type (the kubelet
 // takes a number for a gRPC probe's port, never a port name), or a handler the
 // schema does not know fails here rather than at apply time.
-func renderProbes(t *testing.T, params DeploymentParameters) corev1.Container {
+func renderContainer(t *testing.T, params DeploymentParameters) corev1.Container {
 	t.Helper()
 	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, params)
 	rendered, err := os.ReadFile(filepath.Join(dir, "base", "deployment.yaml"))
@@ -428,6 +434,75 @@ func renderProbes(t *testing.T, params DeploymentParameters) corev1.Container {
 		}
 	}
 	return container
+}
+
+// TestCreatePreservesAnExistingHealthDeclaration pins the rule that separates a
+// new service from a customized one. Load fills Settings from the service's own
+// service.codefly.yaml before Create runs and CreateResponse writes them back,
+// so overwriting here would rewrite a customized service's transport-only
+// declaration into one asserting a gRPC health service it may never register —
+// and every probe would then fail forever.
+func TestCreatePreservesAnExistingHealthDeclaration(t *testing.T) {
+	for name, tc := range map[string]struct {
+		existing *HealthSpec
+		want     HealthMode
+	}{
+		"undeclared gets the scaffold's capability": {existing: nil, want: HealthModeGrpc},
+		"declared transport-only is preserved":      {existing: &HealthSpec{Mode: HealthModeTransport}, want: HealthModeTransport},
+		"declared http is preserved":                {existing: &HealthSpec{Mode: HealthModeHTTP, Path: "/readyz"}, want: HealthModeHTTP},
+	} {
+		t.Run(name, func(t *testing.T) {
+			builder := NewBuilder(NewService())
+			builder.GoGrpc.Settings.Health = tc.existing
+			builder.declareHealthCapability()
+			if got := builder.GoGrpc.Settings.Health.Mode; got != tc.want {
+				t.Errorf("health mode after Create = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDeploymentRenderingRefusesAnUnresolvedHealthContract keeps the zero value
+// from meaning "transport". A parameter set built without Normalized must fail
+// rendering, not quietly downgrade a service's semantic probes to a TCP
+// connect — the silent downgrade this whole change exists to remove.
+func TestDeploymentRenderingRefusesAnUnresolvedHealthContract(t *testing.T) {
+	if _, err := (HealthSpec{}).Handler(); err == nil {
+		t.Fatal("an unresolved health contract must not resolve to a probe handler")
+	}
+	for _, mode := range []HealthMode{HealthModeTransport, HealthModeGrpc, HealthModeHTTP} {
+		if _, err := (HealthSpec{Mode: mode}).Handler(); err != nil {
+			t.Errorf("mode %q must render: %v", mode, err)
+		}
+	}
+}
+
+// TestDeploymentHealthFieldsAreQuoted proves the two interpolated health values
+// cannot restructure the manifest they land in. Unquoted, a newline in either
+// injects sibling keys into the probe — silently overriding its timing with a
+// manifest that still parses — and an unconstrained value reaches the template
+// at all only if validation lets it through.
+func TestDeploymentHealthFieldsAreQuoted(t *testing.T) {
+	injection := "svc\n            timeoutSeconds: 999"
+	container := renderContainer(t, DeploymentParameters{
+		Health: HealthSpec{Mode: HealthModeGrpc, GrpcService: injection},
+	})
+	probe := container.ReadinessProbe
+	if probe.GRPC == nil || probe.GRPC.Service == nil || *probe.GRPC.Service != injection {
+		t.Fatalf("grpc-service did not survive as a single scalar: %+v", probe.ProbeHandler)
+	}
+	if probe.TimeoutSeconds == 999 {
+		t.Error("grpc-service injected a sibling key into the probe")
+	}
+
+	path := "/readyz #frag"
+	container = renderContainer(t, DeploymentParameters{
+		RestEndpoint: true,
+		Health:       HealthSpec{Mode: HealthModeHTTP, Path: path, Port: "http"},
+	})
+	if got := container.ReadinessProbe.HTTPGet.Path; got != path {
+		t.Errorf("path rendered as %q, want %q — an unquoted %q truncates it into a YAML comment", got, path, "#")
+	}
 }
 
 // TestSettingsValidateHealth covers the declarations that must fail before they
@@ -501,6 +576,26 @@ func TestSettingsValidateHealth(t *testing.T) {
 			wantErr:  "takes no grpc-service",
 		},
 		{
+			name:     "grpc service name with a newline",
+			settings: Settings{Health: &HealthSpec{Mode: HealthModeGrpc, GrpcService: "svc\n  timeoutSeconds: 999"}},
+			wantErr:  "fully qualified protobuf service name",
+		},
+		{
+			name:     "grpc service name with a slash",
+			settings: Settings{Health: &HealthSpec{Mode: HealthModeGrpc, GrpcService: "acme.v1.Order/Check"}},
+			wantErr:  "fully qualified protobuf service name",
+		},
+		{
+			name:     "http path with a newline",
+			settings: Settings{RestEndpoint: true, Health: &HealthSpec{Mode: HealthModeHTTP, Path: "/readyz\n  periodSeconds: 1"}},
+			wantErr:  "must be a URL path",
+		},
+		{
+			name:     "http path with a comment marker",
+			settings: Settings{RestEndpoint: true, Health: &HealthSpec{Mode: HealthModeHTTP, Path: "/readyz #frag"}},
+			wantErr:  "must be a URL path",
+		},
+		{
 			name:     "transport with a grpc service name",
 			settings: Settings{Health: &HealthSpec{Mode: HealthModeTransport, GrpcService: "acme.v1.OrderService"}},
 			wantErr:  "takes no grpc-service, path, or port",
@@ -508,7 +603,7 @@ func TestSettingsValidateHealth(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.settings.Health.Validate(tc.settings.RestEndpoint, tc.settings.ConnectEndpoint)
+			err := tc.settings.validateHealth()
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected validation error: %v", err)
@@ -546,10 +641,10 @@ func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 		{"name: connect-port", func(p DeploymentParameters) bool { return p.ConnectEndpoint }},
 	}
 	cases := map[string]DeploymentParameters{
-		"grpc only":      {},
-		"grpc + rest":    {RestEndpoint: true},
-		"grpc + connect": {ConnectEndpoint: true},
-		"all":            {RestEndpoint: true, ConnectEndpoint: true},
+		"grpc only":      {Health: undeclaredHealth()},
+		"grpc + rest":    {RestEndpoint: true, Health: undeclaredHealth()},
+		"grpc + connect": {ConnectEndpoint: true, Health: undeclaredHealth()},
+		"all":            {RestEndpoint: true, ConnectEndpoint: true, Health: undeclaredHealth()},
 	}
 	for name, params := range cases {
 		t.Run(name, func(t *testing.T) {
