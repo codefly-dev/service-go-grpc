@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/codefly-dev/core/agents/helpers/code"
@@ -55,6 +58,15 @@ type Runtime struct {
 	// aborting the rebuild. nil before the first Start.
 	runnerCancel context.CancelFunc
 	testProc     runners.Proc
+
+	// lifecycle serializes the two writers of StartStatus — the Start RPC
+	// committing a generation's outcome, and a supervise goroutine reporting
+	// its runner's death — so their order is wall-clock, not a race.
+	lifecycle sync.Mutex
+	// generation counts start attempts. A runner only speaks for the service
+	// while its generation is the current one: once a rebuild-replace has
+	// begun, the previous binary's exit says nothing about what is serving.
+	generation uint64
 }
 
 // NewRuntime composes a go-grpc Runtime by constructing a generic
@@ -345,11 +357,87 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	return s.Base.Runtime.InitResponse()
 }
 
+// nextGeneration opens a new start attempt and returns its generation.
+func (s *Runtime) nextGeneration() uint64 {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	s.generation++
+	return s.generation
+}
+
+// revokeReadiness clears STARTED for the window between stopping a binary and
+// having its replacement running: a status poll landing in there must not read
+// a service that nothing is serving as still started.
+func (s *Runtime) revokeReadiness(message string) {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	s.Base.Runtime.Lock()
+	defer s.Base.Runtime.Unlock()
+	s.Base.Runtime.StartStatus = &runtimev0.StartStatus{State: runtimev0.StartStatus_UNKNOWN, Message: message}
+}
+
+// commitStarted publishes STARTED for the start attempt in flight. It takes
+// the same lock as reportRunnerExit, so committing before supervision is armed
+// guarantees an immediate child exit lands strictly after — and therefore wins
+// over — this response instead of being clobbered by it.
+func (s *Runtime) commitStarted() (*runtimev0.StartResponse, error) {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	return s.Base.Runtime.StartResponse()
+}
+
+// reportRunnerExit fails the service because the binary of generation gen is
+// gone. A newer generation already serving means gen was superseded and its
+// exit is not this service's state.
+func (s *Runtime) reportRunnerExit(gen uint64, err error) {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	if gen != s.generation {
+		return
+	}
+	s.Base.Runtime.MarkRunnerExited(err)
+}
+
+// superviseRunner watches the binary of generation gen. Any exit it did not
+// ask for revokes readiness — including a status-0 exit, which for a service
+// that is supposed to keep listening is just as fatal as a crash.
+func (s *Runtime) superviseRunner(runningContext context.Context, gen uint64, proc runners.Proc) {
+	err := proc.Wait(runningContext)
+	if runningContext.Err() != nil {
+		// We cancelled runningContext (Stop or a hot-reload rebuild-replace)
+		// — this exit is intentional, not a crash. Stay silent.
+		return
+	}
+	// err may be nil if the binary exited cleanly without us asking —
+	// still unexpected, but don't nil-deref when reporting it.
+	if err != nil {
+		s.Wool.Error("user binary exited unexpectedly", wool.ErrField(err))
+	} else {
+		s.Wool.Error("user binary exited unexpectedly (clean exit, context not cancelled)")
+	}
+	s.reportRunnerExit(gen, err)
+}
+
+// buildBinary compiles the service and returns the compiler's own output
+// alongside the error: go build reports syntax errors on the process output
+// stream, so the exit error on its own says no more than "exit status 1".
+func (s *Runtime) buildBinary(ctx context.Context) (string, error) {
+	var out bytes.Buffer
+	s.RunnerEnvironment.WithOutput(&out)
+	defer s.RunnerEnvironment.WithOutput(nil)
+	err := s.RunnerEnvironment.BuildBinary(ctx)
+	return strings.TrimSpace(out.String()), err
+}
+
 func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runtimev0.StartResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
 	s.Wool.Forwardf("building go binary...")
+
+	// Everything from here belongs to a new generation; whatever the previous
+	// one does from now on cannot speak for this service.
+	gen := s.nextGeneration()
 
 	// Stop before replacing the runner. Cancel the old supervise goroutine's
 	// context FIRST so it recognises this as an intentional stop (hot-reload
@@ -360,21 +448,28 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 			s.runnerCancel()
 			s.runnerCancel = nil
 		}
-		err := s.runner.Stop(ctx)
-		if err != nil {
+		// Keep the handle if the stop failed: a later Stop is the only way
+		// left to reach that process.
+		if err := s.runner.Stop(ctx); err != nil {
 			return s.Base.Runtime.StartError(err)
 		}
+		s.runner = nil
+		s.revokeReadiness("rebuilding: the previous binary has been stopped")
 	}
 
 	buildStarted := time.Now()
-	err := s.RunnerEnvironment.BuildBinary(ctx)
+	diagnostics, err := s.buildBinary(ctx)
 	if err != nil {
-
-		if !s.Settings.HotReload {
-			return s.Base.Runtime.StartError(err)
+		if diagnostics != "" {
+			err = fmt.Errorf("%w\n%s", err, diagnostics)
 		}
-		s.Wool.Info("compile error, waiting for hot-reload")
-		return s.Base.Runtime.StartResponse()
+		if s.Settings.HotReload {
+			// The watcher stays armed, so fixing the source rebuilds in this
+			// same session — but until it does, nothing is serving, and saying
+			// otherwise makes a broken build look like a running service.
+			s.Wool.Info("compile error, waiting for hot-reload")
+		}
+		return s.Base.Runtime.StartErrorf(err, "compilation failed")
 	}
 	buildMode := "built"
 	if s.RunnerEnvironment.UsedCache() {
@@ -428,34 +523,28 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	s.runner = proc
 	err = s.runner.Start(runningContext)
 	if err != nil {
+		s.runner = nil
 		return s.Base.Runtime.StartErrorf(err, "starting runner")
 	}
 
-	// Supervise the binary: if it exits non-zero (e.g. mind os.Exit(1) on
-	// missing API key), mark the runner failed so the codefly CLI's Follow
-	// loop sees it via StartStatus and tears the whole tree down. Without
-	// this goroutine the plugin happily idles while its child is dead.
+	// Commit STARTED before arming supervision. A binary that dies instantly
+	// would otherwise have its failure written first and then overwritten by
+	// this response, leaving a dead service reported as running.
+	resp, err := s.commitStarted()
+	if err != nil {
+		return resp, err
+	}
+
+	// Supervise the binary: if it exits (e.g. mind os.Exit(1) on a missing API
+	// key), mark the runner failed so the codefly CLI's Follow loop sees it via
+	// StartStatus and tears the whole tree down. Without this goroutine the
+	// plugin happily idles while its child is dead.
 	superviseStarted = true // the goroutine now owns runningContext's lifetime
-	go func(p runners.Proc) {
-		err := p.Wait(runningContext)
-		if runningContext.Err() != nil {
-			// We cancelled runningContext (Stop or a hot-reload rebuild-replace)
-			// — this exit is intentional, not a crash. Stay silent.
-			return
-		}
-		// err may be nil if the binary exited cleanly without us asking —
-		// still unexpected, but don't nil-deref when reporting it.
-		if err != nil {
-			s.Wool.Error("user binary exited unexpectedly", wool.ErrField(err))
-		} else {
-			s.Wool.Error("user binary exited unexpectedly (clean exit, context not cancelled)")
-		}
-		s.Base.Runtime.MarkRunnerExited(err)
-	}(proc)
+	go s.superviseRunner(runningContext, gen, proc)
 
 	s.Wool.Forwardf("service started and running")
 
-	return s.Base.Runtime.StartResponse()
+	return resp, nil
 }
 
 // Build, Test, Lint, Information are INHERITED from *goruntime.Runtime.
