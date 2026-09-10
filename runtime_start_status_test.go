@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -100,7 +104,9 @@ func newStartTestRuntime(t *testing.T, source string, hotReload bool) (*Runtime,
 
 	runtime := NewRuntime(NewService())
 	runtime.Base.Logger = runtime.Base.Wool
-	runtime.RunnerEnvironment = env
+	// Same binder CreateRunnerEnvironment uses, so the build-output sink is
+	// wired exactly as it is in production.
+	runtime.bindRunnerEnvironment(env)
 	runtime.GoGrpc.Settings.HotReload = hotReload
 	t.Cleanup(func() {
 		_, _ = runtime.Stop(ctx, &runtimev0.StopRequest{})
@@ -298,4 +304,196 @@ func TestReplacementRevokesReadiness(t *testing.T) {
 	state, message := observedStatus(runtime)
 	require.NotEqual(t, runtimev0.StartStatus_STARTED, state)
 	require.Equal(t, "rebuilding", message)
+}
+
+// pidRecordingSource is a long-running binary that appends its pid to pidFile
+// on startup, so a test can prove every process a start attempt launched was
+// afterwards reachable and stopped.
+func pidRecordingSource(pidFile string) string {
+	return fmt.Sprintf(`package main
+
+import (
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+)
+
+func main() {
+	// Handle the signal before recording, so a replacement arriving mid-write
+	// queues instead of killing the process by default disposition — every
+	// launched binary must end up in the file, however briefly it lived.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	f, err := os.OpenFile(%q, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		os.Exit(1)
+	}
+	_, _ = f.WriteString(strconv.Itoa(os.Getpid()) + "\n")
+	_ = f.Close()
+	<-sig
+}
+`, pidFile)
+}
+
+// waitForPids blocks until the running binary has recorded itself.
+func waitForPids(t *testing.T, pidFile string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, err := os.Stat(pidFile); err == nil && info.Size() > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("no started binary recorded itself in %s", pidFile)
+}
+
+func recordedPids(t *testing.T, pidFile string) []int {
+	t.Helper()
+	raw, err := os.ReadFile(pidFile)
+	require.NoError(t, err)
+	var pids []int
+	for _, field := range strings.Fields(string(raw)) {
+		pid, err := strconv.Atoi(field)
+		require.NoError(t, err)
+		pids = append(pids, pid)
+	}
+	return pids
+}
+
+func alivePids(pids []int) []int {
+	var alive []int
+	for _, pid := range pids {
+		if syscall.Kill(pid, 0) == nil {
+			alive = append(alive, pid)
+		}
+	}
+	return alive
+}
+
+// TestConcurrentStartLeavesNoOrphanProcess pins the mutual exclusion Start
+// depends on. Start owns s.runner/s.runnerCancel and the generation sequence,
+// but gRPC dispatches every RPC on its own goroutine. Overlapping attempts
+// each launch a binary and clobber the other's handle, so a process is left
+// that neither Stop nor a later rebuild can reach — and, because the
+// generation guard then treats the abandoned runner as superseded, its death
+// is discarded instead of failing the service.
+func TestConcurrentStartLeavesNoOrphanProcess(t *testing.T) {
+	ctx := context.Background()
+	pidFile := filepath.Join(t.TempDir(), "pids")
+	runtime, _ := newStartTestRuntime(t, pidRecordingSource(pidFile), false)
+
+	const attempts = 8
+	var wg sync.WaitGroup
+	for range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+			require.NoError(t, err)
+			require.Equal(t, runtimev0.StartStatus_STARTED, resp.GetStatus().GetState())
+		}()
+	}
+	wg.Wait()
+
+	// A binary that a later attempt replaces is usually signalled before it
+	// reaches main, so the file records survivors rather than all eight. That
+	// is exactly the population under test: an orphan is a process nobody
+	// stops, so it always lives long enough to record itself.
+	waitForPids(t, pidFile)
+
+	_, err := runtime.Stop(ctx, &runtimev0.StopRequest{})
+	require.NoError(t, err)
+
+	pids := recordedPids(t, pidFile)
+	require.NotEmpty(t, pids)
+
+	// Stop waits for the process it owns to exit, so anything still alive here
+	// is a process the runtime lost its handle to.
+	deadline := time.Now().Add(5 * time.Second)
+	alive := alivePids(pids)
+	for len(alive) > 0 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		alive = alivePids(pids)
+	}
+	require.Emptyf(t, alive, "orphaned processes survived Stop: %v (recorded %v)", alive, pids)
+}
+
+// TestBuildDiagnosticsIsolatedFromConcurrentToolchainOutput covers the sink
+// being shared. The runner environment's output field is read by the
+// inherited Test/Build/Lint through GoModuleHandling on their own goroutines,
+// so the sink is installed once and guards itself rather than being swapped
+// per build. Module-download chatter that lands in it must not surface as
+// compiler diagnostics.
+func TestBuildDiagnosticsIsolatedFromConcurrentToolchainOutput(t *testing.T) {
+	ctx := context.Background()
+	runtime, _ := newStartTestRuntime(t, brokenSource, false)
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_, _ = runtime.buildLog.Write([]byte("go: downloading example.com/noise v1.0.0\n"))
+			}
+		}
+	}()
+
+	resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	close(stop)
+	<-done
+
+	require.NoError(t, err)
+	require.Equal(t, runtimev0.StartStatus_ERROR, resp.GetStatus().GetState())
+	require.Contains(t, resp.GetStatus().GetMessage(), "syntax error")
+	require.NotContains(t, resp.GetStatus().GetMessage(), "go: downloading")
+
+	// The sink bound at environment creation must be the one the build wrote
+	// to. A per-build writer installed on the environment would leave this
+	// empty — and would be an unsynchronized write to a field Test/Build/Lint
+	// read concurrently.
+	require.Contains(t, runtime.buildLog.snapshot(), "syntax error")
+}
+
+// TestCompileDiagnosticsDropNoiseAndCapSize pins the reduction applied before
+// the log reaches StartStatus.Message — which operationFailure copies again
+// into Failure.Message, so an unbounded log ships twice in every response.
+func TestCompileDiagnosticsDropNoiseAndCapSize(t *testing.T) {
+	require.Empty(t, compileDiagnostics(""))
+	require.Empty(t, compileDiagnostics("go: downloading example.com/a v1.0.0\ngo: downloading example.com/b v2.0.0\n"))
+
+	mixed := "go: downloading example.com/a v1.0.0\n# testsvc\n./main.go:3:1: syntax error: unexpected EOF, expected }\n"
+	got := compileDiagnostics(mixed)
+	require.Contains(t, got, "syntax error")
+	require.NotContains(t, got, "go: downloading")
+
+	huge := strings.Repeat("./main.go:1:1: some error here\n", 20000)
+	capped := compileDiagnostics(huge)
+	require.Contains(t, capped, "some error here")
+	require.Lessf(t, len(capped), len(huge)/4, "diagnostics must be capped, got %d bytes", len(capped))
+}
+
+// TestStopRevokesReadiness closes the same gap this change exists to remove:
+// after Stop nothing is serving, so the polled status must not still claim a
+// running binary.
+func TestStopRevokesReadiness(t *testing.T) {
+	ctx := context.Background()
+	runtime, _ := newStartTestRuntime(t, longRunningSource, false)
+
+	resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	require.NoError(t, err)
+	require.Equal(t, runtimev0.StartStatus_STARTED, resp.GetStatus().GetState())
+
+	_, err = runtime.Stop(ctx, &runtimev0.StopRequest{})
+	require.NoError(t, err)
+
+	state, message := observedStatus(runtime)
+	require.NotEqual(t, runtimev0.StartStatus_STARTED, state,
+		"a stopped service must not still report a running binary")
+	require.Contains(t, message, "stopped")
 }
