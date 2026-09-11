@@ -9,7 +9,6 @@ import (
 	"go/format"
 	goparser "go/parser"
 	"go/token"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -570,13 +569,23 @@ type dockerTemplating struct {
 	RuntimeAssets []string
 }
 
-// Build produces the service's Docker image. Uses a custom DockerTemplating
+// Build prepares the service's Docker recipe. Uses a custom DockerTemplating
 // hook to split the Go source directory into module root + build target —
 // go-grpc services may nest their main package under cmd/server rather than at
 // the module root — and to copy declared runtime assets into the final stage.
 func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*builderv0.BuildResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
+
+	if req.GetOutputDirectory() == "" {
+		return s.Base.Builder.BuildError(fmt.Errorf("output_directory is required for CLI-owned image builds"))
+	}
+	if err := services.ValidateBuildRequestOutputDirectory(req); err != nil {
+		return s.Base.Builder.BuildError(err)
+	}
+	if s.GoGrpc.Settings.WithWorkspace {
+		return s.Base.Builder.BuildError(fmt.Errorf("workspace image recipes require a Core contract supporting workspace build contexts"))
+	}
 
 	configure, assets, err := goDockerTemplating(
 		s.GoGrpc.Settings,
@@ -586,25 +595,23 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	if err != nil {
 		return s.Base.Builder.BuildError(err)
 	}
-	return buildGoDocker(ctx, s.Base.Builder, req, s.Location,
+	return prepareGoDocker(ctx, s.Base.Builder, req,
 		requirements, builderFS, GoVersion, AlpineVersion, assets, configure)
 }
 
-// buildGoDocker mirrors golanghelpers.BuildGoDocker but renders the Dockerfile
-// with the local dockerTemplating superset so the final stage can copy runtime
-// assets. The core helper hardcodes its own struct, which carries no such field.
-func buildGoDocker(
+// The local templating superset carries runtime assets that the Core template
+// parameters cannot express.
+func prepareGoDocker(
 	ctx context.Context,
 	builder *services.BuilderWrapper,
 	req *builderv0.BuildRequest,
-	location string,
 	requirements *builders.Dependencies,
 	builderFS embed.FS,
 	goVersion, alpineVersion string,
 	assets []string,
 	opts ...func(*golanghelpers.DockerTemplating),
 ) (*builderv0.BuildResponse, error) {
-	w := wool.Get(ctx).In("go-grpc.buildGoDocker")
+	w := wool.Get(ctx).In("go-grpc.prepareGoDocker")
 
 	dockerRequest, err := builder.DockerBuildRequest(ctx, req)
 	if err != nil {
@@ -628,49 +635,16 @@ func buildGoDocker(
 		opt(&templating.DockerTemplating)
 	}
 
-	// When the caller owns the docker build it sends output_directory: render the
-	// builder/ tree there and hand back a reproducible recipe the CLI runs docker
-	// buildx from, so the image is a durable, multi-arch artifact a consumer can
-	// rebuild without this agent's toolchain. OverrideAll makes a rebuild replace
-	// the previously emitted recipe rather than depend on the templater's default,
-	// so the emitted plan always reflects the current render.
-	if outputDir := req.GetOutputDirectory(); shouldEmitBuildRecipe(outputDir, templating.ContextRoot) {
-		if err = builder.Templates(ctx, templating,
-			services.WithBuilder(builderFS).WithDestination("%s", outputDir).WithOverride(shared.OverrideAll())); err != nil {
-			return builder.BuildError(err)
-		}
-		return emitBuildPlan(builder, outputDir, image)
-	}
-
-	_ = shared.DeleteFile(ctx, location+"/builder/Dockerfile")
-
-	if err = builder.Templates(ctx, templating, services.WithBuilder(builderFS)); err != nil {
+	outputDir := req.GetOutputDirectory()
+	if err = builder.Templates(ctx, templating,
+		services.WithBuilder(builderFS).WithDestination("%s", outputDir).WithOverride(shared.OverrideAll())); err != nil {
 		return builder.BuildError(err)
 	}
-
-	configuration, err := dockerBuilderConfiguration(location, image, w, templating.DockerTemplating)
-	if err != nil {
-		return builder.BuildError(err)
-	}
-	b, err := dockerhelpers.NewBuilder(configuration)
-	if err != nil {
-		return builder.BuildError(err)
-	}
-	if _, err = b.Build(ctx); err != nil {
-		return builder.BuildError(err)
-	}
-	builder.WithDockerImages(image)
-	return builder.BuildResponse()
+	return emitBuildPlan(builder, outputDir, image)
 }
 
-// shouldEmitBuildRecipe reports whether Build emits a recipe for the caller to
-// build instead of building the image in-process. It requires a caller-owned
-// output directory and a service-directory build context: a workspace build sets
-// a context root (the workspace, where local module replacements live outside the
-// service), which the recipe contract — whose context cannot escape the service
-// directory — cannot express, so such a build stays in-process.
-func shouldEmitBuildRecipe(outputDir, contextRoot string) bool {
-	return outputDir != "" && contextRoot == ""
+func (s *Builder) BuildCapabilities(context.Context, *builderv0.BuildCapabilitiesRequest) (*builderv0.BuildCapabilitiesResponse, error) {
+	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true}, nil
 }
 
 // emitBuildPlan records the rendered builder/ directory as a reproducible Docker
@@ -690,8 +664,7 @@ func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *re
 // relative to outputDir (the caller's builder/ tree); the context is the service
 // directory ("."), which the Dockerfile's COPY paths are written against. The
 // CLI builds the recipe for both linux/amd64 and linux/arm64 and pushes a
-// manifest list. The image reference matches what the in-process path records
-// via WithDockerImages, so the CLI names the same image either way.
+// manifest list.
 func recipeBuildPlan(outputDir string, image *resources.DockerImage) (*builderv0.DockerBuildPlan, error) {
 	recipe := &builderv0.DockerBuildRecipe{
 		Name:         "app",
@@ -702,44 +675,6 @@ func recipeBuildPlan(outputDir string, image *resources.DockerImage) (*builderv0
 		Platforms:    []string{"linux/amd64", "linux/arm64"},
 	}
 	return services.BuildDockerBuildPlan(outputDir, []*builderv0.DockerBuildRecipe{recipe})
-}
-
-// dockerBuilderConfiguration mirrors the core helper of the same shape: it
-// resolves the Docker context root and locates the rendered Dockerfile relative
-// to it, refusing a service directory that escapes the context.
-func dockerBuilderConfiguration(
-	location string,
-	image *resources.DockerImage,
-	output io.Writer,
-	docker golanghelpers.DockerTemplating,
-) (dockerhelpers.BuilderConfiguration, error) {
-	contextRoot := docker.ContextRoot
-	if contextRoot == "" {
-		contextRoot = location
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(contextRoot)
-	if err != nil {
-		return dockerhelpers.BuilderConfiguration{}, fmt.Errorf("resolve Docker context root: %w", err)
-	}
-	resolvedLocation, err := filepath.EvalSymlinks(location)
-	if err != nil {
-		return dockerhelpers.BuilderConfiguration{}, fmt.Errorf("resolve service directory: %w", err)
-	}
-	relative, err := filepath.Rel(resolvedRoot, resolvedLocation)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return dockerhelpers.BuilderConfiguration{}, fmt.Errorf(
-			"service directory %q is outside Docker context root %q",
-			resolvedLocation,
-			resolvedRoot,
-		)
-	}
-	return dockerhelpers.BuilderConfiguration{
-		Root:        resolvedRoot,
-		Dockerfile:  filepath.ToSlash(filepath.Join(relative, "builder", "Dockerfile")),
-		Ignorefile:  filepath.ToSlash(filepath.Join(relative, "builder", "dockerignore")),
-		Destination: image,
-		Output:      output,
-	}, nil
 }
 
 // unsafeAssetChars are byte values that must not appear in a runtime asset

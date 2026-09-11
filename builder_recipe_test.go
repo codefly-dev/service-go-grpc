@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +15,8 @@ import (
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/codefly-dev/core/templates"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // renderBuilderTree renders the real builder templates into dir, mirroring what
@@ -79,11 +82,7 @@ func TestRecipeBuildPlanRejectsUnrenderedTree(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestBuildEmitsRecipePlanWhenCallerOwnsBuild drives Build end to end (short of
-// Docker) for the CLI-owned-build path: a non-workspace service asked to emit
-// into output_directory must render its builder/ tree there and return a
-// DockerBuildPlan the CLI accepts, not run an in-process build.
-func TestBuildEmitsRecipePlanWhenCallerOwnsBuild(t *testing.T) {
+func TestBuildRecipeOverGRPC(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
@@ -107,8 +106,38 @@ func TestBuildEmitsRecipePlanWhenCallerOwnsBuild(t *testing.T) {
 	_, err := builder.Load(ctx, &builderv0.LoadRequest{Identity: identity, CreationMode: &builderv0.CreationMode{}})
 	require.NoError(t, err)
 
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	builderv0.RegisterBuilderServer(server, builder)
+	go func() {
+		if err := server.Serve(listener); err != nil {
+			t.Errorf("serve builder: %v", err)
+		}
+	}()
+	t.Cleanup(server.Stop)
+	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	client := services.NewBuilderAgentClient(conn)
+	t.Setenv("PATH", t.TempDir())
+
 	outputDir := filepath.Join(tmpDir, "mod/svc", "builder")
-	resp, err := builder.Build(ctx, &builderv0.BuildRequest{
+	for _, directory := range []string{"", "relative"} {
+		resp, err := client.Build(ctx, &builderv0.BuildRequest{OutputDirectory: directory})
+		require.NoError(t, err)
+		require.Equal(t, builderv0.BuildStatus_ERROR, resp.GetState().GetState())
+		require.Contains(t, resp.GetState().GetMessage(), "output_directory")
+		require.NoDirExists(t, outputDir)
+	}
+	builder.GoGrpc.Settings.WithWorkspace = true
+	resp, err := client.Build(ctx, &builderv0.BuildRequest{OutputDirectory: outputDir})
+	require.NoError(t, err)
+	require.Equal(t, builderv0.BuildStatus_ERROR, resp.GetState().GetState())
+	require.Contains(t, resp.GetState().GetMessage(), "workspace")
+	require.NoDirExists(t, outputDir)
+	builder.GoGrpc.Settings.WithWorkspace = false
+	resp, err = client.Build(ctx, &builderv0.BuildRequest{
 		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
 			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
 		}},
@@ -133,7 +162,7 @@ func TestBuildEmitsRecipePlanWhenCallerOwnsBuild(t *testing.T) {
 	// and rebuild: a stale Dockerfile would leave the plan referencing content the
 	// current render never produced, so the emitted tree must not keep the sentinel.
 	require.NoError(t, os.WriteFile(filepath.Join(outputDir, "Dockerfile"), []byte("FROM stale:sentinel\n"), 0o644))
-	resp, err = builder.Build(ctx, &builderv0.BuildRequest{
+	resp, err = client.Build(ctx, &builderv0.BuildRequest{
 		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
 			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
 		}},
@@ -145,25 +174,20 @@ func TestBuildEmitsRecipePlanWhenCallerOwnsBuild(t *testing.T) {
 	rebuilt, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
 	require.NoError(t, err)
 	require.NotContains(t, string(rebuilt), "stale:sentinel")
-}
-
-func TestShouldEmitBuildRecipe(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name        string
-		outputDir   string
-		contextRoot string
-		want        bool
-	}{
-		{"caller owns build, service-directory context", "/out", "", true},
-		{"no output directory keeps the in-process build", "", "", false},
-		{"workspace context cannot be expressed as a recipe", "/out", "/workspace", false},
-		{"no output directory, workspace context", "", "/workspace", false},
+	for _, dockerContext := range []*builderv0.DockerBuildContext{
+		{DockerRepository: "registry.example.com", BuildxBuilder: "explicit-builder"},
+		{DockerRepository: "registry.example.com", BuildxBuilder: "cache-builder", Cache: &builderv0.BuildCacheOptions{Backend: "registry", Scope: "service", Imports: []string{"registry.example.com/cache"}, Exports: []string{"registry.example.com/cache"}}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tc.want, shouldEmitBuildRecipe(tc.outputDir, tc.contextRoot))
+		resp, err := client.Build(ctx, &builderv0.BuildRequest{
+			OutputDirectory: outputDir,
+			BuildContext:    &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{DockerBuildContext: dockerContext}},
 		})
+		require.NoError(t, err)
+		require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
+		require.NoError(t, services.VerifyDockerBuildPlan(outputDir, resp.GetResult().GetDockerBuildPlan()))
+		require.Equal(t, plan.GetDigest(), resp.GetResult().GetDockerBuildPlan().GetDigest())
+		require.Nil(t, resp.GetResult().GetDockerBuildResult())
+		require.Empty(t, resp.GetBuildxBuilder())
+		require.Empty(t, resp.GetCacheContractVersion())
 	}
 }
