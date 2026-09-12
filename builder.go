@@ -583,6 +583,15 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	if err := services.ValidateBuildRequestOutputDirectory(req); err != nil {
 		return s.Base.Builder.BuildError(err)
 	}
+	// The recipe names the image the CLI builds and pushes, and that name comes
+	// from the Docker build context. Reject its absence here: core's
+	// DockerBuildRequest type-switches on BuildContext.Kind and dereferences a
+	// nil BuildContext, which the agent's panic guard would turn into an UNKNOWN
+	// build state — indistinguishable to the CLI from an agent that neither
+	// failed nor emitted a plan.
+	if req.GetBuildContext().GetDockerBuildContext() == nil {
+		return s.Base.Builder.BuildError(fmt.Errorf("a docker build context is required to name the image the recipe builds"))
+	}
 	if s.GoGrpc.Settings.WithWorkspace {
 		return s.Base.Builder.BuildError(fmt.Errorf("workspace image recipes require a Core contract supporting workspace build contexts"))
 	}
@@ -643,6 +652,13 @@ func prepareGoDocker(
 	return emitBuildPlan(builder, outputDir, image)
 }
 
+// BuildCapabilities advertises what this agent supports. Core's builder client
+// probes it before dispatching a Build that names an explicit Buildx builder and
+// refuses the build when the agent does not answer true. Answering true is
+// truthful precisely because Build emits a recipe: the builder, its cache
+// imports/exports, and the buildx invocation are the CLI's to choose, so any
+// selection the caller makes is honoured by construction. An agent that executed
+// the build in-process would have to implement the selection to claim this.
 func (s *Builder) BuildCapabilities(context.Context, *builderv0.BuildCapabilitiesRequest) (*builderv0.BuildCapabilitiesResponse, error) {
 	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true}, nil
 }
@@ -672,7 +688,10 @@ func recipeBuildPlan(outputDir string, image *resources.DockerImage) (*builderv0
 		Context:      ".",
 		Dockerignore: "dockerignore",
 		Image:        image.FullName(),
-		Platforms:    []string{"linux/amd64", "linux/arm64"},
+		// Core owns the platform policy the CLI executor enforces (it refuses to
+		// push a recipe that omits the deployment architecture), so read it from
+		// there rather than restating the list here.
+		Platforms: services.RecipeBuildPlatforms(),
 	}
 	return services.BuildDockerBuildPlan(outputDir, []*builderv0.DockerBuildRecipe{recipe})
 }

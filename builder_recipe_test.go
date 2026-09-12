@@ -122,6 +122,12 @@ func TestBuildRecipeOverGRPC(t *testing.T) {
 	client := services.NewBuilderAgentClient(conn)
 	t.Setenv("PATH", t.TempDir())
 
+	// Core's client probes this before dispatching a build that names an explicit
+	// Buildx builder, and refuses the build outright when the answer is false.
+	capabilities, err := client.BuildCapabilities(ctx, &builderv0.BuildCapabilitiesRequest{})
+	require.NoError(t, err)
+	require.True(t, capabilities.GetBuildxSelection())
+
 	outputDir := filepath.Join(tmpDir, "mod/svc", "builder")
 	for _, directory := range []string{"", "relative"} {
 		resp, err := client.Build(ctx, &builderv0.BuildRequest{OutputDirectory: directory})
@@ -130,8 +136,25 @@ func TestBuildRecipeOverGRPC(t *testing.T) {
 		require.Contains(t, resp.GetState().GetMessage(), "output_directory")
 		require.NoDirExists(t, outputDir)
 	}
-	builder.GoGrpc.Settings.WithWorkspace = true
+	// A request that carries no Docker build context has no image name for the
+	// recipe. It must fail as an error before rendering anything, not as the
+	// UNKNOWN state a caught nil dereference would produce.
 	resp, err := client.Build(ctx, &builderv0.BuildRequest{OutputDirectory: outputDir})
+	require.NoError(t, err)
+	require.Equal(t, builderv0.BuildStatus_ERROR, resp.GetState().GetState())
+	require.Contains(t, resp.GetState().GetMessage(), "docker build context")
+	require.NoDirExists(t, outputDir)
+
+	// A workspace service is rejected even for an otherwise complete request: the
+	// recipe contract cannot express a build context above the service directory,
+	// and there is no agent executor left to fall back to.
+	builder.GoGrpc.Settings.WithWorkspace = true
+	resp, err = client.Build(ctx, &builderv0.BuildRequest{
+		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
+		}},
+		OutputDirectory: outputDir,
+	})
 	require.NoError(t, err)
 	require.Equal(t, builderv0.BuildStatus_ERROR, resp.GetState().GetState())
 	require.Contains(t, resp.GetState().GetMessage(), "workspace")
