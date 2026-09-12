@@ -11,8 +11,13 @@ It handles code generation, building, testing, and deployment.
 - **gRPC server** with protobuf-defined APIs
 - **REST gateway** auto-generated from proto HTTP annotations (optional)
 - **Hot-reload** during development
-- **Docker build** for production
+- **Docker recipes** for CLI-owned production image builds
 - **Kubernetes deployment** manifests
+
+Build requests require an absolute `output_directory`. The agent writes and returns
+a verifiable Docker build plan; the CLI selects the builder, applies caches, builds,
+and pushes the image. Workspace image builds are currently rejected because the
+recipe contract cannot represent their external build context.
 
 ## File Layout
 
