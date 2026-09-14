@@ -79,6 +79,16 @@ protocol-output-dirs:
 	}
 }
 
+func TestGoGrpcDoesNotAdvertiseEffectiveInputs(t *testing.T) {
+	information, err := NewService().GetAgentInformation(context.Background(), &agentv0.AgentInformationRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if versions := information.GetEffectiveInputsVersions(); len(versions) != 0 {
+		t.Fatalf("effective-input discovery is not implemented, advertised versions: %v", versions)
+	}
+}
+
 func TestGoGrpcAdvertisesAuthoritativeSync(t *testing.T) {
 	information, err := NewService().GetAgentInformation(context.Background(), &agentv0.AgentInformationRequest{})
 	if err != nil {

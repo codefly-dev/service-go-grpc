@@ -1,18 +1,41 @@
-version: 1
+version: 2
+
+project_name: service-go-grpc
 
 builds:
-  - id: darwin
+  - id: darwin-amd64
+    binary: service-go-grpc
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
+      - CC=o64-clang
+      - CXX=o64-clang++
     goos:
       - darwin
     goarch:
       - amd64
-      - arm64
-  - id: linux
+  - id: darwin-arm64
+    binary: service-go-grpc
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
+      - CC=oa64-clang
+      - CXX=oa64-clang++
+    goos:
+      - darwin
+    goarch:
+      - arm64
+  - id: linux-amd64
+    binary: service-go-grpc
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-linux-gnu-gcc
+      - CXX=x86_64-linux-gnu-g++
     goos:
       - linux
     goarch:
       - amd64
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
