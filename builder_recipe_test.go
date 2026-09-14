@@ -3,20 +3,16 @@ package main
 import (
 	"context"
 	"io/fs"
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/codefly-dev/core/agents/services"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
 	"github.com/codefly-dev/core/resources"
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/codefly-dev/core/templates"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // renderBuilderTree renders the real builder templates into dir, mirroring what
@@ -84,42 +80,9 @@ func TestRecipeBuildPlanRejectsUnrenderedTree(t *testing.T) {
 
 func TestBuildRecipeOverGRPC(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
-
-	service := &resources.Service{Name: "svc", Version: "0.0.0"}
-	require.NoError(t, service.SaveAtDir(ctx, filepath.Join(tmpDir, "mod/svc")))
-	service.WithModule("mod")
-	require.NoError(t, (&resources.Module{Name: "mod"}).SaveToDir(ctx, filepath.Join(tmpDir, "mod")))
-
-	identity := &basev0.ServiceIdentity{
-		Name:                service.Name,
-		Version:             service.Version,
-		Module:              "mod",
-		Workspace:           "test",
-		WorkspacePath:       tmpDir,
-		RelativeToWorkspace: "mod/svc",
-	}
-
-	builder := NewBuilder(NewService())
-	// CreationMode short-circuits endpoint discovery, which the recipe path does
-	// not need — it renders templates and inventories the tree, never compiling.
-	_, err := builder.Load(ctx, &builderv0.LoadRequest{Identity: identity, CreationMode: &builderv0.CreationMode{}})
-	require.NoError(t, err)
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	server := grpc.NewServer()
-	builderv0.RegisterBuilderServer(server, builder)
-	go func() {
-		if err := server.Serve(listener); err != nil {
-			t.Errorf("serve builder: %v", err)
-		}
-	}()
-	t.Cleanup(server.Stop)
-	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, conn.Close()) })
-	client := services.NewBuilderAgentClient(conn)
+	identity := goGrpcServiceFixture(t)
+	tmpDir := identity.GetWorkspacePath()
+	client, builder := startBuilderAgent(t, identity)
 	t.Setenv("PATH", t.TempDir())
 
 	// Core's client probes this before dispatching a build that names an explicit
