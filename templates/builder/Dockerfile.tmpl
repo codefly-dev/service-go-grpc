@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 # Build stage
 FROM golang:{{ .GoVersion }}-alpine3.23@sha256:3747dcba41c8b0db3211fda4db61638b980e17ac5bb3c94460a975a9cfe19395 AS builder
 
@@ -9,6 +10,7 @@ ARG TARGETARCH
 RUN apk add --no-cache ca-certificates git{{ if .WithCGO }} build-base{{ end }}
 
 ENV CGO_ENABLED={{ if .WithCGO }}1{{ else }}0{{ end }}
+ENV GOTOOLCHAIN=local
 
 # Set working directory
 WORKDIR /app
@@ -19,9 +21,9 @@ ENV GOWORK=off
 COPY . .
 
 # Download dependencies and build from the service module.
-RUN cd {{ .ModuleRoot }} && go mod download
-RUN cd {{ .ModuleRoot }} && \
-    GOOS=linux GOARCH=${TARGETARCH} go build {{ if .WithCGO }}-ldflags='-w -s'{{ else }}-ldflags='-w -s -extldflags "-static"'{{ end }} -o /app/app {{ .BuildTarget }}
+RUN cd {{ .ModuleRoot }} && sha256sum go.mod go.sum > /tmp/locks.sha256 && go mod download && go list -mod=readonly -m -json all > /tmp/modules.json && go mod verify && sha256sum -c /tmp/locks.sha256
+RUN --network=none cd {{ .ModuleRoot }} && \
+    GOOS=linux GOARCH=${TARGETARCH} go build -mod=readonly {{ if .WithCGO }}-ldflags='-w -s'{{ else }}-ldflags='-w -s -extldflags "-static"'{{ end }} -o /app/app {{ .BuildTarget }}
 RUN fixture_root="$(dirname "$(dirname "$(dirname "{{ .ModuleRoot }}")")")/fixtures"; \
     mkdir -p /app/runtime-fixtures; \
     if [ -d "$fixture_root" ]; then cp -R "$fixture_root"/. /app/runtime-fixtures/; fi
@@ -34,19 +36,40 @@ COPY {{.}} {{.}}
 # Download dependencies and build the binary
 {{- if .ModuleRoot }}
 COPY {{ .ModuleRoot }}/go.mod {{ .ModuleRoot }}/go.sum {{ .ModuleRoot }}/
-RUN cd {{ .ModuleRoot }} && go mod download
+RUN cd {{ .ModuleRoot }} && sha256sum go.mod go.sum > /tmp/locks.sha256 && go mod download && go list -mod=readonly -m -json all > /tmp/modules.json && go mod verify && sha256sum -c /tmp/locks.sha256
 COPY {{ .ModuleRoot }} {{ .ModuleRoot }}
-RUN cd {{ .ModuleRoot }} && \
-    GOOS=linux GOARCH=${TARGETARCH} go build {{ if .WithCGO }}-ldflags='-w -s'{{ else }}-ldflags='-w -s -extldflags "-static"'{{ end }} -o /app/app {{ .BuildTarget }}
+RUN find . -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/sources.sha256
+RUN --network=none cd {{ .ModuleRoot }} && \
+    GOOS=linux GOARCH=${TARGETARCH} go build -mod=readonly {{ if .WithCGO }}-ldflags='-w -s'{{ else }}-ldflags='-w -s -extldflags "-static"'{{ end }} -o /app/app {{ .BuildTarget }}
 {{- else }}
 RUN if [ -f code/go.mod ]; then \
-      cd code && go mod download && GOOS=linux GOARCH=${TARGETARCH} go build {{ if .WithCGO }}-ldflags='-w -s'{{ else }}-ldflags='-w -s -extldflags "-static"'{{ end }} -o /app/app .; \
+      cd code && go mod download && GOOS=linux GOARCH=${TARGETARCH} go build -mod=readonly {{ if .WithCGO }}-ldflags='-w -s'{{ else }}-ldflags='-w -s -extldflags "-static"'{{ end }} -o /app/app .; \
     elif [ -f go.mod ]; then \
-      go mod download && GOOS=linux GOARCH=${TARGETARCH} go build {{ if .WithCGO }}-ldflags='-w -s'{{ else }}-ldflags='-w -s -extldflags "-static"'{{ end }} -o /app/app .; \
+      go mod download && GOOS=linux GOARCH=${TARGETARCH} go build -mod=readonly {{ if .WithCGO }}-ldflags='-w -s'{{ else }}-ldflags='-w -s -extldflags "-static"'{{ end }} -o /app/app .; \
     else \
       echo "ERROR: no go.mod found" && exit 1; \
     fi
 {{- end }}
+{{- end }}
+
+{{- range .BuildCommands }}
+# Build a declared executable from the same locked module and target platform.
+RUN --network=none cd {{ $.ModuleRoot }} && \
+    test "$(GOOS=linux GOARCH=${TARGETARCH} go list -mod=readonly -f '{{ "{{.Name}}" }}' {{ .Package }})" = main && \
+    GOOS=linux GOARCH=${TARGETARCH} go build -mod=readonly {{ if $.WithCGO }}-ldflags='-w -s'{{ else }}-ldflags='-w -s -extldflags "-static"'{{ end }} -o /app/commands/{{ .Name }} {{ .Package }}
+{{- end }}
+
+# Retain the locked graph and metadata of the executables actually compiled.
+# These are build evidence, not a scan, approval, publication or installation.
+{{- if .ModuleRoot }}
+RUN --network=none cd {{ .ModuleRoot }} && \
+    sha256sum -c /tmp/locks.sha256 && \
+    mkdir -p /app/build-evidence && \
+    cp go.mod go.sum /app/build-evidence/ && \
+    {{ if not .Workspace }}cp /tmp/sources.sha256 /app/build-evidence/sources.sha256 && {{ end }}\
+    cp /tmp/modules.json /app/build-evidence/modules.json && \
+    go version -m /app/app{{ range .BuildCommands }} /app/commands/{{ .Name }}{{ end }} > /app/build-evidence/binaries.txt && \
+    sha256sum /app/app{{ range .BuildCommands }} /app/commands/{{ .Name }}{{ end }} > /app/build-evidence/binaries.sha256
 {{- end }}
 
 # Final stage
@@ -71,6 +94,12 @@ RUN adduser -D appuser
 
 # Copy the binary from the builder stage
 COPY --chown=appuser --from=builder /app/app .
+{{- if .ModuleRoot }}
+COPY --from=builder /app/build-evidence /usr/share/codefly/build
+{{- end }}
+{{- range .BuildCommands }}
+COPY --chown=appuser --from=builder /app/commands/{{ .Name }} /usr/local/bin/{{ .Name }}
+{{- end }}
 {{- if .Workspace }}
 COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures
 {{- end }}
@@ -81,6 +110,11 @@ COPY --chown=appuser --from=builder /app/runtime-fixtures ./fixtures
 # fallback in dev; these COPY lines are what carry those files into the image.
 {{- range .RuntimeAssets }}
 COPY --chown=appuser {{ . }} /app/{{ . }}
+{{- end }}
+{{- if .ModuleRoot }}
+# Inventory the final bytes at their real runtime locations, including assets.
+RUN find /app -type f -print0 | sort -z | xargs -0 sha256sum > /usr/share/codefly/build/runtime.sha256{{ range .BuildCommands }} && \
+    sha256sum /usr/local/bin/{{ .Name }} >> /usr/share/codefly/build/runtime.sha256{{ end }}
 {{- end }}
 
 # Use the non-root user
