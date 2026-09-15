@@ -162,7 +162,7 @@ func TestDockerfileTemplateHonorsCGOServiceContract(t *testing.T) {
 
 	require.Contains(t, rendered, `apk add --no-cache ca-certificates git build-base`)
 	require.Contains(t, rendered, `ENV CGO_ENABLED=1`)
-	require.Contains(t, rendered, `go build -ldflags='-w -s' -o /app/app ./cmd/server`)
+	require.Contains(t, rendered, `go build -mod=readonly -ldflags='-w -s' -o /app/app ./cmd/server`)
 	require.NotContains(t, rendered, `extldflags "-static"`)
 }
 
