@@ -73,6 +73,10 @@ type Settings struct {
 	// reproduced under /app, preserving its layout relative to the service root.
 	RuntimeAssets []string `yaml:"runtime-assets"`
 
+	// BuildCommands adds local main packages to the service image's PATH.
+	// Packages are relative to the same Go module as the main service.
+	BuildCommands []BuildCommand `yaml:"build-commands,omitempty"`
+
 	// RuntimeImage overrides the codefly-built runtime image. Format:
 	// "name:tag". :latest and untagged refs are rejected — pinning is
 	// enforced. Leave empty to use codeflydev/go:<ver> (recommended).
@@ -364,6 +368,9 @@ func (s *Settings) Validate() error {
 		if err := validateRuntimeAssetPath(asset); err != nil {
 			return err
 		}
+	}
+	if err := validateBuildCommands(s.BuildCommands); err != nil {
+		return err
 	}
 	if err := s.ServiceAccount.Validate(); err != nil {
 		return err

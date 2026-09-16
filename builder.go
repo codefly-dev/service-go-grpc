@@ -567,6 +567,7 @@ func declaredProtoServices(root string) ([]string, error) {
 type dockerTemplating struct {
 	golanghelpers.DockerTemplating
 	RuntimeAssets []string
+	BuildCommands []BuildCommand
 }
 
 // Build prepares the service's Docker recipe. Uses a custom DockerTemplating
@@ -595,6 +596,10 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	if s.GoGrpc.Settings.WithWorkspace {
 		return s.Base.Builder.BuildError(fmt.Errorf("workspace image recipes require a Core contract supporting workspace build contexts"))
 	}
+	moduleRoot, _ := golanghelpers.SplitSourceDir(s.GoGrpc.Settings.GoSourceDir())
+	if err := validateBuildCommandSources(filepath.Join(s.Location, moduleRoot), s.GoGrpc.Settings.BuildCommands); err != nil {
+		return s.Base.Builder.BuildError(err)
+	}
 
 	configure, assets, err := goDockerTemplating(
 		s.GoGrpc.Settings,
@@ -604,8 +609,11 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	if err != nil {
 		return s.Base.Builder.BuildError(err)
 	}
+	if err := validateRuntimeAssetSources(s.Location, assets); err != nil {
+		return s.Base.Builder.BuildError(err)
+	}
 	return prepareGoDocker(ctx, s.Base.Builder, req,
-		requirements, builderFS, GoVersion, AlpineVersion, assets, configure)
+		requirements, builderFS, GoVersion, AlpineVersion, assets, s.GoGrpc.Settings.BuildCommands, configure)
 }
 
 // The local templating superset carries runtime assets that the Core template
@@ -618,6 +626,7 @@ func prepareGoDocker(
 	builderFS embed.FS,
 	goVersion, alpineVersion string,
 	assets []string,
+	commands []BuildCommand,
 	opts ...func(*golanghelpers.DockerTemplating),
 ) (*builderv0.BuildResponse, error) {
 	w := wool.Get(ctx).In("go-grpc.prepareGoDocker")
@@ -639,6 +648,7 @@ func prepareGoDocker(
 			AlpineVersion: alpineVersion,
 		},
 		RuntimeAssets: assets,
+		BuildCommands: commands,
 	}
 	for _, opt := range opts {
 		opt(&templating.DockerTemplating)

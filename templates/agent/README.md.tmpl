@@ -79,6 +79,29 @@ codefly test service
 | `health` | Which health contract the Kubernetes probes speak: `mode: grpc` (default for newly created services), `mode: http` with an explicit `path`, or `mode: tcp` |
 | `with-cgo` | Enable CGO for native dependencies |
 | `with-workspace` | Use Go workspace mode |
+| `build-commands` | Extra executables in the image's PATH, each with `name` and a `./package` relative to the service Go module |
+
+For an image that also runs one-shot maintenance commands:
+
+```yaml
+build-commands:
+  - name: catalog-import
+    package: ./cmd/catalog-import
+```
+
+Each command uses the main service's module locks, Go toolchain, target architecture
+and CGO setting. The recipe verifies that it is a main package and installs it in
+`/usr/local/bin`. Names must be unique; package paths must stay inside the same
+module without symlinks or nested modules. Commands run only when explicitly
+selected by the caller. Declaring commands does not change the service entrypoint.
+
+The recipe verifies the downloaded Go cache and unchanged module locks before
+compiling with networking disabled. The pinned toolchain cannot auto-upgrade.
+The final image retains source-file hashes, Go locks, the selected module graph,
+compiled-binary metadata and runtime-file hashes in `/usr/share/codefly/build`.
+Runtime assets must exist as ordinary files without symlinks; they keep their
+source-relative paths in the final image. Build evidence does not establish feed
+approval, a security scan, publication or an installed release.
 
 ## Kubernetes health probes
 
