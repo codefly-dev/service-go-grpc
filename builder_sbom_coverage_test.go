@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -151,17 +152,50 @@ func TestImageScopeWithoutSubjectsIsAPreconditionFailure(t *testing.T) {
 	require.Equal(t, basev0.FailureCode_FAILURE_CODE_PRECONDITION_FAILED, resp.GetState().GetFailure().GetCode())
 }
 
-// TestPlanDerivedSubjectsAreRefusedUntilTheyCarryADigest closes the loop between
-// this specialization's recipe and the evidence contract. The recipe names the
-// image the caller has yet to build, so subjects derived from the plan carry a
-// tag and no digest. Handing them straight back must not yield coverage for
-// whatever that tag resolves to when the scan runs.
-//
-// It also pins the shape of that subject set: one per shipped platform, since
-// evidence for one architecture of a multi-architecture image is not coverage of
-// the other, and a recipe narrowed to a single platform would silently shrink
-// what a caller is required to produce.
-func TestPlanDerivedSubjectsAreRefusedUntilTheyCarryADigest(t *testing.T) {
+// resolvedFromPlan stands in for the build the caller ran, which this agent
+// never runs itself: one resolved image per recipe and platform, each with its
+// own digest so a subject satisfied by another platform's evidence would show
+// up as a mismatch rather than as coverage.
+func resolvedFromPlan(plan *builderv0.DockerBuildPlan) []sbom.ResolvedImage {
+	var resolved []sbom.ResolvedImage
+	for _, recipe := range plan.GetRecipes() {
+		for _, platform := range recipe.GetPlatforms() {
+			resolved = append(resolved, sbom.ResolvedImage{
+				Recipe:   recipe.GetName(),
+				Platform: platform,
+				Digest:   fmt.Sprintf("sha256:%064d", len(resolved)),
+			})
+		}
+	}
+	return resolved
+}
+
+// unpinnedPlanSubjects is what this specialization's recipe declares on its own:
+// the image the caller has yet to build, named by a tag and carrying no digest.
+// Deriving subjects this way is the mistake the contract exists to refuse, so
+// they are assembled here rather than obtained from a helper that now refuses to
+// produce them.
+func unpinnedPlanSubjects(plan *builderv0.DockerBuildPlan, service string) []*builderv0.ImageSubject {
+	var subjects []*builderv0.ImageSubject
+	for _, recipe := range plan.GetRecipes() {
+		for _, platform := range recipe.GetPlatforms() {
+			subjects = append(subjects, &builderv0.ImageSubject{
+				Reference: recipe.GetImage(),
+				Platform:  platform,
+				Role:      recipe.GetName(),
+				Service:   service,
+			})
+		}
+	}
+	return subjects
+}
+
+// TestPlanDerivedSubjectsPinEveryShippedPlatform pins the shape of the subject
+// set this specialization's recipe expects of a caller: one per shipped
+// platform, since evidence for one architecture of a multi-architecture image is
+// not coverage of the other, and a recipe narrowed to a single platform would
+// silently shrink what a caller is required to produce.
+func TestPlanDerivedSubjectsPinEveryShippedPlatform(t *testing.T) {
 	ctx := context.Background()
 	identity := goGrpcServiceFixture(t)
 	client, _ := startBuilderAgent(t, identity)
@@ -172,23 +206,59 @@ func TestPlanDerivedSubjectsAreRefusedUntilTheyCarryADigest(t *testing.T) {
 	require.NotEmpty(t, recipe.GetPlatforms())
 
 	unique := resources.ServiceUnique(identity.GetModule(), identity.GetName())
-	expected := sbom.ExpectedFromBuildPlan(unique, plan)
+	resolved := resolvedFromPlan(plan)
+	expected, err := sbom.ExpectedFromBuildPlan(unique, plan, resolved)
+	require.NoError(t, err)
 
 	require.Len(t, expected, len(recipe.GetPlatforms()))
 	for i, platform := range recipe.GetPlatforms() {
 		require.Equal(t, platform, expected[i].GetPlatform())
 		require.Equal(t, recipe.GetName(), expected[i].GetRole())
-		require.Equal(t, recipe.GetImage(), expected[i].GetReference())
 		require.Equal(t, unique, expected[i].GetService())
-		require.Empty(t, expected[i].GetDigest())
+		require.NoError(t, sbom.RequirePinned(expected[i]))
+		require.Contains(t, expected[i].GetReference(), resolved[i].Digest)
 	}
+}
+
+// TestPlanDerivedSubjectsRequireTheCallerToResolveADigest states why this agent
+// is the case the resolved-image argument exists for: Build emits a recipe and
+// the caller runs buildx, so nothing here knows a digest. Deriving subjects from
+// the recipe alone would bind evidence to whatever the tag serves at scan time,
+// and the helper refuses rather than producing them.
+func TestPlanDerivedSubjectsRequireTheCallerToResolveADigest(t *testing.T) {
+	ctx := context.Background()
+	identity := goGrpcServiceFixture(t)
+	client, _ := startBuilderAgent(t, identity)
+
+	plan := buildRecipePlan(ctx, t, client, identity)
+	unique := resources.ServiceUnique(identity.GetModule(), identity.GetName())
+
+	expected, err := sbom.ExpectedFromBuildPlan(unique, plan, nil)
+	require.Error(t, err)
+	require.Empty(t, expected)
+}
+
+// TestUnpinnedSubjectsAreRefused closes the loop between this specialization's
+// recipe and the evidence contract. Subjects naming the recipe's tag and no
+// digest must not yield coverage for whatever that tag resolves to when the scan
+// runs — neither from the agent, which refuses the request, nor from the
+// conformance check, which refuses the response.
+func TestUnpinnedSubjectsAreRefused(t *testing.T) {
+	ctx := context.Background()
+	identity := goGrpcServiceFixture(t)
+	client, _ := startBuilderAgent(t, identity)
+
+	plan := buildRecipePlan(ctx, t, client, identity)
+	unique := resources.ServiceUnique(identity.GetModule(), identity.GetName())
+	subjects := unpinnedPlanSubjects(plan, unique)
+	require.NotEmpty(t, subjects)
 
 	resp, err := client.SBOM(ctx, &builderv0.SBOMRequest{
 		Scope:    builderv0.SBOMScope_SBOM_SCOPE_IMAGE,
-		Subjects: expected,
+		Subjects: subjects,
 	})
 	require.NoError(t, err)
 	require.Equal(t, builderv0.SBOMStatus_ERROR, resp.GetState().GetState())
 	require.Equal(t, builderv0.SBOMScope_SBOM_SCOPE_IMAGE, resp.GetScope())
-	require.Error(t, sbom.ValidateCoverage(expected, resp))
+	require.Error(t, sbom.ValidateCoverage(unique, subjects, resp))
 }
