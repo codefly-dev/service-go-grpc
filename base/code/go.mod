@@ -5,8 +5,8 @@ go 1.27.0
 require (
 	buf.build/go/protovalidate v1.4.0
 	connectrpc.com/connect v1.21.0
-	github.com/codefly-dev/core v0.4.0
-	github.com/codefly-dev/sdk-go v0.1.65
+	github.com/codefly-dev/core v0.4.4-0.20260922090214-83b3904dd07e
+	github.com/codefly-dev/sdk-go v0.1.69-0.20260922100356-a647f16915d4
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0
 	github.com/rs/cors v1.11.1
 	golang.org/x/net v0.59.0
@@ -38,10 +38,12 @@ require (
 	github.com/go-openapi/swag/typeutils v0.29.1 // indirect
 	github.com/go-openapi/swag/yamlutils v0.29.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/gofrs/flock v0.13.1 // indirect
+	github.com/google/go-github/v89 v89.0.0 // indirect
+	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
