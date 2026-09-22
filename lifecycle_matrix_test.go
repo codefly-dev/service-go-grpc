@@ -3,14 +3,40 @@ package main_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
+	"github.com/codefly-dev/core/runners/dockerrun"
 	"github.com/codefly-dev/core/runners/testmatrix"
 )
+
+// Source validation launches this binary below the Go runner. Its parallel
+// fixture containers belong to this test process, not the inherited CLI scope.
+func TestMain(m *testing.M) {
+	code := func() int {
+		dir, err := os.MkdirTemp("", "gogrpc-test-scope-*")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		defer os.RemoveAll(dir)
+		scope, err := dockerrun.NewContainerRecoveryScope(dir, dir, "go-grpc-tests")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if err := dockerrun.SetContainerRecoveryScope(scope); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return m.Run()
+	}()
+	os.Exit(code)
+}
 
 // TestGoGrpcLifecycle_Matrix exercises the go-grpc plugin's execution
 // parity across native, nix, and docker backends using the shared
