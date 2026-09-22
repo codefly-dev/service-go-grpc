@@ -2,3 +2,6 @@ publisher: codefly.dev
 kind: codefly:service
 name: go-grpc
 version: 0.1.40
+release:
+  owner: workflow
+  workflow: releaser.yml

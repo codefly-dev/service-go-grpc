@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	buf.build/go/protovalidate v1.4.0
 	connectrpc.com/connect v1.21.0
-	github.com/codefly-dev/core v0.3.41
+	github.com/codefly-dev/core v0.4.0
 	github.com/codefly-dev/sdk-go v0.1.65
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0
 	github.com/rs/cors v1.11.1
