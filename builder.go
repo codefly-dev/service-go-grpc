@@ -184,19 +184,12 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 	if err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
-	// Cache generation inputs outside the source tree but across transactions.
-	// A transaction-local cache disappears after every Sync, forcing repeated
-	// BSR requests even when proto inputs are unchanged.
-	generationCache := filepath.Join(s.Location, ".codefly", "cache")
-	if err := os.MkdirAll(generationCache, 0o755); err != nil {
-		return s.Base.Builder.SyncError(fmt.Errorf("create generation cache: %w", err))
-	}
-	buf.WithCache(generationCache)
+	// Keep Buf's input cache inside this transaction. A cache outside the stage
+	// survives discarded dry-run output and can silently accept drift on the
+	// next Sync. Authoritative sync must regenerate, including after tampering.
 	for _, relative := range s.GoGrpc.Settings.protocolOutputDirs() {
-		// Preserve the current generated tree in the transaction. On a cache
-		// hit Buf intentionally does no work; without this baseline the staged
-		// output would be absent and downstream formatting/comparison would
-		// either fail or interpret the cache hit as deletion of every artifact.
+		// Stage each declared output root before running the generator so the
+		// entire owned tree participates in the transaction.
 		actualOutput := filepath.Join(s.Location, relative)
 		if _, err := os.Lstat(actualOutput); err == nil {
 			if err := transaction.CopyInput(relative); err != nil {

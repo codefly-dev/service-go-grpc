@@ -114,9 +114,9 @@ bug it prevents is possible. The existing tests do; match them.
   shells out to `docker build` means you are solving it in the wrong repo.
 - **Sync is a transaction over a stage.** Copy in, generate, fix up, then swap
   by rename with rollback. Never write into a user's tree directly — a
-  half-applied sync is a corrupted service. Existing generated output is staged
-  *before* buf runs, because a buf cache hit emits nothing and would otherwise
-  read as "delete everything".
+  half-applied sync is a corrupted service. Buf's generation-input cache stays
+  inside the transaction: a persistent input-only cache accepts discarded or
+  tampered output on the next sync. Every sync regenerates before comparing.
 - **Only the marked scaffold is agent-owned.** Sync overwrites `main.go`, the
   `*_gen.go` adapters and the plugin registry, and only when the generated
   marker and the single-service proto shape both hold. If generated output is
