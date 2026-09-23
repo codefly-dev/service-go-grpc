@@ -50,7 +50,7 @@ func TestRecipeBuildPlanEmitsVerifiableSingleImageRecipe(t *testing.T) {
 
 	image := &resources.DockerImage{Name: "mod/svc", Tag: "0.0.0"}
 
-	plan, err := recipeBuildPlan(outputDir, image)
+	plan, err := recipeBuildPlan(outputDir, image, []string{"Dockerfile", "dockerignore"})
 	require.NoError(t, err)
 
 	// The CLI verifies the emitted tree against the plan before running buildx;
@@ -66,6 +66,41 @@ func TestRecipeBuildPlanEmitsVerifiableSingleImageRecipe(t *testing.T) {
 	// The deployment architecture (amd64) must be present or the CLI refuses to
 	// push, and arm64 makes the manifest list pullable on either architecture.
 	require.Equal(t, []string{"linux/amd64", "linux/arm64"}, recipe.GetPlatforms())
+	// The scope is the plan's claim about who assembled the build context, and
+	// the CLI acts on it: EMITTED says this build wrote only these files and the
+	// context is the service directory the recipe names. A TREE claim would say
+	// this build assembled the whole destination, and a caller honouring that
+	// would build the recipe directory — where none of the sources the
+	// Dockerfile copies exist.
+	require.Equal(t, builderv0.RecipeInventoryScope_RECIPE_INVENTORY_SCOPE_EMITTED, plan.GetScope())
+	require.Equal(t, []string{"Dockerfile", "dockerignore"}, planFiles(plan))
+}
+
+// planFiles lists the inventory paths a plan claims, in plan order.
+func planFiles(plan *builderv0.DockerBuildPlan) []string {
+	var names []string
+	for _, file := range plan.GetFiles() {
+		names = append(names, file.GetPath())
+	}
+	return names
+}
+
+// TestRecipeBuildPlanIgnoresContentThisBuildDidNotWrite is the other half of an
+// EMITTED claim: output_directory is the service's committed builder/ directory,
+// so an editor backup or a stray file beside the recipe is not this build's
+// output. It must be neither digested nor rejected — a TREE claim would fail
+// verification over it.
+func TestRecipeBuildPlanIgnoresContentThisBuildDidNotWrite(t *testing.T) {
+	t.Parallel()
+
+	outputDir := t.TempDir()
+	renderBuilderTree(t, outputDir)
+	require.NoError(t, os.WriteFile(filepath.Join(outputDir, ".DS_Store"), []byte("stray"), 0o644))
+
+	plan, err := recipeBuildPlan(outputDir, &resources.DockerImage{Name: "mod/svc", Tag: "0.0.0"}, []string{"Dockerfile", "dockerignore"})
+	require.NoError(t, err)
+	require.NoError(t, services.VerifyDockerBuildPlan(outputDir, plan))
+	require.Equal(t, []string{"Dockerfile", "dockerignore"}, planFiles(plan))
 }
 
 // TestRecipeBuildPlanRejectsUnrenderedTree asserts the plan builder surfaces a
@@ -74,7 +109,7 @@ func TestRecipeBuildPlanEmitsVerifiableSingleImageRecipe(t *testing.T) {
 func TestRecipeBuildPlanRejectsUnrenderedTree(t *testing.T) {
 	t.Parallel()
 
-	_, err := recipeBuildPlan(t.TempDir(), &resources.DockerImage{Name: "mod/svc", Tag: "0.0.0"})
+	_, err := recipeBuildPlan(t.TempDir(), &resources.DockerImage{Name: "mod/svc", Tag: "0.0.0"}, []string{"Dockerfile", "dockerignore"})
 	require.Error(t, err)
 }
 
