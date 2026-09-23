@@ -648,11 +648,19 @@ func prepareGoDocker(
 	}
 
 	outputDir := req.GetOutputDirectory()
+	// The path set this build is about to write is also the set the plan
+	// claims: this agent emits a Dockerfile and its ignore file and nothing
+	// else, and the application's inputs stay in the service directory the
+	// recipe's context names.
+	emitted, err := services.PrepareRecipeDestination(builderFS, outputDir)
+	if err != nil {
+		return builder.BuildError(err)
+	}
 	if err = builder.Templates(ctx, templating,
 		services.WithBuilder(builderFS).WithDestination("%s", outputDir).WithOverride(shared.OverrideAll())); err != nil {
 		return builder.BuildError(err)
 	}
-	return emitBuildPlan(builder, outputDir, image)
+	return emitBuildPlan(builder, outputDir, image, emitted)
 }
 
 // BuildCapabilities advertises what this agent supports. Core's builder client
@@ -669,8 +677,8 @@ func (s *Builder) BuildCapabilities(context.Context, *builderv0.BuildCapabilitie
 // emitBuildPlan records the rendered builder/ directory as a reproducible Docker
 // build recipe instead of building an image in-process. The caller (the CLI)
 // owns running docker buildx from the emitted plan.
-func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *resources.DockerImage) (*builderv0.BuildResponse, error) {
-	plan, err := recipeBuildPlan(outputDir, image)
+func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *resources.DockerImage, emitted []string) (*builderv0.BuildResponse, error) {
+	plan, err := recipeBuildPlan(outputDir, image, emitted)
 	if err != nil {
 		return builder.BuildError(err)
 	}
@@ -678,25 +686,25 @@ func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *re
 	return builder.BuildResponse()
 }
 
-// recipeBuildPlan inventories the rendered builder/ tree at outputDir and returns
-// a single-image build recipe for it. Dockerfile and dockerignore are named
-// relative to outputDir (the caller's builder/ tree); the context is the service
-// directory ("."), which the Dockerfile's COPY paths are written against. The
-// CLI builds the recipe for both linux/amd64 and linux/arm64 and pushes a
-// manifest list.
-func recipeBuildPlan(outputDir string, image *resources.DockerImage) (*builderv0.DockerBuildPlan, error) {
-	recipe := &builderv0.DockerBuildRecipe{
-		Name:         "app",
-		Dockerfile:   "Dockerfile",
-		Context:      ".",
-		Dockerignore: "dockerignore",
-		Image:        image.FullName(),
-		// Core owns the platform policy the CLI executor enforces (it refuses to
-		// push a recipe that omits the deployment architecture), so read it from
-		// there rather than restating the list here.
-		Platforms: services.RecipeBuildPlatforms(),
-	}
-	return services.BuildDockerBuildPlan(outputDir, []*builderv0.DockerBuildRecipe{recipe})
+// recipeBuildPlan inventories the files this build wrote at outputDir and
+// returns a single-image build recipe for them. Dockerfile and dockerignore are
+// named relative to outputDir (the caller's builder/ tree); the context is the
+// service directory ("."), which the Dockerfile's COPY paths are written
+// against. The CLI builds the recipe for both linux/amd64 and linux/arm64 and
+// pushes a manifest list.
+//
+// The inventory scope is EMITTED, and saying so is the whole point: this agent
+// writes a Dockerfile and an ignore file, and the build context is the service
+// tree it never touches. A TREE claim would say the opposite — that this build
+// "assembled the whole destination" — which would be untrue, and a caller that
+// honours the contract would then build the recipe directory and find none of
+// the sources the Dockerfile copies.
+//
+// Core owns the platform policy the CLI executor enforces (it refuses to push a
+// recipe that omits the deployment architecture), so the platform list is read
+// from there rather than restated here.
+func recipeBuildPlan(outputDir string, image *resources.DockerImage, emitted []string) (*builderv0.DockerBuildPlan, error) {
+	return services.SingleImageBuildPlan(outputDir, image.FullName(), services.RecipeBuildPlatforms(), emitted)
 }
 
 // unsafeAssetChars are byte values that must not appear in a runtime asset
