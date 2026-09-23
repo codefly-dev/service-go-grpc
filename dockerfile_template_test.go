@@ -182,3 +182,64 @@ func TestDockerfileTemplateKeepsNonCGOBuildStatic(t *testing.T) {
 	require.Contains(t, rendered, `ENV CGO_ENABLED=0`)
 	require.Contains(t, rendered, `extldflags "-static"`)
 }
+
+// TestDockerfileTemplateFetchesPrivateModulesThroughAnOptionalSecret holds the
+// contract the CLI builds against for private Go modules: every dependency
+// download runs with the "netrc" BuildKit secret mounted at /root/.netrc, where
+// both git and the go tool read credentials, and GOPRIVATE is a build argument
+// declared before that step so the toolchain sees the host's value. The mount is
+// optional so a build without private modules — and any consumer rebuilding the
+// vendored recipe without a secret — renders and builds the same Dockerfile. The
+// credential must never reach an image: no ENV, no COPY, and nothing in the
+// runtime stage may name it. Without this, `go mod download` in the builder
+// stage has no way to authenticate and a service that imports a private module
+// fails with "could not read Username for 'https://github.com'".
+func TestDockerfileTemplateFetchesPrivateModulesThroughAnOptionalSecret(t *testing.T) {
+	t.Parallel()
+
+	const mount = "--mount=type=secret,id=netrc,target=/root/.netrc,required=false"
+	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	require.NoError(t, err)
+
+	for name, data := range map[string]golanghelpers.DockerTemplating{
+		"standalone": {GoVersion: GoVersion, AlpineVersion: AlpineVersion, SourceDir: "code", ModuleRoot: "code", BuildTarget: "."},
+		"workspace":  {GoVersion: GoVersion, AlpineVersion: AlpineVersion, ModuleRoot: "modules/users/services/accounts/code", BuildTarget: ".", Workspace: true},
+		"legacy":     {GoVersion: GoVersion, AlpineVersion: AlpineVersion, Components: []string{"code"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: data})
+			require.NoError(t, err)
+
+			builderStage, runtimeStage, found := strings.Cut(rendered, "# Final stage")
+			require.True(t, found, "runtime stage marker is missing")
+
+			// GOPRIVATE is declared as a build argument before the download so
+			// the RUN inherits it as an environment variable; it must not be an
+			// ENV, which would persist a host setting into the stage config.
+			require.Contains(t, builderStage, "\nARG GOPRIVATE\n")
+			require.NotContains(t, rendered, "ENV GOPRIVATE")
+			require.Less(t, strings.Index(builderStage, "ARG GOPRIVATE"), strings.Index(builderStage, "go mod download"))
+
+			// Every dependency download, in every layout, mounts the secret. A
+			// RUN spans continuation lines, so judge whole instructions.
+			downloads := 0
+			for _, instruction := range strings.Split(strings.ReplaceAll(builderStage, "\\\n", " "), "\n") {
+				if !strings.Contains(instruction, "go mod download") {
+					continue
+				}
+				downloads++
+				require.True(t, strings.HasPrefix(instruction, "RUN "+mount+" "), "dependency download must mount the netrc secret: %q", instruction)
+			}
+			require.Positive(t, downloads, "rendered %s recipe downloads no dependencies", name)
+
+			// The credential is a mount, never image content.
+			for _, line := range strings.Split(rendered, "\n") {
+				if strings.Contains(line, "netrc") {
+					require.True(t, strings.HasPrefix(line, "RUN ") || strings.HasPrefix(line, "#"), "netrc may only appear on a RUN mount or a comment: %q", line)
+				}
+			}
+			require.NotContains(t, runtimeStage, "netrc")
+			require.NotContains(t, runtimeStage, "GOPRIVATE")
+		})
+	}
+}
