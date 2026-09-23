@@ -112,6 +112,14 @@ bug it prevents is possible. The existing tests do; match them.
 - **This agent never builds an image.** `Build` renders `templates/builder` into
   the caller's output directory and returns a `DockerBuildPlan`. A test that
   shells out to `docker build` means you are solving it in the wrong repo.
+- **Private Go modules are the CLI's credential, never the recipe's.** The
+  Dockerfile declares `ARG GOPRIVATE` and mounts the optional BuildKit secret
+  `netrc` at `/root/.netrc` on every `go mod download`; the CLI supplies both
+  (`GOPRIVATE` from the host, the secret from `CODEFLY_BUILD_NETRC`, `NETRC` or
+  `~/.netrc`). Never add a credential as an `ARG`, `ENV` or `COPY` — that bakes
+  a token into a layer — and keep the mount optional so the vendored recipe
+  builds unchanged without one. `TestDockerfileTemplateFetchesPrivateModulesThroughAnOptionalSecret`
+  holds the contract.
 - **Sync is a transaction over a stage.** Copy in, generate, fix up, then swap
   by rename with rollback. Never write into a user's tree directly — a
   half-applied sync is a corrupted service. Buf's generation-input cache stays
