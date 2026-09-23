@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -8,7 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/codefly-dev/core/agents/services"
 	agenttesting "github.com/codefly-dev/core/agents/testing"
+	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
+	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	"github.com/codefly-dev/core/resources"
+	"github.com/codefly-dev/core/wool"
 	"gopkg.in/yaml.v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -665,5 +672,123 @@ func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// renderOverlayWithConfigMap renders the deployment templates the way
+// DeployKustomize does in production — core wraps the agent's parameters in
+// services.DeploymentParameters and it is that wrapper the overlay templates
+// range over — but with a caller-chosen ConfigMap so a hostile value can be
+// driven through the real renderer. It returns the rendered destination root.
+func renderOverlayWithConfigMap(t *testing.T, configMap services.EnvironmentMap) string {
+	t.Helper()
+	ctx := context.Background()
+	identity := &resources.ServiceIdentity{
+		Workspace: "workspace",
+		Module:    "module",
+		Name:      "example-service",
+		Version:   "1.2.3",
+	}
+	base := &services.Base{
+		Wool:     wool.Get(ctx),
+		Identity: identity,
+		Information: &services.Information{
+			Service: resources.ToServiceWithCase(identity),
+			Module:  resources.ToModuleWithCase(identity),
+		},
+	}
+	base.SetDockerImage(resources.NewDockerImage("example/service:1.2.3"))
+	builder := &services.BuilderWrapper{Base: base}
+	base.Builder = builder
+
+	destination := t.TempDir()
+	deployment := &builderv0.KubernetesDeployment{
+		Namespace:   "codefly-test",
+		Destination: destination,
+		Profile:     builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1,
+	}
+	params := services.DeploymentParameters{
+		ConfigMap:  configMap,
+		Parameters: DeploymentParameters{Health: undeclaredHealth()},
+	}
+	if err := builder.KustomizeDeploy(ctx, &basev0.Environment{Name: "test"}, deployment, deploymentFS, params); err != nil {
+		t.Fatalf("render kustomize templates: %v", err)
+	}
+	return destination
+}
+
+// readRenderedConfigMap parses the rendered overlay ConfigMap and returns both
+// its raw bytes and its decoded data map.
+func readRenderedConfigMap(t *testing.T, destination string) (string, map[string]string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(destination, "overlays", "test", "configmap.yaml"))
+	if err != nil {
+		t.Fatalf("read rendered configmap: %v", err)
+	}
+	var parsed struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("rendered configmap is not valid YAML: %v\n%s", err, raw)
+	}
+	return string(raw), parsed.Data
+}
+
+// TestConfigMapEscapesHostileValues pins the ConfigMap value escaping. The
+// template used to interpolate the raw value between two literal quotes, so a
+// configuration value carrying a double quote, a backslash or a newline — a
+// JSON document is the ordinary case — rendered a broken manifest and failed
+// the whole gitops render with "did not find expected key". The value is now
+// emitted through printf %q, whose escaping is a valid YAML double-quoted
+// scalar, so the value survives the round trip byte for byte.
+func TestConfigMapEscapesHostileValues(t *testing.T) {
+	hostile := "{\"kind\":\"json\",\"path\":\"C:\\\\tmp\"}\nsecond line\twith a tab"
+	destination := renderOverlayWithConfigMap(t, services.EnvironmentMap{"CODEFLY_HOSTILE_VALUE": hostile})
+	_, data := readRenderedConfigMap(t, destination)
+	got, ok := data["CODEFLY_HOSTILE_VALUE"]
+	if !ok {
+		t.Fatalf("rendered configmap has no CODEFLY_HOSTILE_VALUE: %v", data)
+	}
+	if got != hostile {
+		t.Errorf("configmap value did not survive the round trip:\n got %q\nwant %q", got, hostile)
+	}
+}
+
+// TestConfigMapPlainValueRendersUnchanged holds the escaping to a no-op for the
+// ordinary value: %q must produce exactly the quoted form the template emitted
+// before, so moving to it churns no existing manifest.
+func TestConfigMapPlainValueRendersUnchanged(t *testing.T) {
+	destination := renderOverlayWithConfigMap(t, services.EnvironmentMap{"CODEFLY_TEST_VALUE": "abc"})
+	raw, data := readRenderedConfigMap(t, destination)
+	if !strings.Contains(raw, "\n  CODEFLY_TEST_VALUE: \"abc\"\n") {
+		t.Errorf("plain value must render as an unchanged quoted scalar:\n%s", raw)
+	}
+	if data["CODEFLY_TEST_VALUE"] != "abc" {
+		t.Errorf("plain value round trip: got %q", data["CODEFLY_TEST_VALUE"])
+	}
+}
+
+// TestSecretTemplateValuesAreBase64 records why the sibling Secret template
+// keeps its literal quotes: core fills SecretMap through
+// EnvsAsSecretData → ValueAsEncodedString, so every value is standard base64
+// and cannot contain a quote, a backslash or a newline. The assertion is on the
+// encoding contract rather than on the template text, so the day a value stops
+// being encoded this fails rather than silently reopening the same defect.
+func TestSecretTemplateValuesAreBase64(t *testing.T) {
+	hostile := "a\"b\\c\nd"
+	encoded, err := services.EnvsAsSecretData(&resources.EnvironmentVariable{Key: "CODEFLY_TEST_SECRET", Value: hostile})
+	if err != nil {
+		t.Fatalf("encode secret data: %v", err)
+	}
+	value := encoded["CODEFLY_TEST_SECRET"]
+	if strings.ContainsAny(value, "\"\\\n") {
+		t.Fatalf("secret values are no longer safe inside a literal-quoted scalar: %q", value)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		t.Fatalf("secret value is not base64: %v", err)
+	}
+	if string(decoded) != hostile {
+		t.Errorf("secret value round trip: got %q want %q", decoded, hostile)
 	}
 }

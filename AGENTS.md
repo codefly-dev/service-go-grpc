@@ -120,6 +120,16 @@ bug it prevents is possible. The existing tests do; match them.
   a token into a layer — and keep the mount optional so the vendored recipe
   builds unchanged without one. `TestDockerfileTemplateFetchesPrivateModulesThroughAnOptionalSecret`
   holds the contract.
+- **A manifest template interpolates a value, never pastes it.** The overlay
+  ConfigMap emits every value as `{{ printf "%q" $value }}`: a configuration
+  value is arbitrary text — a JSON document is the ordinary case — and a raw
+  value between two literal quotes breaks the document the first time it holds a
+  quote, a backslash or a newline, which surfaces as a `gitops render` failure
+  in a consumer, not here. Go's `%q` escaping is a valid YAML double-quoted
+  scalar and leaves a plain value byte-identical. The sibling Secret template
+  keeps its literal quotes only because core base64-encodes `SecretMap`
+  (`EnvsAsSecretData`); `TestSecretTemplateValuesAreBase64` pins that reason, and
+  `TestConfigMapEscapesHostileValues` pins the escaping.
 - **Sync is a transaction over a stage.** Copy in, generate, fix up, then swap
   by rename with rollback. Never write into a user's tree directly — a
   half-applied sync is a corrupted service. Buf's generation-input cache stays
