@@ -9,6 +9,12 @@ sboms:
 
 project_name: service-go-grpc
 
+# A prerelease tag (a `codefly publish dev` build, v<version>-dev.<sha>) is
+# published as a GitHub prerelease, never as Latest, so `version: latest` can
+# never resolve to a dev build. Release tags are unaffected.
+release:
+  prerelease: auto
+
 builds:
   - id: darwin-amd64
     binary: service-go-grpc
