@@ -32,6 +32,9 @@ func TestReleaseDeclaresOnePublisherAndArchiveSBOMs(t *testing.T) {
 		t.Fatal("the tag workflow must be the sole artifact publisher")
 	}
 	var config struct {
+		Release struct {
+			Prerelease string `yaml:"prerelease"`
+		} `yaml:"release"`
 		SBOMs []struct {
 			Artifacts string
 			Documents []string
@@ -41,6 +44,9 @@ func TestReleaseDeclaresOnePublisherAndArchiveSBOMs(t *testing.T) {
 	read(".goreleaser.yaml", &config)
 	if len(config.SBOMs) != 1 || config.SBOMs[0].Artifacts != "archive" || config.SBOMs[0].Disable || len(config.SBOMs[0].Documents) != 1 || config.SBOMs[0].Documents[0] != "${artifact}.sbom.json" {
 		t.Fatal("each published archive must carry its canonical SBOM")
+	}
+	if config.Release.Prerelease != "auto" {
+		t.Fatal("a dev build's prerelease tag must publish as a GitHub prerelease, never as Latest (codefly publish dev requires release.prerelease: auto)")
 	}
 	var workflow struct {
 		Jobs map[string]struct {
