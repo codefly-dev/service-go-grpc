@@ -12,11 +12,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/imports"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/bufbuild/protocompile/ast"
 	"github.com/bufbuild/protocompile/parser"
@@ -829,6 +831,54 @@ type DeploymentParameters struct {
 	RestEndpoint    bool
 	ConnectEndpoint bool
 	Health          HealthSpec
+	// NamedPorts are the listeners of the service's named endpoints: every
+	// declared endpoint beyond the conventional grpc, rest and connect ones
+	// (a second endpoint serving the same API under its own name, say). Each
+	// carries the port Codefly resolved for it, which is the port the process
+	// binds, so the container and the Service advertise exactly that.
+	NamedPorts []NamedPort
+}
+
+// NamedPort is one named endpoint's listener as the deployment advertises it.
+type NamedPort struct {
+	// Name is the Service port name: the endpoint's API, then its name, so a
+	// mesh that detects protocol from the port-name prefix reads it correctly.
+	Name string
+	Port uint32
+}
+
+// conventionalEndpoints are the listeners the templates always know: grpc is
+// served unconditionally, rest and connect when enabled.
+var conventionalEndpoints = map[string]bool{standards.GRPC: true, standards.REST: true, standards.CONNECT: true}
+
+// namedPorts derives the named listeners from the service's own network
+// mappings: the in-cluster (container) address of every non-conventional
+// endpoint. An endpoint that resolved no in-cluster port is a render error —
+// the process would bind a port the manifest never advertises.
+func namedPorts(ctx context.Context, mappings []*basev0.NetworkMapping) ([]NamedPort, error) {
+	var out []NamedPort
+	seen := make(map[uint32]string)
+	for _, mapping := range mappings {
+		endpoint := mapping.GetEndpoint()
+		if endpoint == nil || conventionalEndpoints[endpoint.GetName()] {
+			continue
+		}
+		instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, mappings, endpoint, resources.NewContainerNetworkAccess())
+		if err != nil || instance == nil || instance.GetPort() == 0 {
+			return nil, fmt.Errorf("endpoint %q has no in-cluster port to advertise: %v", endpoint.GetName(), err)
+		}
+		name := fmt.Sprintf("%s-%s", endpoint.GetApi(), endpoint.GetName())
+		if errs := validation.IsDNS1123Label(name); len(errs) > 0 {
+			return nil, fmt.Errorf("endpoint %q cannot name a Service port %q: %s", endpoint.GetName(), name, strings.Join(errs, "; "))
+		}
+		if owner, exists := seen[instance.GetPort()]; exists {
+			return nil, fmt.Errorf("endpoints %q and %q resolve to the same port %d", owner, endpoint.GetName(), instance.GetPort())
+		}
+		seen[instance.GetPort()] = endpoint.GetName()
+		out = append(out, NamedPort{Name: name, Port: instance.GetPort()})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
 
 // Deploy applies the k8s manifests in templates/deployment. It mirrors
@@ -854,6 +904,16 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			RestEndpoint:    s.GoGrpc.Settings.RestEndpoint,
 			ConnectEndpoint: s.GoGrpc.Settings.ConnectEndpoint,
 			Health:          s.GoGrpc.Settings.Health.Normalized(),
+		},
+		Prepare: func(ctx context.Context, deployment *services.KustomizeDeploymentContext) error {
+			ports, err := namedPorts(ctx, deployment.Request.GetNetworkMappings())
+			if err != nil {
+				return err
+			}
+			parameters := deployment.Parameters.(DeploymentParameters)
+			parameters.NamedPorts = ports
+			deployment.Parameters = parameters
+			return nil
 		},
 	})
 }
