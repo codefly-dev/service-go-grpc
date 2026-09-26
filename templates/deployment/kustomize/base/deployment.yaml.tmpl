@@ -82,6 +82,10 @@ spec:
             - name: connect
               containerPort: 8081
 {{- end }}
+{{- range .Deployment.Parameters.NamedPorts }}
+            # A named endpoint's listener, on the port Codefly resolved for it.
+            - containerPort: {{ .Port }}
+{{- end }}
           envFrom:
             - configMapRef:
                 name: cm-{{ .Service.Name.DNSCase }}

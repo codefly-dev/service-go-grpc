@@ -792,3 +792,72 @@ func TestSecretTemplateValuesAreBase64(t *testing.T) {
 		t.Errorf("secret value round trip: got %q want %q", decoded, hostile)
 	}
 }
+
+// TestNamedEndpointPortsAreAdvertised covers a service that serves one API on a
+// second, named endpoint: its listener binds the port Codefly resolved for it,
+// so the container and the Service must advertise exactly that port, under a
+// name whose prefix is the endpoint's API.
+func TestNamedEndpointPortsAreAdvertised(t *testing.T) {
+	params := DeploymentParameters{Health: undeclaredHealth(), NamedPorts: []NamedPort{{Name: "grpc-authority", Port: 13873}}}
+	container := renderContainer(t, params)
+	found := false
+	for _, port := range container.Ports {
+		if port.ContainerPort == 13873 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("container does not advertise the named endpoint's port: %+v", container.Ports)
+	}
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, params)
+	rendered, err := os.ReadFile(filepath.Join(dir, "base", "service.yaml"))
+	if err != nil {
+		t.Fatalf("read service: %v", err)
+	}
+	var service corev1.Service
+	if err := k8syaml.UnmarshalStrict(rendered, &service); err != nil {
+		t.Fatalf("rendered service is not a valid Service: %v\n%s", err, rendered)
+	}
+	for _, port := range service.Spec.Ports {
+		if port.Name == "grpc-authority" {
+			if port.Port != 13873 || port.TargetPort.IntValue() != 13873 {
+				t.Fatalf("named port = %+v, want 13873 -> 13873", port)
+			}
+			return
+		}
+	}
+	t.Fatalf("service does not advertise the named endpoint:\n%s", rendered)
+}
+
+func TestNamedPortsComeFromTheServicesOwnMappings(t *testing.T) {
+	ctx := context.Background()
+	mapping := func(name, api string, port uint32) *basev0.NetworkMapping {
+		return &basev0.NetworkMapping{
+			Endpoint: &basev0.Endpoint{Name: name, Api: api, Service: "accounts", Module: "host"},
+			Instances: []*basev0.NetworkInstance{{
+				Hostname: "accounts.host.svc.cluster.local",
+				Port:     port,
+				Access:   resources.NewContainerNetworkAccess(),
+			}},
+		}
+	}
+	ports, err := namedPorts(ctx, []*basev0.NetworkMapping{
+		mapping("grpc", "grpc", 9090),
+		mapping("rest", "rest", 8080),
+		mapping("connect", "connect", 8081),
+		mapping("authority", "grpc", 13873),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []NamedPort{{Name: "grpc-authority", Port: 13873}}; !reflect.DeepEqual(ports, want) {
+		t.Fatalf("named ports = %+v, want %+v", ports, want)
+	}
+
+	if _, err := namedPorts(ctx, []*basev0.NetworkMapping{{Endpoint: &basev0.Endpoint{Name: "authority", Api: "grpc"}}}); err == nil {
+		t.Fatal("a named endpoint with no in-cluster port must refuse the render")
+	}
+	if _, err := namedPorts(ctx, []*basev0.NetworkMapping{mapping("a", "grpc", 9100), mapping("b", "grpc", 9100)}); err == nil {
+		t.Fatal("two named endpoints on one port must refuse the render")
+	}
+}
