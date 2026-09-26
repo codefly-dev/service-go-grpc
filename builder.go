@@ -555,14 +555,16 @@ func declaredProtoServices(root string) ([]string, error) {
 }
 
 // dockerTemplating extends the core DockerTemplating with the runtime assets
-// this repo's Dockerfile template copies into the final stage. Each entry is a
+// this repo's Dockerfile template copies into the final stage and the Alpine
+// packages it installs there. Each entry is a
 // path relative to the Docker build context, which the template reproduces at
 // the same path under /app. The core struct has no field for them, so Build
 // renders with this superset instead of going through golanghelpers.BuildGoDocker.
 type dockerTemplating struct {
 	golanghelpers.DockerTemplating
-	RuntimeAssets []string
-	BuildCommands []BuildCommand
+	RuntimeAssets   []string
+	RuntimePackages []string
+	BuildCommands   []BuildCommand
 }
 
 // Build prepares the service's Docker recipe. Uses a custom DockerTemplating
@@ -595,6 +597,9 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	if err := validateBuildCommandSources(filepath.Join(s.Location, moduleRoot), s.GoGrpc.Settings.BuildCommands); err != nil {
 		return s.Base.Builder.BuildError(err)
 	}
+	if err := validateRuntimePackages(s.GoGrpc.Settings.RuntimePackages); err != nil {
+		return s.Base.Builder.BuildError(err)
+	}
 
 	configure, assets, err := goDockerTemplating(
 		s.GoGrpc.Settings,
@@ -608,11 +613,11 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 		return s.Base.Builder.BuildError(err)
 	}
 	return prepareGoDocker(ctx, s.Base.Builder, req,
-		requirements, builderFS, GoVersion, AlpineVersion, assets, s.GoGrpc.Settings.BuildCommands, configure)
+		requirements, builderFS, GoVersion, AlpineVersion, assets, s.GoGrpc.Settings.RuntimePackages, s.GoGrpc.Settings.BuildCommands, configure)
 }
 
-// The local templating superset carries runtime assets that the Core template
-// parameters cannot express.
+// The local templating superset carries runtime assets and runtime packages
+// that the Core template parameters cannot express.
 func prepareGoDocker(
 	ctx context.Context,
 	builder *services.BuilderWrapper,
@@ -621,6 +626,7 @@ func prepareGoDocker(
 	builderFS embed.FS,
 	goVersion, alpineVersion string,
 	assets []string,
+	packages []string,
 	commands []BuildCommand,
 	opts ...func(*golanghelpers.DockerTemplating),
 ) (*builderv0.BuildResponse, error) {
@@ -642,8 +648,9 @@ func prepareGoDocker(
 			GoVersion:     goVersion,
 			AlpineVersion: alpineVersion,
 		},
-		RuntimeAssets: assets,
-		BuildCommands: commands,
+		RuntimeAssets:   assets,
+		RuntimePackages: packages,
+		BuildCommands:   commands,
 	}
 	for _, opt := range opts {
 		opt(&templating.DockerTemplating)

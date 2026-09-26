@@ -84,8 +84,8 @@ RUN --network=none cd {{ .ModuleRoot }} && \
 # Final stage
 FROM alpine:{{ .AlpineVersion }}@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 
-# Runtime only needs the public CA bundle. Keep build tooling out of the image.
-RUN apk add --no-cache ca-certificates
+# Runtime only needs the public CA bundle{{ if .RuntimePackages }} and the packages the service declares in runtime-packages{{ end }}. Keep build tooling out of the image.
+RUN apk add --no-cache ca-certificates{{ range .RuntimePackages }} {{ . }}{{ end }}
 
 # Run from the Go source directory, mirroring the dev runner (which starts the
 # binary with its working directory set to the source dir). This is what makes a

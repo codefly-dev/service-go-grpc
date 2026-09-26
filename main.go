@@ -73,6 +73,14 @@ type Settings struct {
 	// reproduced under /app, preserving its layout relative to the service root.
 	RuntimeAssets []string `yaml:"runtime-assets"`
 
+	// RuntimePackages lists Alpine packages the final image installs next to
+	// the CA bundle (e.g. "git" for a service that shells out to git at
+	// runtime). The runtime stage otherwise carries no OS tooling, so a binary
+	// the service executes works in dev — where the host provides it — and is
+	// missing in the container. Each entry must be a plain package name; version
+	// pins and anything else are refused at load and at recipe render.
+	RuntimePackages []string `yaml:"runtime-packages,omitempty"`
+
 	// BuildCommands adds local main packages to the service image's PATH.
 	// Packages are relative to the same Go module as the main service.
 	BuildCommands []BuildCommand `yaml:"build-commands,omitempty"`
@@ -368,6 +376,9 @@ func (s *Settings) Validate() error {
 		if err := validateRuntimeAssetPath(asset); err != nil {
 			return err
 		}
+	}
+	if err := validateRuntimePackages(s.RuntimePackages); err != nil {
+		return err
 	}
 	if err := validateBuildCommands(s.BuildCommands); err != nil {
 		return err
