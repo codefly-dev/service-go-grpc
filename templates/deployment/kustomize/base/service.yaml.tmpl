@@ -23,3 +23,9 @@ spec:
       port: 8081
       targetPort: 8081
 {{- end }}
+{{- range .Deployment.Parameters.NamedPorts }}
+    - protocol: TCP
+      name: {{ .Name }}
+      port: {{ .Port }}
+      targetPort: {{ .Port }}
+{{- end }}
