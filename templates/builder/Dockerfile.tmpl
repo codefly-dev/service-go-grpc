@@ -1,16 +1,24 @@
 # syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# The Go modules the recipe declares it downloads (go_module_downloads), fetched
+# by the caller on its own machine before any image build and supplied here as
+# the build context of this name, in the Go module proxy layout. Without a
+# caller supplying it, the stage is empty and the download below uses the
+# network as it always did.
+FROM scratch AS gomodproxy
+
 # Build stage
 FROM golang:{{ .GoVersion }}-alpine3.23@sha256:3747dcba41c8b0db3211fda4db61638b980e17ac5bb3c94460a975a9cfe19395 AS builder
 
 ARG TARGETARCH
 
-# Private Go modules. GOPRIVATE is a build argument the CLI sets from the host's
-# own GOPRIVATE, so it reaches the toolchain here exactly as it does on the host:
-# those module paths bypass the public proxy and checksum database and are
-# fetched with git. The credential git needs is a BuildKit secret the CLI mounts
-# as /root/.netrc on the dependency download step only. The credential is never
-# a build argument, an ENV or a layer, and the mount is optional: a build with
-# no private module needs no secret and renders the same recipe.
+# Private Go modules. A service built from its own directory declares its
+# module's downloads in the recipe, and the caller fetches them before the build
+# and supplies them as the gomodproxy context above: the build reads them from
+# there and needs no credential. GOPRIVATE, a build argument the CLI sets from
+# the host's own, only matters when nothing was supplied — a workspace build, or
+# a plain `docker build` — where those paths bypass the public proxy and are
+# fetched with git; the optional netrc secret mount on those download steps is
+# for callers that predate the declaration and still pass a credential.
 ARG GOPRIVATE
 
 # Install ca-certificates for HTTPS requests and git for private repos if needed.
@@ -45,7 +53,14 @@ COPY {{.}} {{.}}
 # Download dependencies and build the binary
 {{- if .ModuleRoot }}
 COPY {{ .ModuleRoot }}/go.mod {{ .ModuleRoot }}/go.sum {{ .ModuleRoot }}/
-RUN --mount=type=secret,id=netrc,target=/root/.netrc,required=false cd {{ .ModuleRoot }} && sha256sum go.mod go.sum > /tmp/locks.sha256 && go mod download && go list -mod=readonly -m -json all > /tmp/modules.json && go mod verify && sha256sum -c /tmp/locks.sha256
+# With the caller's prefetched modules, they are the only module source: no
+# credential is needed or mounted, a module missing from them fails here rather
+# than being fetched, and go.sum alone verifies them (the caller's fetch was
+# verified against the checksum database on its side). GOPRIVATE is cleared so
+# private paths are read from the proxy like any other.
+RUN --mount=type=bind,from=gomodproxy,target=/gomodproxy \
+    if [ -n "$(ls -A /gomodproxy)" ]; then export GOPROXY=file:///gomodproxy GOSUMDB=off GOPRIVATE= GONOPROXY= GONOSUMDB=; fi && \
+    cd {{ .ModuleRoot }} && sha256sum go.mod go.sum > /tmp/locks.sha256 && go mod download && go list -mod=readonly -m -json all > /tmp/modules.json && go mod verify && sha256sum -c /tmp/locks.sha256
 COPY {{ .ModuleRoot }} {{ .ModuleRoot }}
 RUN find . -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/sources.sha256
 RUN --network=none cd {{ .ModuleRoot }} && \
