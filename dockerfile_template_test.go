@@ -194,7 +194,7 @@ func TestDockerfileTemplateKeepsNonCGOBuildStatic(t *testing.T) {
 // runtime stage may name it. Without this, `go mod download` in the builder
 // stage has no way to authenticate and a service that imports a private module
 // fails with "could not read Username for 'https://github.com'".
-func TestDockerfileTemplateFetchesPrivateModulesThroughAnOptionalSecret(t *testing.T) {
+func TestDockerfileTemplateFetchesPrivateModulesWithoutAStandaloneCredential(t *testing.T) {
 	t.Parallel()
 
 	const mount = "--mount=type=secret,id=netrc,target=/root/.netrc,required=false"
@@ -220,14 +220,22 @@ func TestDockerfileTemplateFetchesPrivateModulesThroughAnOptionalSecret(t *testi
 			require.NotContains(t, rendered, "ENV GOPRIVATE")
 			require.Less(t, strings.Index(builderStage, "ARG GOPRIVATE"), strings.Index(builderStage, "go mod download"))
 
-			// Every dependency download, in every layout, mounts the secret. A
-			// RUN spans continuation lines, so judge whole instructions.
+			// A download whose modules the caller prefetches (a service built
+			// from its own directory, which declares them) reads the supplied
+			// proxy and mounts no credential. Every other layout keeps the
+			// optional secret for callers that predate the declaration. A RUN
+			// spans continuation lines, so judge whole instructions.
 			downloads := 0
 			for _, instruction := range strings.Split(strings.ReplaceAll(builderStage, "\\\n", " "), "\n") {
 				if !strings.Contains(instruction, "go mod download") {
 					continue
 				}
 				downloads++
+				if len(goModuleDownloads(data)) > 0 {
+					require.True(t, strings.HasPrefix(instruction, "RUN --mount=type=bind,from="+goModuleProxyContext+",target=/gomodproxy "), "a declared download must read the prefetched proxy: %q", instruction)
+					require.NotContains(t, instruction, "type=secret", "a declared download needs no credential: %q", instruction)
+					continue
+				}
 				require.True(t, strings.HasPrefix(instruction, "RUN "+mount+" "), "dependency download must mount the netrc secret: %q", instruction)
 			}
 			require.Positive(t, downloads, "rendered %s recipe downloads no dependencies", name)

@@ -669,7 +669,27 @@ func prepareGoDocker(
 		services.WithBuilder(builderFS).WithDestination("%s", outputDir).WithOverride(shared.OverrideAll())); err != nil {
 		return builder.BuildError(err)
 	}
-	return emitBuildPlan(builder, outputDir, image, emitted)
+	return emitBuildPlan(builder, outputDir, image, emitted, goModuleDownloads(templating.DockerTemplating)...)
+}
+
+// goModuleProxyContext is the build context the Dockerfile reads the caller's
+// prefetched Go modules from (the `gomodproxy` stage in the template).
+const goModuleProxyContext = "gomodproxy"
+
+// goModuleDownloads declares the module graph the recipe downloads, so the
+// caller fetches it before any image build and the build needs no credential.
+// It is declared only where the module root is a path in the recipe's build
+// context — a service built from its own directory, which is the context
+// ("."). A workspace build copies a different root and a build with no module
+// root decides where go.mod is at build time; both keep fetching in the build.
+func goModuleDownloads(templating golanghelpers.DockerTemplating) []services.RecipeOption {
+	if templating.Workspace || templating.ModuleRoot == "" {
+		return nil
+	}
+	return []services.RecipeOption{services.WithGoModuleDownloads(&builderv0.GoModuleDownload{
+		ModuleRoot:   templating.ModuleRoot,
+		ProxyContext: goModuleProxyContext,
+	})}
 }
 
 // BuildCapabilities advertises what this agent supports. Core's builder client
@@ -686,8 +706,8 @@ func (s *Builder) BuildCapabilities(context.Context, *builderv0.BuildCapabilitie
 // emitBuildPlan records the rendered builder/ directory as a reproducible Docker
 // build recipe instead of building an image in-process. The caller (the CLI)
 // owns running docker buildx from the emitted plan.
-func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *resources.DockerImage, emitted []string) (*builderv0.BuildResponse, error) {
-	plan, err := recipeBuildPlan(outputDir, image, emitted)
+func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *resources.DockerImage, emitted []string, options ...services.RecipeOption) (*builderv0.BuildResponse, error) {
+	plan, err := recipeBuildPlan(outputDir, image, emitted, options...)
 	if err != nil {
 		return builder.BuildError(err)
 	}
@@ -712,8 +732,8 @@ func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *re
 // Core owns the platform policy the CLI executor enforces (it refuses to push a
 // recipe that omits the deployment architecture), so the platform list is read
 // from there rather than restated here.
-func recipeBuildPlan(outputDir string, image *resources.DockerImage, emitted []string) (*builderv0.DockerBuildPlan, error) {
-	return services.SingleImageBuildPlan(outputDir, image.FullName(), services.RecipeBuildPlatforms(), emitted)
+func recipeBuildPlan(outputDir string, image *resources.DockerImage, emitted []string, options ...services.RecipeOption) (*builderv0.DockerBuildPlan, error) {
+	return services.SingleImageBuildPlan(outputDir, image.FullName(), services.RecipeBuildPlatforms(), emitted, options...)
 }
 
 // unsafeAssetChars are byte values that must not appear in a runtime asset
