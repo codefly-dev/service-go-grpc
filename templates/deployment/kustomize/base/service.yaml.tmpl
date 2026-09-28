@@ -11,17 +11,17 @@ spec:
       name: grpc-port
       port: 9090
       targetPort: 9090
-{{- if .Deployment.Parameters.RestEndpoint }}
+{{- with .Deployment.Parameters.RestPort }}
     - protocol: TCP
       name: http-port
-      port: 8080
-      targetPort: 8080
+      port: {{ . }}
+      targetPort: {{ . }}
 {{- end }}
-{{- if .Deployment.Parameters.ConnectEndpoint }}
+{{- with .Deployment.Parameters.ConnectPort }}
     - protocol: TCP
       name: connect-port
-      port: 8081
-      targetPort: 8081
+      port: {{ . }}
+      targetPort: {{ . }}
 {{- end }}
 {{- range .Deployment.Parameters.NamedPorts }}
     - protocol: TCP

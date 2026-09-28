@@ -854,10 +854,15 @@ func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*
 // — a grpc-only service must not advertise http, and a connect service must
 // advertise its port.
 type DeploymentParameters struct {
-	ServiceAccount  *ServiceAccountSpec
-	RestEndpoint    bool
-	ConnectEndpoint bool
-	Health          HealthSpec
+	ServiceAccount *ServiceAccountSpec
+	// RestPort and ConnectPort are the ports the manifest advertises for the
+	// conventional rest and connect endpoints, 0 when nothing serves them.
+	// They are NOT the `rest-endpoint` / `connect-endpoint` settings: those say
+	// who writes the handler, never whether the endpoint exists. See
+	// conventionalPort.
+	RestPort    uint32
+	ConnectPort uint32
+	Health      HealthSpec
 	// NamedPorts are the listeners of the service's named endpoints: every
 	// declared endpoint beyond the conventional grpc, rest and connect ones
 	// (a second endpoint serving the same API under its own name, say). Each
@@ -877,6 +882,51 @@ type NamedPort struct {
 // conventionalEndpoints are the listeners the templates always know: grpc is
 // served unconditionally, rest and connect when enabled.
 var conventionalEndpoints = map[string]bool{standards.GRPC: true, standards.REST: true, standards.CONNECT: true}
+
+// The ports the scaffolded handlers bind, and so the ports advertised for a
+// conventional endpoint whose handler the agent writes.
+const (
+	restContainerPort    uint32 = 8080
+	connectContainerPort uint32 = 8081
+)
+
+// conventionalPort is the port the manifest advertises for one of the
+// conventional endpoints (rest, connect), or 0 when nothing serves it.
+//
+// A service serves such an endpoint in one of two ways, and BOTH have to be
+// advertised:
+//
+//   - the agent scaffolds the handler (`rest-endpoint: true`), which binds the
+//     conventional port; or
+//   - the service DECLARES the endpoint and owns the listener itself
+//     (`rest-endpoint: false` plus an endpoint named `rest`), which is how a
+//     service keeps a hand-written gateway that the scaffold would replace.
+//
+// The setting says who writes the handler, never whether the endpoint exists.
+// Gating the port on the setting alone left the second case with an address
+// every consumer resolves — Codefly allocates the endpoint a port and hands it
+// out — and no port behind it, so the call was refused at the mesh rather than
+// answered. A declared endpoint is advertised on the port Codefly resolved for
+// it, which is the port the process binds.
+func conventionalPort(ctx context.Context, mappings []*basev0.NetworkMapping, name string, scaffolded bool, scaffoldPort uint32) (uint32, error) {
+	for _, mapping := range mappings {
+		endpoint := mapping.GetEndpoint()
+		if endpoint == nil || endpoint.GetName() != name {
+			continue
+		}
+		instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, mappings, endpoint, resources.NewContainerNetworkAccess())
+		if err != nil || instance == nil || instance.GetPort() == 0 {
+			return 0, fmt.Errorf("endpoint %q has no in-cluster port to advertise: %v", name, err)
+		}
+		return instance.GetPort(), nil
+	}
+	// No declared endpoint. The scaffold still binds its port when enabled, so
+	// keep advertising it; a service with neither advertises nothing.
+	if scaffolded {
+		return scaffoldPort, nil
+	}
+	return 0, nil
+}
 
 // namedPorts derives the named listeners from the service's own network
 // mappings: the in-cluster (container) address of every non-conventional
@@ -927,18 +977,27 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		Templates:            deploymentFS,
 		Inputs:               services.ApplicationDeploymentInputs(),
 		Parameters: DeploymentParameters{
-			ServiceAccount:  s.GoGrpc.Settings.ServiceAccount,
-			RestEndpoint:    s.GoGrpc.Settings.RestEndpoint,
-			ConnectEndpoint: s.GoGrpc.Settings.ConnectEndpoint,
-			Health:          s.GoGrpc.Settings.Health.Normalized(),
+			ServiceAccount: s.GoGrpc.Settings.ServiceAccount,
+			Health:         s.GoGrpc.Settings.Health.Normalized(),
 		},
 		Prepare: func(ctx context.Context, deployment *services.KustomizeDeploymentContext) error {
-			ports, err := namedPorts(ctx, deployment.Request.GetNetworkMappings())
+			mappings := deployment.Request.GetNetworkMappings()
+			ports, err := namedPorts(ctx, mappings)
+			if err != nil {
+				return err
+			}
+			rest, err := conventionalPort(ctx, mappings, standards.REST, s.GoGrpc.Settings.RestEndpoint, restContainerPort)
+			if err != nil {
+				return err
+			}
+			connect, err := conventionalPort(ctx, mappings, standards.CONNECT, s.GoGrpc.Settings.ConnectEndpoint, connectContainerPort)
 			if err != nil {
 				return err
 			}
 			parameters := deployment.Parameters.(DeploymentParameters)
 			parameters.NamedPorts = ports
+			parameters.RestPort = rest
+			parameters.ConnectPort = connect
 			deployment.Parameters = parameters
 			return nil
 		},
