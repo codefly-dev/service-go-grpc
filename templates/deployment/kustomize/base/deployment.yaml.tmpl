@@ -69,18 +69,22 @@ spec:
               type: RuntimeDefault
           ports:
             # Match service.yaml.tmpl. grpc is the raw gRPC listener, always
-            # served. http (grpc-gateway REST facade) and connect bind only
-            # when their endpoint is enabled — advertise a port only when the
-            # process binds it, so nothing routes to a dead port.
+            # served. http (grpc-gateway REST facade) and connect are advertised
+            # whenever something binds them — the agent's scaffold, OR the
+            # service's own listener for an endpoint it declares and owns — on
+            # the port Codefly resolved. Advertise a port only when the process
+            # binds it, so nothing routes to a dead port, and advertise every
+            # port it does bind, so nothing resolves an address that answers
+            # nothing.
             - name: grpc
               containerPort: 9090
-{{- if .Deployment.Parameters.RestEndpoint }}
+{{- with .Deployment.Parameters.RestPort }}
             - name: http
-              containerPort: 8080
+              containerPort: {{ . }}
 {{- end }}
-{{- if .Deployment.Parameters.ConnectEndpoint }}
+{{- with .Deployment.Parameters.ConnectPort }}
             - name: connect
-              containerPort: 8081
+              containerPort: {{ . }}
 {{- end }}
 {{- range .Deployment.Parameters.NamedPorts }}
             # A named endpoint's listener, on the port Codefly resolved for it.

@@ -326,7 +326,7 @@ func TestDeploymentProbesNeverInventARoute(t *testing.T) {
 	for _, params := range map[string]DeploymentParameters{
 		"transport": {Health: (*HealthSpec)(nil).Normalized()},
 		"grpc":      {Health: (&HealthSpec{Mode: HealthModeGrpc}).Normalized()},
-		"http":      {RestEndpoint: true, Health: (&HealthSpec{Mode: HealthModeHTTP, Path: "/healthz"}).Normalized()},
+		"http":      {RestPort: restContainerPort, Health: (&HealthSpec{Mode: HealthModeHTTP, Path: "/healthz"}).Normalized()},
 	} {
 		liveness := renderContainer(t, params).LivenessProbe
 		if liveness.TCPSocket == nil {
@@ -365,7 +365,7 @@ func TestDeploymentProbesRenderTheDeclaredHealthContract(t *testing.T) {
 			want:   grpcProbe(""),
 		},
 		"grpc + gateway, semantic health": {
-			params: DeploymentParameters{RestEndpoint: true, Health: (&HealthSpec{Mode: HealthModeGrpc}).Normalized()},
+			params: DeploymentParameters{RestPort: restContainerPort, Health: (&HealthSpec{Mode: HealthModeGrpc}).Normalized()},
 			want:   grpcProbe(""),
 		},
 		"named gRPC health service": {
@@ -382,15 +382,15 @@ func TestDeploymentProbesRenderTheDeclaredHealthContract(t *testing.T) {
 		},
 		"explicit HTTP health": {
 			params: DeploymentParameters{
-				RestEndpoint: true,
-				Health:       (&HealthSpec{Mode: HealthModeHTTP, Path: "/readyz"}).Normalized(),
+				RestPort: restContainerPort,
+				Health:   (&HealthSpec{Mode: HealthModeHTTP, Path: "/readyz"}).Normalized(),
 			},
 			want: httpProbe("/readyz", "http"),
 		},
 		"explicit HTTP health on connect": {
 			params: DeploymentParameters{
-				ConnectEndpoint: true,
-				Health:          (&HealthSpec{Mode: HealthModeHTTP, Path: "/readyz", Port: "connect"}).Normalized(),
+				ConnectPort: connectContainerPort,
+				Health:      (&HealthSpec{Mode: HealthModeHTTP, Path: "/readyz", Port: "connect"}).Normalized(),
 			},
 			want: httpProbe("/readyz", "connect"),
 		},
@@ -504,8 +504,8 @@ func TestDeploymentHealthFieldsAreQuoted(t *testing.T) {
 
 	path := "/readyz #frag"
 	container = renderContainer(t, DeploymentParameters{
-		RestEndpoint: true,
-		Health:       HealthSpec{Mode: HealthModeHTTP, Path: path, Port: "http"},
+		RestPort: restContainerPort,
+		Health:   HealthSpec{Mode: HealthModeHTTP, Path: path, Port: "http"},
 	})
 	if got := container.ReadinessProbe.HTTPGet.Path; got != path {
 		t.Errorf("path rendered as %q, want %q — an unquoted %q truncates it into a YAML comment", got, path, "#")
@@ -642,16 +642,16 @@ func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 	checks := []portCheck{
 		{"containerPort: 9090", func(DeploymentParameters) bool { return true }},
 		{"name: grpc-port", func(DeploymentParameters) bool { return true }},
-		{"containerPort: 8080", func(p DeploymentParameters) bool { return p.RestEndpoint }},
-		{"name: http-port", func(p DeploymentParameters) bool { return p.RestEndpoint }},
-		{"containerPort: 8081", func(p DeploymentParameters) bool { return p.ConnectEndpoint }},
-		{"name: connect-port", func(p DeploymentParameters) bool { return p.ConnectEndpoint }},
+		{"containerPort: 8080", func(p DeploymentParameters) bool { return p.RestPort != 0 }},
+		{"name: http-port", func(p DeploymentParameters) bool { return p.RestPort != 0 }},
+		{"containerPort: 8081", func(p DeploymentParameters) bool { return p.ConnectPort != 0 }},
+		{"name: connect-port", func(p DeploymentParameters) bool { return p.ConnectPort != 0 }},
 	}
 	cases := map[string]DeploymentParameters{
 		"grpc only":      {Health: undeclaredHealth()},
-		"grpc + rest":    {RestEndpoint: true, Health: undeclaredHealth()},
-		"grpc + connect": {ConnectEndpoint: true, Health: undeclaredHealth()},
-		"all":            {RestEndpoint: true, ConnectEndpoint: true, Health: undeclaredHealth()},
+		"grpc + rest":    {RestPort: restContainerPort, Health: undeclaredHealth()},
+		"grpc + connect": {ConnectPort: connectContainerPort, Health: undeclaredHealth()},
+		"all":            {RestPort: restContainerPort, ConnectPort: connectContainerPort, Health: undeclaredHealth()},
 	}
 	for name, params := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -859,5 +859,115 @@ func TestNamedPortsComeFromTheServicesOwnMappings(t *testing.T) {
 	}
 	if _, err := namedPorts(ctx, []*basev0.NetworkMapping{mapping("a", "grpc", 9100), mapping("b", "grpc", 9100)}); err == nil {
 		t.Fatal("two named endpoints on one port must refuse the render")
+	}
+}
+
+// TestDeclaredRestEndpointIsAdvertisedWithoutTheScaffold is the regression test
+// for a declared endpoint whose listener the service owns.
+//
+// `rest-endpoint: false` says the agent does not scaffold the grpc-gateway
+// facade — it does NOT say the service serves no REST. A service that keeps a
+// hand-written gateway declares a `rest` endpoint and binds it itself, Codefly
+// allocates that endpoint a port and hands every consumer the address, and the
+// manifest has to advertise it. Gating the port on the setting alone rendered a
+// Service with only grpc, so the resolved address answered nothing: on a real
+// cell a request from a neighbouring pod came back "Connection reset by peer"
+// (obin-ai/platform-obin#41). Note that `nc -z` reports such a port open under
+// an ambient mesh, because the proxy accepts the connection whatever is behind
+// it — only a real request shows the failure.
+func TestDeclaredRestEndpointIsAdvertisedWithoutTheScaffold(t *testing.T) {
+	ctx := context.Background()
+	mapping := func(name, api string, port uint32) *basev0.NetworkMapping {
+		return &basev0.NetworkMapping{
+			Endpoint: &basev0.Endpoint{Name: name, Api: api, Service: "tasks", Module: "runtime"},
+			Instances: []*basev0.NetworkInstance{{
+				Hostname: "tasks.runtime.svc.cluster.local",
+				Port:     port,
+				Access:   resources.NewContainerNetworkAccess(),
+			}},
+		}
+	}
+	mappings := []*basev0.NetworkMapping{mapping("grpc", "grpc", 9090), mapping("rest", "rest", 8080)}
+
+	// The service owns the listener: the scaffold is off, the endpoint declared.
+	port, err := conventionalPort(ctx, mappings, "rest", false, restContainerPort)
+	if err != nil {
+		t.Fatalf("conventionalPort: %v", err)
+	}
+	if port != 8080 {
+		t.Fatalf("declared rest endpoint with no scaffold = %d, want 8080 (the port Codefly resolved)", port)
+	}
+
+	// It must reach the rendered manifests, not just the parameter.
+	params := DeploymentParameters{Health: undeclaredHealth(), RestPort: port}
+	container := renderContainer(t, params)
+	var advertised bool
+	for _, p := range container.Ports {
+		if p.ContainerPort == 8080 {
+			advertised = true
+		}
+	}
+	if !advertised {
+		t.Fatalf("container does not advertise the declared rest endpoint: %+v", container.Ports)
+	}
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, params)
+	rendered, err := os.ReadFile(filepath.Join(dir, "base", "service.yaml"))
+	if err != nil {
+		t.Fatalf("read service: %v", err)
+	}
+	var service corev1.Service
+	if err := k8syaml.UnmarshalStrict(rendered, &service); err != nil {
+		t.Fatalf("rendered service is not a valid Service: %v\n%s", err, rendered)
+	}
+	for _, p := range service.Spec.Ports {
+		if p.Port == 8080 {
+			if p.TargetPort.IntValue() != 8080 {
+				t.Fatalf("rest port = %+v, want 8080 -> 8080", p)
+			}
+			return
+		}
+	}
+	t.Fatalf("service does not advertise the declared rest endpoint:\n%s", rendered)
+}
+
+// TestConventionalPortServesBothWaysAndNeither pins the whole rule, so neither
+// half of it can be dropped: the scaffold's port survives with no declared
+// endpoint (the common case, unchanged), a declared endpoint wins on the port
+// Codefly resolved even when it is not the conventional one, and a service that
+// serves the endpoint no way at all advertises nothing rather than a dead port.
+func TestConventionalPortServesBothWaysAndNeither(t *testing.T) {
+	ctx := context.Background()
+	declared := func(port uint32) []*basev0.NetworkMapping {
+		return []*basev0.NetworkMapping{{
+			Endpoint:  &basev0.Endpoint{Name: "connect", Api: "connect", Service: "s", Module: "m"},
+			Instances: []*basev0.NetworkInstance{{Hostname: "s.m", Port: port, Access: resources.NewContainerNetworkAccess()}},
+		}}
+	}
+	for _, tc := range []struct {
+		name       string
+		mappings   []*basev0.NetworkMapping
+		scaffolded bool
+		want       uint32
+	}{
+		{"scaffolded, not declared", nil, true, connectContainerPort},
+		{"declared, not scaffolded", declared(8081), false, 8081},
+		{"declared on a port of its own", declared(9443), false, 9443},
+		{"declared and scaffolded agree", declared(8081), true, 8081},
+		{"neither", nil, false, 0},
+	} {
+		got, err := conventionalPort(ctx, tc.mappings, "connect", tc.scaffolded, connectContainerPort)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: port = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+
+	// A declared endpoint with no in-cluster port is a render error, not a
+	// silent 0: the process binds something the manifest would never advertise.
+	orphan := []*basev0.NetworkMapping{{Endpoint: &basev0.Endpoint{Name: "connect", Api: "connect"}}}
+	if _, err := conventionalPort(ctx, orphan, "connect", false, connectContainerPort); err == nil {
+		t.Fatal("a declared conventional endpoint with no in-cluster port must refuse the render")
 	}
 }
