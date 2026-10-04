@@ -63,6 +63,25 @@ func TestFactoryRestAdapterMatchesBase(t *testing.T) {
 	}
 }
 
+// TestFactoryAdapterReadmeMatchesBase keeps the contract shipped into every
+// service equal to the one checked into base/. The README template carries no
+// placeholders, so the two are byte-identical or one of them is stale — and a
+// stale copy of this document is worse than none: it is what a service author
+// reads before deciding whether to hand-edit a generated file.
+func TestFactoryAdapterReadmeMatchesBase(t *testing.T) {
+	baseReadme, err := os.ReadFile(filepath.Join("base", "code", "pkg", "adapters", "README.md"))
+	if err != nil {
+		t.Fatalf("read base adapters README: %v", err)
+	}
+	template, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/README.md.tmpl")
+	if err != nil {
+		t.Fatalf("read factory adapters README template: %v", err)
+	}
+	if string(template) != string(baseReadme) {
+		t.Fatal("factory adapters README template drifted from base/code/pkg/adapters/README.md")
+	}
+}
+
 // TestGeneratedRestListenerExposesExtensionSeams pins the wiring that makes
 // Configuration.ServeMuxOptions and Configuration.Routes reachable at all.
 // Each assertion is a way the seam has already been lost in a hand-edited copy
@@ -80,11 +99,17 @@ func TestGeneratedRestListenerExposesExtensionSeams(t *testing.T) {
 	}
 	for _, want := range []string{
 		"func gatewayMuxOptions(extra ...runtime.ServeMuxOption) []runtime.ServeMuxOption",
+		"func gatewayDialOptions(extra ...grpc.DialOption) []grpc.DialOption",
 		"return append(options, extra...)",
 		"gwMux := runtime.NewServeMux(gatewayMuxOptions(s.config.ServeMuxOptions...)...)",
+		"opts := gatewayDialOptions(s.config.GatewayDialOptions...)",
 		"type Route struct",
 		"func WithRoutes(routes []Route, next http.Handler) http.Handler",
-		"handler := c.Handler(WithRoutes(s.config.Routes, gwMux))",
+		"func WithMiddleware(middleware []func(http.Handler) http.Handler, next http.Handler) http.Handler",
+		// The chain, and the two positions that are contract rather than taste:
+		// the middleware inside the CORS policy, the logging outermost.
+		"handler := WithMiddleware(s.config.Middleware, WithRoutes(s.config.Routes, gwMux))",
+		"s.server.Handler = logRequestOutcome(c.Handler(handler))",
 	} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("REST adapter template does not contain %q", want)
@@ -95,9 +120,45 @@ func TestGeneratedRestListenerExposesExtensionSeams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read gRPC adapter template: %v", err)
 	}
-	for _, want := range []string{"ServeMuxOptions []runtime.ServeMuxOption", "Routes []Route"} {
+	for _, want := range []string{
+		"ServeMuxOptions []runtime.ServeMuxOption",
+		"Routes []Route",
+		"Middleware []func(http.Handler) http.Handler",
+		"GatewayDialOptions []grpc.DialOption",
+	} {
 		if !strings.Contains(string(grpcRaw), want) {
 			t.Errorf("Configuration does not declare %q", want)
+		}
+	}
+}
+
+// TestGeneratedRestListenerLogsNoRequestPayload keeps the generated listener off
+// the handler it used to ship: one that read every request body into memory so
+// it could log the payload on any non-200 response. That wrote the caller's data
+// — a search query, a document — into a log store with its own retention and
+// audience, on exactly the paths where something had already gone wrong, and the
+// buffering kept any handler on this listener from being reached before EOF.
+//
+// base/code's TestRESTListenerDispatchesBeforeTheRequestBodyCompletes holds the
+// behaviour; this holds the shape, because a body could be read back into the
+// log by a change that still dispatches promptly.
+func TestGeneratedRestListenerLogsNoRequestPayload(t *testing.T) {
+	raw, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/rest_gen.go.tmpl")
+	if err != nil {
+		t.Fatalf("read REST adapter template: %v", err)
+	}
+	base, err := os.ReadFile(filepath.Join("base", "code", "pkg", "adapters", "rest_gen.go"))
+	if err != nil {
+		t.Fatalf("read base REST adapter: %v", err)
+	}
+	for name, content := range map[string]string{"template": string(raw), "base": string(base)} {
+		for _, unwanted := range []string{"io.ReadAll(r.Body)", "logRequestBody", "request body %+v"} {
+			if strings.Contains(content, unwanted) {
+				t.Errorf("the generated REST listener (%s) still carries %q", name, unwanted)
+			}
+		}
+		if !strings.Contains(content, "func logRequestOutcome(h http.Handler) http.Handler") {
+			t.Errorf("the generated REST listener (%s) records no request outcome at all", name)
 		}
 	}
 }
@@ -111,24 +172,40 @@ func TestGeneratedRestListenerExposesExtensionSeams(t *testing.T) {
 func TestGeneratedRestExtensionSeamsFollowTheRestSetting(t *testing.T) {
 	withREST := renderScaffold(t, "templates/factory/code/pkg/adapters/grpc_gen.go.tmpl", &Settings{RestEndpoint: true})
 	restAdapter := renderScaffold(t, "templates/factory/code/pkg/adapters/rest_gen.go.tmpl", &Settings{RestEndpoint: true})
-	for _, want := range []string{"ServeMuxOptions []runtime.ServeMuxOption", "Routes []Route"} {
+	for _, want := range []string{
+		"ServeMuxOptions []runtime.ServeMuxOption",
+		"Routes []Route",
+		"Middleware []func(http.Handler) http.Handler",
+		"GatewayDialOptions []grpc.DialOption",
+	} {
 		if !strings.Contains(withREST, want) {
 			t.Errorf("a REST service's Configuration is missing %q", want)
 		}
 	}
-	if !strings.Contains(restAdapter, "type Route struct") {
-		t.Error("a REST service's adapter does not declare the Route type its Configuration refers to")
+	for _, want := range []string{"type Route struct", "func WithMiddleware("} {
+		if !strings.Contains(restAdapter, want) {
+			t.Errorf("a REST service's adapter is missing %q, which its Configuration refers to", want)
+		}
 	}
 
 	withoutREST := renderScaffold(t, "templates/factory/code/pkg/adapters/grpc_gen.go.tmpl", &Settings{})
 	restDisabled := renderScaffold(t, "templates/factory/code/pkg/adapters/rest_gen.go.tmpl", &Settings{})
-	for _, unwanted := range []string{"ServeMuxOptions", "Routes []Route", "grpc-gateway/v2/runtime"} {
+	for _, unwanted := range []string{
+		"ServeMuxOptions",
+		"Routes []Route",
+		"Middleware []func",
+		"GatewayDialOptions",
+		"grpc-gateway/v2/runtime",
+		`"net/http"`,
+	} {
 		if strings.Contains(withoutREST, unwanted) {
 			t.Errorf("a gRPC-only service's Configuration still carries %q", unwanted)
 		}
 	}
-	if strings.Contains(restDisabled, "type Route struct") || strings.Contains(restDisabled, "func WithRoutes") {
-		t.Errorf("a gRPC-only service still gets the REST route plumbing:\n%s", restDisabled)
+	for _, unwanted := range []string{"type Route struct", "func WithRoutes", "func WithMiddleware"} {
+		if strings.Contains(restDisabled, unwanted) {
+			t.Errorf("a gRPC-only service still gets %q:\n%s", unwanted, restDisabled)
+		}
 	}
 }
 
@@ -136,8 +213,11 @@ func TestGeneratedRestExtensionSeamsFollowTheRestSetting(t *testing.T) {
 // service's own REST extension suite, which boots the listeners and calls them
 // over real HTTP (base/code/pkg/adapters/rest_extension_test.go): a supplied
 // forward-response option answering with an ETag and a 304, a supplied option
-// replacing a generated one, and a prefix-mounted handler served ahead of the
-// gateway while /version and /healthz still reach it.
+// replacing a generated one, a prefix-mounted handler served ahead of the
+// gateway while /version and /healthz still reach it, the service's dial options
+// reaching both the gateway hop and the health client, middleware wrapping the
+// chain outermost-first, and a chunked request reaching its handler before the
+// body completes.
 //
 // base/code is a separate module, so the agent's `go test ./...` does not reach
 // it; without this runner the regression #154 reports would have coverage that

@@ -7,14 +7,11 @@ package adapters
 ----------------------------------------------------------------- */
 
 import (
-	"bytes"
 	"codefly-base/pkg/gen"
 	"codefly-base/plugins"
 	"context"
 	"fmt"
-	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/status"
-	"io"
 	"net/http"
 	"strings"
 
@@ -74,6 +71,16 @@ func gatewayMuxOptions(extra ...runtime.ServeMuxOption) []runtime.ServeMuxOption
 	return append(options, extra...)
 }
 
+// gatewayDialOptions is how this listener reaches the gRPC server — for the
+// gateway's own hop and for the health probe's client — with extra appended to
+// the generated options. The hop carries whatever an RPC carries, so a service
+// whose messages exceed gRPC's 4 MiB default call bounds raises them here with
+// grpc.WithDefaultCallOptions rather than losing the hop at the proxy.
+func gatewayDialOptions(extra ...grpc.DialOption) []grpc.DialOption {
+	options := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	return append(options, extra...)
+}
+
 func (s *RestServer) Run(ctx context.Context) error {
 	fmt.Println("Starting Rest server at", *s.config.EndpointHttpPort)
 
@@ -84,7 +91,7 @@ func (s *RestServer) Run(ctx context.Context) error {
 
 	// Register generated gateway handlers
 
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	opts := gatewayDialOptions(s.config.GatewayDialOptions...)
 
 	err := gen.RegisterWebServiceHandlerFromEndpoint(ctx, gwMux, fmt.Sprintf("0.0.0.0:%d", s.config.EndpointGrpcPort), opts)
 	if err != nil {
@@ -117,10 +124,10 @@ func (s *RestServer) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to register health check handler: %w", err)
 	}
 
-	// Wrap the service's own routes and the gateway with the CORS handler
-	handler := c.Handler(WithRoutes(s.config.Routes, gwMux))
-
-	s.server.Handler = logRequestBody(handler)
+	// Outermost first: the generated request logging, the CORS policy, the
+	// service's own middleware, its routes, then the gateway.
+	handler := WithMiddleware(s.config.Middleware, WithRoutes(s.config.Routes, gwMux))
+	s.server.Handler = logRequestOutcome(c.Handler(handler))
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
@@ -157,6 +164,15 @@ func WithRoutes(routes []Route, next http.Handler) http.Handler {
 	})
 }
 
+// WithMiddleware wraps next from the outside, the first entry outermost, as
+// named in Configuration.Middleware.
+func WithMiddleware(middleware []func(http.Handler) http.Handler, next http.Handler) http.Handler {
+	for i := len(middleware) - 1; i >= 0; i-- {
+		next = middleware[i](next)
+	}
+	return next
+}
+
 type logResponseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -177,24 +193,27 @@ func newLogResponseWriter(w http.ResponseWriter) *logResponseWriter {
 	return &logResponseWriter{w, http.StatusOK}
 }
 
-// logRequestBody logs the request body when the response status code is not 200.
-func logRequestBody(h http.Handler) http.Handler {
+// logRequestOutcome records what failed, without recording what was sent.
+//
+// It replaces a handler that read every request body into memory and logged it
+// in full on any non-200 response. A request body is the caller's data — a
+// search query, a document, a credential in the wrong field — so that copied it
+// into a log store with its own retention and audience, on exactly the paths
+// where something had already gone wrong; and the buffering made every request
+// wait for its own EOF before the handler ran, which no streaming caller
+// survives. Method, path, status and declared body size identify the request.
+// The payload is what had to go, not the record of it.
+func logRequestOutcome(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lw := newLogResponseWriter(w)
-
-		// Note that buffering the entire request body could consume a lot of memory.
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to read body: %v", err), http.StatusBadRequest)
+		h.ServeHTTP(lw, r)
+		if lw.statusCode == http.StatusOK {
 			return
 		}
-		clonedR := r.Clone(r.Context())
-		clonedR.Body = io.NopCloser(bytes.NewReader(body))
-
-		h.ServeHTTP(lw, clonedR)
-
-		if lw.statusCode != http.StatusOK {
-			grpclog.Errorf("http error %+v request body %+v", lw.statusCode, string(body))
-		}
+		wool.Get(r.Context()).Warn("http request failed",
+			wool.Field("method", r.Method),
+			wool.Field("path", r.URL.Path),
+			wool.Field("status", lw.statusCode),
+			wool.Field("content_length", r.ContentLength))
 	})
 }

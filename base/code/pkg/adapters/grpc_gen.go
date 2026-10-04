@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -87,12 +88,27 @@ type Configuration struct {
 	// gwMux.HandlePath template. First match wins, and a route is consulted
 	// before every gateway path, /healthz included.
 	//
-	// What a mounted handler gets is this listener: HTTP/1.1 only (no h2c), and
-	// the generated logging wrapper reads each request body in full before the
-	// handler runs. So a mounted RPC handler answers unary calls — Connect and
-	// gRPC-Web both post one — and streaming needs a listener of its own, which
-	// is what connect-endpoint declares.
+	// What a mounted handler gets is this listener: HTTP/1.1, so a Connect or
+	// gRPC-Web caller is served and a gRPC-over-h2c one is not — that is the
+	// Connect listener connect-endpoint declares.
 	Routes []Route
+	// Middleware wrap the listener's handler chain, the first entry outermost,
+	// inside the CORS policy and ahead of the routes and the gateway. For policy
+	// that must see a request before anything reads its body: a request-body
+	// bound (http.MaxBytesReader, or a 413 on a declared over-cap
+	// Content-Length), a tracing span, a rate limit.
+	//
+	// Inside CORS so that what a middleware answers still carries the CORS
+	// headers a browser needs to read it, and inside the generated request
+	// logging so that it is recorded like any other outcome.
+	Middleware []func(http.Handler) http.Handler
+	// GatewayDialOptions are appended to the options the REST listener dials the
+	// gRPC server with, for the gateway's hop and the health probe's client.
+	// Where a service raises gRPC's 4 MiB default call bounds:
+	// grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(n), grpc.MaxCallSendMsgSize(n)).
+	// A bound set only on the server leaves the proxy refusing the message the
+	// server would have accepted.
+	GatewayDialOptions []grpc.DialOption
 }
 
 type GrpcServer struct {

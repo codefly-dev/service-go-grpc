@@ -57,23 +57,43 @@ instead, from your own Configure function (the one you pass to WithConfigure):
     ambiguity check refuses).
 
   config.Routes = []Route{{Prefix: "/pkg.v1.OtherService/", Handler: handler}}
-    HTTP handlers served on the REST listener ahead of the gateway, matched by
-    plain path prefix, inside the CORS and logging wrappers. For a protocol the
-    gateway cannot carry: a Connect handler for a second protobuf service, say,
-    whose every method would otherwise need its own gwMux.HandlePath template.
-    First match wins and a route is consulted before every gateway path,
-    /healthz included, so do not mount "/".
-    Know what the listener gives a mounted handler: HTTP/1.1 only (no h2c), and
-    the generated logging wrapper reads each request body in full before the
-    handler runs. Unary calls work, Connect and gRPC-Web included; streaming
-    does not, and belongs on the Connect listener that connect-endpoint
+    HTTP handlers served ahead of the gateway, matched by plain path prefix. For
+    a protocol the gateway cannot carry: a Connect handler for a second protobuf
+    service, say, whose every method would otherwise need its own
+    gwMux.HandlePath template. First match wins and a route is consulted before
+    every gateway path, /healthz included, so do not mount "/".
+    The listener speaks HTTP/1.1, which serves a Connect or gRPC-Web caller but
+    not a gRPC-over-h2c one: that is the Connect listener connect-endpoint
     declares.
 
-In your own tests, build the production mux with
-gatewayMuxOptions(config.ServeMuxOptions...) rather than a copy of the option
-list, so an option added to either side is covered without editing the test.
+  config.Middleware = []func(http.Handler) http.Handler{ ... }
+    Wraps the chain, the FIRST entry outermost, inside the CORS policy and ahead
+    of the routes and the gateway. For policy that must see a request before
+    anything reads its body: a request-body bound (http.MaxBytesReader, or a 413
+    on a declared over-cap Content-Length), a tracing span, a rate limit. Inside
+    CORS so what it answers still carries the headers a browser needs to read
+    it, and inside the generated logging so it is recorded like any other
+    outcome.
 
-Both fields are generated only when rest-endpoint: true.`,
+  config.GatewayDialOptions = []grpc.DialOption{ ... }
+    Appended to the options this listener dials the gRPC server with, for the
+    gateway's hop and the health probe's client. Where a service raises gRPC's
+    4 MiB default call bounds:
+    grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(n), grpc.MaxCallSendMsgSize(n)).
+    A bound set only on the server leaves the proxy refusing the message the
+    server would have accepted.
+
+The chain, outermost first: the generated request logging, the CORS policy, your
+Middleware, your Routes, the gateway. A non-200 is logged with its method, path,
+status and declared body size and NOTHING else — do not add a wrapper that logs
+request bodies, and do not expect the listener to have buffered one for you.
+
+In your own tests, build the production mux and chain with
+gatewayMuxOptions(config.ServeMuxOptions...), gatewayDialOptions(...),
+WithRoutes and WithMiddleware rather than a copy, so a change on either side is
+covered without editing the test.
+
+All four fields are generated only when rest-endpoint: true.`,
 		},
 		{
 			Id:          "go-grpc-proto-flow",
