@@ -63,6 +63,11 @@ instead, from your own Configure function (the one you pass to WithConfigure):
     whose every method would otherwise need its own gwMux.HandlePath template.
     First match wins and a route is consulted before every gateway path,
     /healthz included, so do not mount "/".
+    Know what the listener gives a mounted handler: HTTP/1.1 only (no h2c), and
+    the generated logging wrapper reads each request body in full before the
+    handler runs. Unary calls work, Connect and gRPC-Web included; streaming
+    does not, and belongs on the Connect listener that connect-endpoint
+    declares.
 
 In your own tests, build the production mux with
 gatewayMuxOptions(config.ServeMuxOptions...) rather than a copy of the option

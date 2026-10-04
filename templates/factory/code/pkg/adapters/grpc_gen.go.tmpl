@@ -89,6 +89,12 @@ type Configuration struct {
 	// protobuf service, say, whose every method would otherwise need its own
 	// gwMux.HandlePath template. First match wins, and a route is consulted
 	// before every gateway path, /healthz included.
+	//
+	// What a mounted handler gets is this listener: HTTP/1.1 only (no h2c), and
+	// the generated logging wrapper reads each request body in full before the
+	// handler runs. So a mounted RPC handler answers unary calls — Connect and
+	// gRPC-Web both post one — and streaming needs a listener of its own, which
+	// is what connect-endpoint declares.
 	Routes []Route
 {{- end }}
 }
