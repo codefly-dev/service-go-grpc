@@ -46,7 +46,7 @@ One implementation, one policy chain, three listeners:
 Each listener is started only when its endpoint is declared and scaffolded
 (`rest-endpoint` / `connect-endpoint` in the service's settings), and the three
 are independent: enabling Connect changes nothing about how gRPC or REST start.
-||||||| e58f844
+
 ## Extending the REST listener
 
 `rest_gen.go` is generated: a sync overwrites it, so an edit to it disappears
