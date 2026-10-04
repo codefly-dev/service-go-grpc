@@ -108,6 +108,20 @@ type Settings struct {
 	// means transport-only: a service customized before this declaration
 	// existed keeps the probes it has always had. See HealthSpec.
 	Health *HealthSpec `yaml:"health,omitempty"`
+
+	// ConfigMounts project named ConfigMaps or Secrets into the deployed pod
+	// as read-only files — the seam for configuration a process must read off
+	// disk, such as the CA bundle a TLS client verifies against. Empty (the
+	// default) renders no extra volumes. See ConfigMount and
+	// docs/deployment-mounts.md.
+	ConfigMounts []ConfigMount `yaml:"config-mounts,omitempty"`
+
+	// ServiceAccountTokens project ServiceAccount tokens with declared
+	// audiences into the pod, for a workload that authenticates to something
+	// which trusts the cluster's token issuer. automountServiceAccountToken
+	// stays false either way: these are never the pod's API-server token. See
+	// ServiceAccountToken and docs/deployment-mounts.md.
+	ServiceAccountTokens []ServiceAccountToken `yaml:"service-account-tokens,omitempty"`
 }
 
 // CorsSpec drives the CORS policy baked into the generated REST adapter
@@ -390,6 +404,13 @@ func (s *Settings) Validate() error {
 		return err
 	}
 	if err := s.validateHealth(); err != nil {
+		return err
+	}
+	// Resolution IS the validation for the pod's file mounts: the same pass
+	// that defaults a mode and derives a volume name is the one that refuses a
+	// mount the Deployment must not render, so Validate and Deploy can never
+	// disagree about what is acceptable.
+	if _, _, err := s.resolvePodMounts(); err != nil {
 		return err
 	}
 	return nil

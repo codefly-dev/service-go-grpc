@@ -100,6 +100,7 @@ bug it prevents is possible. The existing tests do; match them.
 | `commands.go`, `techniques.go` | agent commands (`proto`, `health`, `grpcurl…`) and prompts shipped **to the user's** agent — not guidance for this repo |
 | `templates/factory` | what `Create` renders into a new service |
 | `templates/builder`, `templates/deployment` | Dockerfile recipe; kustomize base + environment overlay |
+| `pod_mounts.go`, `docs/deployment-mounts.md` | `spec.config-mounts` / `spec.service-account-tokens`: the declared file mounts, resolved and validated before the Deployment renders them |
 | `base/` | a real, compiling generated service — the canonical fixture the factory templates must render to |
 
 ## Rules that bite
@@ -130,6 +131,16 @@ bug it prevents is possible. The existing tests do; match them.
   keeps its literal quotes only because core base64-encodes `SecretMap`
   (`EnvsAsSecretData`); `TestSecretTemplateValuesAreBase64` pins that reason, and
   `TestConfigMapEscapesHostileValues` pins the escaping.
+- **A declared mount is resolved before the template sees it.** `spec.config-mounts`
+  and `spec.service-account-tokens` go through `resolvePodMounts`, which defaults
+  the mode, derives the volume name and refuses what the pod could not use: a
+  writable configuration mount, a mode without group read (the kubelet owns these
+  files `root:fsGroup`, so the container could not read it), a projected token with
+  no audience (Kubernetes then mints the *API server's* token) or one below the 600 s
+  Kubernetes requires. The template renders what it is given and decides nothing, so
+  there is one place a rule can live. Core's shared model carries only the
+  ConfigMap-backed mounts (`services.ConfigMount` has no Secret source and no mode);
+  `podOverlay` declares those to it and names why the rest cannot go there.
 - **Sync is a transaction over a stage.** Copy in, generate, fix up, then swap
   by rename with rollback. Never write into a user's tree directly — a
   half-applied sync is a corrupted service. Buf's generation-input cache stays

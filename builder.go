@@ -869,6 +869,12 @@ type DeploymentParameters struct {
 	// carries the port Codefly resolved for it, which is the port the process
 	// binds, so the container and the Service advertise exactly that.
 	NamedPorts []NamedPort
+
+	// ConfigMounts and ServiceAccountTokens are the service's declared file
+	// mounts, already resolved and validated (Settings.resolvePodMounts). Empty
+	// leaves the pod with the single /tmp scratch volume it has always had.
+	ConfigMounts         []ConfigMountRender
+	ServiceAccountTokens []ServiceAccountTokenRender
 }
 
 // NamedPort is one named endpoint's listener as the deployment advertises it.
@@ -972,13 +978,21 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		return s.Base.Builder.DeployError(err)
 	}
 
+	mounts, tokens, err := s.GoGrpc.Settings.resolvePodMounts()
+	if err != nil {
+		return s.Base.Builder.DeployError(err)
+	}
+
 	return s.Base.Builder.DeployKustomize(ctx, req, services.KustomizeDeployment{
 		EnvironmentVariables: s.EnvironmentVariables,
 		Templates:            deploymentFS,
 		Inputs:               services.ApplicationDeploymentInputs(),
+		PodOverlay:           podOverlay(mounts),
 		Parameters: DeploymentParameters{
-			ServiceAccount: s.GoGrpc.Settings.ServiceAccount,
-			Health:         s.GoGrpc.Settings.Health.Normalized(),
+			ServiceAccount:       s.GoGrpc.Settings.ServiceAccount,
+			Health:               s.GoGrpc.Settings.Health.Normalized(),
+			ConfigMounts:         mounts,
+			ServiceAccountTokens: tokens,
 		},
 		Prepare: func(ctx context.Context, deployment *services.KustomizeDeploymentContext) error {
 			mappings := deployment.Request.GetNetworkMappings()
@@ -1002,6 +1016,43 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			return nil
 		},
 	})
+}
+
+// podOverlay declares the ConfigMap-backed file mounts on core's shared pod
+// overlay, the way the nextjs agent does, so core normalizes them, validates
+// them against the contract every agent shares, and warns if the rendered
+// workload carries no volume for one of them.
+//
+// Only the ConfigMap-backed ones appear here, and the volume names are always
+// explicit. services.ConfigMount models a ConfigMap source and nothing else —
+// it has no Secret source and no file mode — so a Secret mount cannot be
+// declared on it without naming a Secret in a ConfigMapName field, which would
+// make core validate the wrong object and its post-render check compare a
+// volume that is not the one rendered. Those mounts stay in
+// DeploymentParameters, which is also where the mode lives; the end state is
+// core's shared model growing a source discriminator and a mode, and #156's PR
+// names that gap rather than leaving it to be rediscovered. Passing the volume
+// names rather than letting core derive them keeps core's check and the
+// template's output keyed on the same name by construction.
+func podOverlay(mounts []ConfigMountRender) *services.PodTemplateOverlay {
+	var declared []services.ConfigMount
+	for _, mount := range mounts {
+		if mount.ConfigMap == "" {
+			continue
+		}
+		readOnly := mount.ReadOnly
+		declared = append(declared, services.ConfigMount{
+			ConfigMapName: mount.ConfigMap,
+			MountPath:     mount.MountPath,
+			ReadOnly:      &readOnly,
+			Optional:      mount.Optional,
+			VolumeName:    mount.VolumeName,
+		})
+	}
+	if len(declared) == 0 {
+		return nil
+	}
+	return &services.PodTemplateOverlay{ConfigMounts: declared}
 }
 
 // CreateEndpoints materializes gRPC / REST / Connect Endpoint resources

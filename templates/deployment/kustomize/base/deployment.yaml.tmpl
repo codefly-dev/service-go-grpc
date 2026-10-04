@@ -51,6 +51,12 @@ spec:
         fsGroup: 65534
         seccompProfile:
           type: RuntimeDefault
+{{- if .Deployment.Parameters.ServiceAccountTokens }}
+      # Still false, and the projected tokens below are why this is worth
+      # saying: a serviceAccountToken projection mints a token for its own
+      # declared audience, which is a different credential from the API
+      # server's token this line keeps out of the pod.
+{{- end }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       containers:
@@ -147,6 +153,60 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+{{- if .Deployment.Parameters.ConfigMounts }}
+            # Declared by the service (spec.config-mounts) and resolved before
+            # it reaches this template. Read-only without exception: these are
+            # files the process reads, and a writable mount would let it
+            # rewrite what it later re-reads.
+{{- end }}
+{{- range .Deployment.Parameters.ConfigMounts }}
+            - name: {{ .VolumeName }}
+              mountPath: {{ .MountPath }}
+              readOnly: {{ .ReadOnly }}
+{{- end }}
+{{- range .Deployment.Parameters.ServiceAccountTokens }}
+            # {{ .Path }}, projected for audience {{ .Audience | quote }}.
+            - name: {{ .VolumeName }}
+              mountPath: {{ .MountPath }}
+              readOnly: true
+{{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+{{- if .Deployment.Parameters.ConfigMounts }}
+        # Each defaultMode is group-readable and nothing wider. The kubelet
+        # owns a projected file root:fsGroup, and fsGroup above is the uid this
+        # container runs as, so group read is what makes the file readable at
+        # all — and a world bit would publish it to every other process on the
+        # node.
+{{- end }}
+{{- range .Deployment.Parameters.ConfigMounts }}
+        - name: {{ .VolumeName }}
+{{- if .ConfigMap }}
+          configMap:
+            name: {{ .ConfigMap }}
+            defaultMode: {{ .Mode }}
+            optional: {{ .Optional }}
+{{- else }}
+          secret:
+            secretName: {{ .Secret }}
+            defaultMode: {{ .Mode }}
+            optional: {{ .Optional }}
+{{- end }}
+{{- end }}
+{{- if .Deployment.Parameters.ServiceAccountTokens }}
+        # Each token is minted for its declared audience alone and rotated by
+        # the kubelet at 80% of its lifetime. The audience is mandatory
+        # upstream of this template: omitted, Kubernetes mints the token for
+        # the API server instead, which no external consumer accepts.
+{{- end }}
+{{- range .Deployment.Parameters.ServiceAccountTokens }}
+        - name: {{ .VolumeName }}
+          projected:
+            defaultMode: {{ .Mode }}
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .Audience | quote }}
+                  expirationSeconds: {{ .ExpirationSeconds }}
+                  path: {{ .FileName | quote }}
+{{- end }}
