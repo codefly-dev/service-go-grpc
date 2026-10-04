@@ -7,44 +7,65 @@ package adapters
 ----------------------------------------------------------------- */
 
 import (
-	"codefly-base/pkg/gen"
-	"codefly-base/pkg/gen/genconnect"
 	"context"
 	"fmt"
 	"net/http"
 
-	"connectrpc.com/connect"
-	codefly "github.com/codefly-dev/sdk-go"
+	"connectrpc.com/vanguard/vanguardgrpc"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+	"google.golang.org/grpc"
+
+	// Registers gRPC's gzip decompressor. gRPC refuses an encoding it has none
+	// for, and refuses it as Unimplemented, so without this a client that
+	// compresses its requests is told the method does not exist — the very
+	// error this listener stopped returning. Decompressing inside gRPC is also
+	// what keeps Configuration.GRPCServerOptions' receive bound meaningful: it
+	// is applied to the decompressed message, whereas a transcoder that
+	// inflated the payload itself would buffer it outside that bound.
+	_ "google.golang.org/grpc/encoding/gzip"
 )
 
-// ConnectServer serves the Connect, gRPC, and gRPC-Web protocols over HTTP.
-// It handles all three protocols on a single port.
+// ConnectServer serves the Connect, gRPC, and gRPC-Web protocols on a single
+// port by transcoding each request to gRPC and dispatching it through the same
+// gRPC server the sibling gRPC listener serves.
+//
+// Dispatch therefore has one source: the implementation installed as
+// Configuration.Service answers a Connect call exactly as it answers a gRPC
+// one, every grpc.ServerOption in Configuration.GRPCServerOptions — authority
+// and operations interceptors, message bounds — runs before it, and the gRPC
+// status it returns, error details included, is translated into the equivalent
+// Connect error. A service never writes a second, Connect-shaped copy of its
+// API, and no transport policy applies to one listener alone.
 type ConnectServer struct {
-	config *Configuration
-	server *http.Server
+	config  *Configuration
+	server  *http.Server
+	handler http.Handler
 }
 
-func NewConnectServer(c *Configuration) (*ConnectServer, error) {
+// NewConnectServer builds the transcoding listener over grpcServer. It must be
+// called once every service is registered on that server: the handler routes
+// the services it knows at this point, so a later registration is unreachable
+// over Connect.
+func NewConnectServer(c *Configuration, grpcServer *grpc.Server) (*ConnectServer, error) {
+	transcoder, err := vanguardgrpc.NewTranscoder(grpcServer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build the Connect transcoder: %w", err)
+	}
+	// Mounted per RPC service rather than at the root, so this listener answers
+	// the RPC protocols alone. The transcoder also serves the REST paths of a
+	// service's google.api.http annotations, and those belong to the REST
+	// listener, behind its CORS policy and its body bounds.
+	mux := http.NewServeMux()
+	for name := range grpcServer.GetServiceInfo() {
+		mux.Handle(fmt.Sprintf("/%s/", name), transcoder)
+	}
 	return &ConnectServer{
 		config: c,
 		server: &http.Server{Addr: fmt.Sprintf(":%d", *c.EndpointConnectPort)},
+		// h2c for HTTP/2 without TLS, which a gRPC client on this port requires.
+		handler: h2c.NewHandler(mux, &http2.Server{}),
 	}, nil
-}
-
-// connectHandler wraps the GrpcServer to implement the Connect handler interface.
-type connectHandler struct {
-	// Embedding keeps a service with Connect disabled buildable as protobuf
-	// methods evolve. Enabled Connect services must explicitly implement their
-	// substantive handlers rather than accidentally inheriting a gRPC facade.
-	genconnect.UnimplementedWebServiceHandler
-}
-
-func (h *connectHandler) Version(ctx context.Context, req *connect.Request[gen.VersionRequest]) (*connect.Response[gen.VersionResponse], error) {
-	return connect.NewResponse(&gen.VersionResponse{
-		Version: codefly.ServiceVersion(),
-	}), nil
 }
 
 func (s *ConnectServer) Run(ctx context.Context) error {
@@ -54,14 +75,7 @@ func (s *ConnectServer) Run(ctx context.Context) error {
 	port := *s.config.EndpointConnectPort
 	fmt.Println("Starting Connect server at", port)
 
-	mux := http.NewServeMux()
-
-	// Register the Connect handler (serves Connect, gRPC, and gRPC-Web)
-	path, handler := genconnect.NewWebServiceHandler(&connectHandler{})
-	mux.Handle(path, handler)
-
-	// Use h2c for HTTP/2 without TLS (development mode)
-	s.server.Handler = h2c.NewHandler(mux, &http2.Server{})
+	s.server.Handler = s.handler
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}

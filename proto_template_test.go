@@ -279,12 +279,16 @@ func TestGeneratedServiceHasPreStartCompositionSeam(t *testing.T) {
 		t.Error("gRPC adapter does not remain source-compatible when protobuf methods are added")
 	}
 
+	// The Connect listener has no handler of its own to keep source-compatible:
+	// it transcodes to this same gRPC server, so Configuration.Service answers
+	// there too and new protobuf methods need no scaffold change at all.
+	// TestGeneratedConnectListenerDispatchesThroughTheGRPCServer holds that.
 	connectTemplate, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/connect_gen.go.tmpl")
 	if err != nil {
 		t.Fatalf("read Connect adapter template: %v", err)
 	}
-	if !strings.Contains(string(connectTemplate), "genconnect.Unimplemented{{ .Service.Name.Title }}ServiceHandler") {
-		t.Error("disabled Connect adapter does not remain source-compatible when protobuf methods are added")
+	if !strings.Contains(string(connectTemplate), "NewConnectServer(c *Configuration, grpcServer *grpc.Server)") {
+		t.Error("Connect adapter does not take the gRPC server that holds the configured service")
 	}
 }
 
@@ -337,7 +341,9 @@ func TestGeneratedServiceOmitsRESTImplementationWhenDisabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read HTTP adapter template: %v", err)
 		}
-		for _, want := range []string{"server *http.Server", "s.server.Shutdown(ctx)"} {
+		// Field spelling only up to gofmt alignment: the invariant is that each
+		// HTTP listener owns an http.Server and shuts that server down.
+		for _, want := range []string{"*http.Server", "s.server.Shutdown(ctx)"} {
 			if !strings.Contains(string(httpTemplate), want) {
 				t.Errorf("%s does not contain %q", templatePath, want)
 			}
