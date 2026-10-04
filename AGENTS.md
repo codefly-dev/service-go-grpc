@@ -141,6 +141,12 @@ bug it prevents is possible. The existing tests do; match them.
   `*_gen.go` adapters and the plugin registry, and only when the generated
   marker and the single-service proto shape both hold. If generated output is
   wrong, fix the template — never the output.
+- **One implementation serves every listener.** The Connect listener transcodes
+  to the gRPC server, so `Configuration.Service`, the authority and operations
+  interceptors, and the message bounds in `GRPCServerOptions` all apply to
+  Connect and gRPC-Web callers too. A Connect-side handler would answer without
+  them — and Runnable operations are invoked over Connect — so there is none.
+  REST annotation paths stay on the REST listener, behind its CORS policy.
 - **Fail loud on a bad setting.** Conflicting CORS, health, or handler fields
   error rather than defaulting, and settings are re-unmarshalled into the
   go-grpc `Settings` on both `Load` paths because the inline generic type

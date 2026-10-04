@@ -40,9 +40,12 @@ func NewServer(config *Configuration) (*Server, error) {
 		}
 	}
 
+	// Built last on purpose: the Connect listener transcodes to this same gRPC
+	// server, and routes the services registered on it by now — the scaffolded
+	// service and every plugin above.
 	var conn *ConnectServer
 	if config.EndpointConnectPort != nil {
-		conn, err = NewConnectServer(config)
+		conn, err = NewConnectServer(config, grpc.gRPC)
 		if err != nil {
 			return nil, err
 		}

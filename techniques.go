@@ -24,6 +24,7 @@ Auto-generated files (NEVER edit manually):
   pkg/adapters/*_gen.go     — Adapter wiring (server registration, CORS, REST)
   pkg/adapters/grpc_gen.go  — gRPC server constructor
   pkg/adapters/rest_gen.go  — REST gateway constructor
+  pkg/adapters/connect_gen.go— Connect / gRPC-Web listener (transcodes to gRPC)
   pkg/adapters/server_gen.go— Unified server startup
   pkg/adapters/cors_gen.go  — CORS middleware
   go.sum                    — Dependency lock file
@@ -137,6 +138,44 @@ Rules:
 - Keep handlers thin — delegate to pkg/business/ for domain logic
 - Use the generated request/response types from pkg/gen/
 - Access injected dependencies through the server struct`,
+		},
+		{
+			Id:          "go-grpc-transport-dispatch",
+			Name:        "Go gRPC Transport Dispatch",
+			Description: "How one service implementation serves the gRPC, Connect/gRPC-Web and REST listeners",
+			Tags:        []string{"go-grpc", "connect", "rest", "transport"},
+			Prompt: `GO-GRPC TRANSPORT DISPATCH:
+One implementation answers every protocol. Install it in a Configure function
+registered with WithConfigure (your own file beside main.go), never by editing a
+generated file:
+
+  func init() { WithConfigure(configureService) }
+
+  func configureService(ctx context.Context, config *adapters.Configuration) (Clean, error) {
+      config.Service = myService                                  // answers every RPC
+      config.GRPCServerOptions = append(config.GRPCServerOptions, // runs before it
+          authInterceptor, grpc.MaxRecvMsgSize(maxMessageBytes))
+      return nil, nil
+  }
+
+How each listener uses that:
+- gRPC listener: serves config.Service with config.GRPCServerOptions applied.
+- Connect listener: serves Connect, gRPC and gRPC-Web on its own port by
+  transcoding to gRPC and dispatching through the SAME gRPC server. So
+  config.Service answers Connect calls, your interceptors and message bounds
+  apply there too, and a gRPC status (with its error details) arrives as the
+  equivalent Connect error. Request headers arrive as gRPC metadata.
+- REST listener: grpc-gateway proxy to the gRPC listener, wrapped in the CORS
+  policy. google.api.http annotation paths are served here only.
+
+Rules:
+- Never implement a Connect-shaped copy of the API (a genconnect handler): it
+  would answer without the interceptors the gRPC server holds, so an authority
+  or operations guard would silently not apply to Connect traffic.
+- Adding an RPC to the proto serves it on all three listeners once config.Service
+  implements it. No scaffold change is needed.
+- Enable a listener by declaring its endpoint and setting rest-endpoint /
+  connect-endpoint in the service settings; the listeners are independent.`,
 		},
 		{
 			Id:          "go-grpc-infra-pattern",
