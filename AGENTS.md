@@ -135,6 +135,8 @@ bug it prevents is possible. The existing tests do; match them.
   half-applied sync is a corrupted service. Buf's generation-input cache stays
   inside the transaction: a persistent input-only cache accepts discarded or
   tampered output on the next sync. Every sync regenerates before comparing.
+  Local directory inputs in Buf v2 templates are staged too; see
+  [protocol generation](docs/protocol-generation.md).
 - **Only the marked scaffold is agent-owned.** Sync overwrites `main.go`, the
   `*_gen.go` adapters and the plugin registry, and only when the generated
   marker and the single-service proto shape both hold. If generated output is

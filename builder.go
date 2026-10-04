@@ -150,6 +150,9 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 	if err := transaction.CopyInput(protoDir); err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
+	if err := stageBufDirectoryInputs(transaction, protoDir); err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
 	if err := redirectEscapingBufOutputs(transaction.StageRoot(), protoDir); err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
