@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/codefly-dev/core/wool"
 
@@ -58,15 +59,30 @@ func customErrorHandler(ctx context.Context, mux *runtime.ServeMux, marshaler ru
 	runtime.DefaultHTTPErrorHandler(ctx, mux, marshaler, w, r, err)
 }
 
+// gatewayMuxOptions is the gateway's generated configuration with extra
+// appended to it. Named, rather than inlined in Run, so a service's tests can
+// build the same mux the server runs — gatewayMuxOptions(config.ServeMuxOptions...)
+// — instead of a copy of the option list that drifts from it.
+//
+// Order is the contract: grpc-gateway applies options in sequence, so a
+// Configuration.ServeMuxOptions entry that sets one value (an error handler, a
+// header matcher) replaces the generated default, while one that accumulates
+// (an annotator, a forward-response option) runs after the generated ones.
+func gatewayMuxOptions(extra ...runtime.ServeMuxOption) []runtime.ServeMuxOption {
+	options := []runtime.ServeMuxOption{
+		runtime.WithMetadata(CustomHeaderToGRPCMetadataAnnotator),
+		runtime.WithErrorHandler(customErrorHandler),
+	}
+	return append(options, extra...)
+}
+
 func (s *RestServer) Run(ctx context.Context) error {
 	fmt.Println("Starting Rest server at", *s.config.EndpointHttpPort)
 
 	// Create a CORS handler
 	c := Cors()
 
-	gwMux := runtime.NewServeMux(
-		runtime.WithMetadata(CustomHeaderToGRPCMetadataAnnotator),
-		runtime.WithErrorHandler(customErrorHandler))
+	gwMux := runtime.NewServeMux(gatewayMuxOptions(s.config.ServeMuxOptions...)...)
 
 	// Register generated gateway handlers
 
@@ -103,8 +119,8 @@ func (s *RestServer) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to register health check handler: %w", err)
 	}
 
-	// Wrap your mux with the CORS handler
-	handler := c.Handler(gwMux)
+	// Wrap the service's own routes and the gateway with the CORS handler
+	handler := c.Handler(WithRoutes(s.config.Routes, gwMux))
 
 	s.server.Handler = logRequestBody(handler)
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -115,6 +131,32 @@ func (s *RestServer) Run(ctx context.Context) error {
 
 func (s *RestServer) Shutdown(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
+}
+
+// Route is one HTTP handler served on the REST listener under a path prefix,
+// as named in Configuration.Routes.
+type Route struct {
+	Prefix  string
+	Handler http.Handler
+}
+
+// WithRoutes serves each route's prefix with its handler and everything else
+// with next. First match wins, by plain prefix rather than through an
+// http.ServeMux in front of the gateway: a ServeMux cleans and redirects paths,
+// which would change how the gateway answers a path it already serves.
+func WithRoutes(routes []Route, next http.Handler) http.Handler {
+	if len(routes) == 0 {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, route := range routes {
+			if strings.HasPrefix(r.URL.Path, route.Prefix) {
+				route.Handler.ServeHTTP(w, r)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type logResponseWriter struct {

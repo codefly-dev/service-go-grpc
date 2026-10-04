@@ -31,6 +31,46 @@ Auto-generated files (NEVER edit manually):
 If you need to change generated files, modify the source (proto or templates) and regenerate.`,
 		},
 		{
+			Id:          "go-grpc-rest-extension",
+			Name:        "Go gRPC REST Listener Extension",
+			Description: "How a service adds gateway ServeMuxOptions and mounts its own HTTP handler on the generated REST listener",
+			Tags:        []string{"go-grpc", "rest", "gateway", "generated"},
+			Prompt: `GO-GRPC REST EXTENSION POINTS:
+Never hand-edit pkg/adapters/rest_gen.go. The next sync overwrites it and the
+behaviour disappears with no build error. Set these two Configuration fields
+instead, from your own Configure function (the one you pass to WithConfigure):
+
+  config.ServeMuxOptions = []runtime.ServeMuxOption{ ... }
+    Appended to the gateway mux's generated options. This is the only way to
+    install runtime.WithForwardResponseOption (a strong ETag, a Cache-Control,
+    a 304 on one RPC), WithIncomingHeaderMatcher, WithOutgoingHeaderMatcher or
+    WithMarshalerOption: options reach a mux at construction, and the plugin
+    RegisterREST seam receives it already built.
+    Ordering, because yours are applied last: an option that sets one value
+    (WithErrorHandler, either header matcher, a marshaler for a MIME type
+    already registered) REPLACES the generated default; an option that
+    accumulates (WithMetadata, WithForwardResponseOption) runs in addition to
+    it. So replacing the error handler drops the generated "Route not found"
+    mapping, and adding an annotator keeps the generated one — which is why a
+    header the generated annotator already forwards must not be matched again
+    (grpc-gateway joins the pairs, and two identical values is what an
+    ambiguity check refuses).
+
+  config.Routes = []Route{{Prefix: "/pkg.v1.OtherService/", Handler: handler}}
+    HTTP handlers served on the REST listener ahead of the gateway, matched by
+    plain path prefix, inside the CORS and logging wrappers. For a protocol the
+    gateway cannot carry: a Connect handler for a second protobuf service, say,
+    whose every method would otherwise need its own gwMux.HandlePath template.
+    First match wins and a route is consulted before every gateway path,
+    /healthz included, so do not mount "/".
+
+In your own tests, build the production mux with
+gatewayMuxOptions(config.ServeMuxOptions...) rather than a copy of the option
+list, so an option added to either side is covered without editing the test.
+
+Both fields are generated only when rest-endpoint: true.`,
+		},
+		{
 			Id:          "go-grpc-proto-flow",
 			Name:        "Go gRPC Proto-to-Code Flow",
 			Description: "How proto definitions flow through code generation to runtime code",

@@ -144,6 +144,13 @@ bug it prevents is possible. The existing tests do; match them.
   go-grpc `Settings` on both `Load` paths because the inline generic type
   silently drops `rest-endpoint` / `connect-endpoint`. A silently dropped
   setting is worse than a failure.
+- **A generated listener needs a declared seam, not a hand edit.** A service
+  that must add a `runtime.ServeMuxOption` or serve an HTTP handler beside the
+  gateway sets `Configuration.ServeMuxOptions` / `Configuration.Routes`, which
+  the generated `Run` applies. Both exist because the alternative is a consumer
+  editing `rest_gen.go`, which the next sync reverts with no build error. A new
+  need on a listener this agent runs is a new field here — never a note telling
+  the consumer to edit generated output.
 - **Version moves as one change.** The embedded `agent.codefly.yaml` version,
   the `core` pin in both `go.mod`s, and the release tag belong in the same PR.
 

@@ -110,23 +110,18 @@ func TestFactoryDependencyLocksMatchBase(t *testing.T) {
 // changing the reflection gate (or any other logic) in one copy but not the
 // other would slip through CI as long as it still compiled. This makes such a
 // divergence fail the build instead.
+//
+// base/ is generated with REST served, so that is the rendering it is compared
+// against: Configuration's REST extension fields are emitted under that
+// setting, and renderScaffold evaluates it through the real engine.
 func TestFactoryGrpcAdapterMatchesBase(t *testing.T) {
 	baseGrpc, err := os.ReadFile("base/code/pkg/adapters/grpc_gen.go")
 	if err != nil {
 		t.Fatalf("read base gRPC adapter: %v", err)
 	}
-	templateGrpc, err := factoryFS.ReadFile("templates/factory/code/pkg/adapters/grpc_gen.go.tmpl")
-	if err != nil {
-		t.Fatalf("read factory gRPC adapter template: %v", err)
-	}
-	rendered := bytes.ReplaceAll(templateGrpc, []byte("{{ .Service.Name.Title }}"), []byte("Web"))
-	rendered = bytes.ReplaceAll(rendered, []byte("{{ .Service.Name.DNSCase }}"), []byte("codefly-base"))
-	formatted, err := format.Source(rendered)
-	if err != nil {
-		t.Fatalf("format rendered gRPC adapter: %v", err)
-	}
-	if !bytes.Equal(baseGrpc, formatted) {
-		t.Fatal("factory gRPC adapter template drifted from base/code/pkg/adapters/grpc_gen.go")
+	rendered := renderScaffold(t, "templates/factory/code/pkg/adapters/grpc_gen.go.tmpl", &Settings{RestEndpoint: true})
+	if rendered != string(baseGrpc) {
+		t.Fatalf("factory gRPC adapter template drifted from base/code/pkg/adapters/grpc_gen.go\n--- rendered ---\n%s", rendered)
 	}
 }
 
