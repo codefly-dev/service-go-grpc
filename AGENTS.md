@@ -135,6 +135,8 @@ bug it prevents is possible. The existing tests do; match them.
   half-applied sync is a corrupted service. Buf's generation-input cache stays
   inside the transaction: a persistent input-only cache accepts discarded or
   tampered output on the next sync. Every sync regenerates before comparing.
+  Local directory inputs in Buf v2 templates are staged too; see
+  [protocol generation](docs/protocol-generation.md).
 - **Only the marked scaffold is agent-owned.** Sync overwrites `main.go`, the
   `*_gen.go` adapters and the plugin registry, and only when the generated
   marker and the single-service proto shape both hold. If generated output is
@@ -150,6 +152,19 @@ bug it prevents is possible. The existing tests do; match them.
   go-grpc `Settings` on both `Load` paths because the inline generic type
   silently drops `rest-endpoint` / `connect-endpoint`. A silently dropped
   setting is worse than a failure.
+- **A generated listener needs a declared seam, not a hand edit.** A service
+  that must change the REST listener sets `Configuration.ServeMuxOptions`,
+  `Routes`, `Middleware` or `GatewayDialOptions`, which the generated `Run`
+  applies. They exist because the alternative is a consumer editing
+  `rest_gen.go`, which the next sync reverts with no build error. A new need on
+  a listener this agent runs is a new field here — never a note telling the
+  consumer to edit generated output.
+- **Generated code never logs a caller's payload.** The REST listener records a
+  failed request's method, path, status and declared size. It used to read every
+  body into memory to log it on any non-200: that copied the caller's data into
+  a log store with its own retention, and the buffering kept any handler from
+  being reached before EOF. `TestGeneratedRestListenerLogsNoRequestPayload` and
+  `TestRESTListenerDispatchesBeforeTheRequestBodyCompletes` hold both halves.
 - **Version moves as one change.** The embedded `agent.codefly.yaml` version,
   the `core` pin in both `go.mod`s, and the release tag belong in the same PR.
 

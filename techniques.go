@@ -32,6 +32,71 @@ Auto-generated files (NEVER edit manually):
 If you need to change generated files, modify the source (proto or templates) and regenerate.`,
 		},
 		{
+			Id:          "go-grpc-rest-extension",
+			Name:        "Go gRPC REST Listener Extension",
+			Description: "How a service adds gateway ServeMuxOptions and mounts its own HTTP handler on the generated REST listener",
+			Tags:        []string{"go-grpc", "rest", "gateway", "generated"},
+			Prompt: `GO-GRPC REST EXTENSION POINTS:
+Never hand-edit pkg/adapters/rest_gen.go. The next sync overwrites it and the
+behaviour disappears with no build error. Set these two Configuration fields
+instead, from your own Configure function (the one you pass to WithConfigure):
+
+  config.ServeMuxOptions = []runtime.ServeMuxOption{ ... }
+    Appended to the gateway mux's generated options. This is the only way to
+    install runtime.WithForwardResponseOption (a strong ETag, a Cache-Control,
+    a 304 on one RPC), WithIncomingHeaderMatcher, WithOutgoingHeaderMatcher or
+    WithMarshalerOption: options reach a mux at construction, and the plugin
+    RegisterREST seam receives it already built.
+    Ordering, because yours are applied last: an option that sets one value
+    (WithErrorHandler, either header matcher, a marshaler for a MIME type
+    already registered) REPLACES the generated default; an option that
+    accumulates (WithMetadata, WithForwardResponseOption) runs in addition to
+    it. So replacing the error handler drops the generated "Route not found"
+    mapping, and adding an annotator keeps the generated one — which is why a
+    header the generated annotator already forwards must not be matched again
+    (grpc-gateway joins the pairs, and two identical values is what an
+    ambiguity check refuses).
+
+  config.Routes = []Route{{Prefix: "/pkg.v1.OtherService/", Handler: handler}}
+    HTTP handlers served ahead of the gateway, matched by plain path prefix. For
+    a protocol the gateway cannot carry: a Connect handler for a second protobuf
+    service, say, whose every method would otherwise need its own
+    gwMux.HandlePath template. First match wins and a route is consulted before
+    every gateway path, /healthz included, so do not mount "/".
+    The listener speaks HTTP/1.1, which serves a Connect or gRPC-Web caller but
+    not a gRPC-over-h2c one: that is the Connect listener connect-endpoint
+    declares.
+
+  config.Middleware = []func(http.Handler) http.Handler{ ... }
+    Wraps the chain, the FIRST entry outermost, inside the CORS policy and ahead
+    of the routes and the gateway. For policy that must see a request before
+    anything reads its body: a request-body bound (http.MaxBytesReader, or a 413
+    on a declared over-cap Content-Length), a tracing span, a rate limit. Inside
+    CORS so what it answers still carries the headers a browser needs to read
+    it, and inside the generated logging so it is recorded like any other
+    outcome.
+
+  config.GatewayDialOptions = []grpc.DialOption{ ... }
+    Appended to the options this listener dials the gRPC server with, for the
+    gateway's hop and the health probe's client. Where a service raises gRPC's
+    4 MiB default call bounds:
+    grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(n), grpc.MaxCallSendMsgSize(n)).
+    A bound set only on the server leaves the proxy refusing the message the
+    server would have accepted.
+
+The chain, outermost first: the generated request logging, the CORS policy, your
+Middleware, your Routes, the gateway. A non-200 is logged with its method, path,
+status and declared body size and NOTHING else — do not add a wrapper that logs
+request bodies, and do not expect the listener to have buffered one for you.
+
+In your own tests, build the production mux and chain with
+gatewayMuxOptions(config.ServeMuxOptions...), gatewayDialOptions(...),
+WithRoutes and WithMiddleware rather than a copy, so a change on either side is
+covered without editing the test.
+
+All four fields are generated only when rest-endpoint: true.`,
+		},
+		{
 			Id:          "go-grpc-proto-flow",
 			Name:        "Go gRPC Proto-to-Code Flow",
 			Description: "How proto definitions flow through code generation to runtime code",

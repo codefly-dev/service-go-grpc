@@ -11,10 +11,11 @@ implement your APIs there.
 
 import (
 	"buf.build/go/protovalidate"
-	"codefly-base/pkg/gen"
+	gen "codefly-base/pkg/gen"
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -22,6 +23,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"google.golang.org/grpc/reflection"
+
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 
 	codefly "github.com/codefly-dev/sdk-go"
 	"google.golang.org/grpc"
@@ -66,6 +69,46 @@ type Configuration struct {
 	// Service replaces the generated Version-only implementation when the
 	// service owns substantive RPCs with constructor-injected dependencies.
 	Service gen.WebServiceServer
+	// ServeMuxOptions are appended to the REST gateway mux's generated options.
+	// A runtime.ServeMuxOption reaches a mux at construction only, and the
+	// plugins.RegisterREST seam receives the mux already built, so this is the
+	// one way in: a WithForwardResponseOption carrying an ETag and a
+	// Cache-Control for one RPC, a header matcher, a marshaler.
+	//
+	// They are applied after the generated options, which decides what happens
+	// to a conflict. An option that sets one value (WithErrorHandler, either
+	// header matcher, WithMarshalerOption for a MIME type already registered)
+	// replaces the generated default. An option that accumulates (WithMetadata,
+	// WithForwardResponseOption) runs in addition to it, after it.
+	ServeMuxOptions []runtime.ServeMuxOption
+	// Routes are HTTP handlers served on the REST listener ahead of the gateway,
+	// matched by path prefix, inside the CORS and logging wrappers. For a
+	// protocol the gateway cannot carry — a Connect handler for a second
+	// protobuf service, say, whose every method would otherwise need its own
+	// gwMux.HandlePath template. First match wins, and a route is consulted
+	// before every gateway path, /healthz included.
+	//
+	// What a mounted handler gets is this listener: HTTP/1.1, so a Connect or
+	// gRPC-Web caller is served and a gRPC-over-h2c one is not — that is the
+	// Connect listener connect-endpoint declares.
+	Routes []Route
+	// Middleware wrap the listener's handler chain, the first entry outermost,
+	// inside the CORS policy and ahead of the routes and the gateway. For policy
+	// that must see a request before anything reads its body: a request-body
+	// bound (http.MaxBytesReader, or a 413 on a declared over-cap
+	// Content-Length), a tracing span, a rate limit.
+	//
+	// Inside CORS so that what a middleware answers still carries the CORS
+	// headers a browser needs to read it, and inside the generated request
+	// logging so that it is recorded like any other outcome.
+	Middleware []func(http.Handler) http.Handler
+	// GatewayDialOptions are appended to the options the REST listener dials the
+	// gRPC server with, for the gateway's hop and the health probe's client.
+	// Where a service raises gRPC's 4 MiB default call bounds:
+	// grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(n), grpc.MaxCallSendMsgSize(n)).
+	// A bound set only on the server leaves the proxy refusing the message the
+	// server would have accepted.
+	GatewayDialOptions []grpc.DialOption
 }
 
 type GrpcServer struct {
