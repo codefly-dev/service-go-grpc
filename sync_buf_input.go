@@ -31,6 +31,10 @@ func stageBufDirectoryInputs(transaction *syncTransaction, protoDir string) erro
 		return fmt.Errorf("parse generation inputs: %w", err)
 	}
 	staged := map[string]bool{}
+	root, err := filepath.EvalSymlinks(transaction.actualRoot)
+	if err != nil {
+		return fmt.Errorf("resolve generation input boundary: %w", err)
+	}
 	for _, input := range config.Inputs {
 		if input.Directory == "" {
 			continue // Non-directory inputs remain Buf's responsibility.
@@ -41,6 +45,13 @@ func stageBufDirectoryInputs(transaction *syncTransaction, protoDir string) erro
 		relative, err := cleanSyncRelative(filepath.Join(protoDir, input.Directory))
 		if err != nil {
 			return fmt.Errorf("generation directory input %q: %w", input.Directory, err)
+		}
+		resolved, err := filepath.EvalSymlinks(filepath.Join(transaction.actualRoot, relative))
+		if err != nil {
+			return fmt.Errorf("resolve generation directory input %q: %w", input.Directory, err)
+		}
+		if !pathWithin(root, resolved) {
+			return fmt.Errorf("generation directory input %q resolves outside the service", input.Directory)
 		}
 		if relative == protoDir || pathContains(protoDir, relative) || staged[relative] {
 			continue
