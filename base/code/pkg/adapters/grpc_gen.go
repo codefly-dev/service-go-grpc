@@ -11,7 +11,7 @@ implement your APIs there.
 
 import (
 	"buf.build/go/protovalidate"
-	"codefly-base/pkg/gen"
+	gen "codefly-base/pkg/gen"
 	"context"
 	"fmt"
 	"net"

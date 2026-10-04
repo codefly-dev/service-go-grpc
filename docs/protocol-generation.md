@@ -29,3 +29,10 @@ service using shared option descriptors should select its owned declarations
 with `paths`, so it imports those descriptors without generating duplicate Go
 registrations. Its sibling client contracts belong in another declared input,
 so replacing the generated output also recreates their bindings.
+
+When refreshing a marked single-service scaffold, the agent reads `go_package`
+from the proto that declares that service. Listener imports follow its import
+path and package name, including versioned packages; they do not revert to the
+factory's default `service/pkg/gen`. With no explicit option the factory default
+is retained. Buf-managed rewrites or plugin import mappings must agree with the
+service's declared `go_package` for those generated listeners.

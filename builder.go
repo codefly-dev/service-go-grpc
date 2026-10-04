@@ -170,6 +170,10 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 			s.Wool.Warn("REST CORS defaults to same-origin: the regenerated adapter refuses all cross-origin requests. Set cors.allowed-origins or cors.allow-all in settings to permit cross-origin access.")
 		}
 		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
+		create.ProtoGoPackage, err = declaredServiceGoPackage(filepath.Join(s.Location, protoDir), s.Information.Service.Name.Title+"Service")
+		if err != nil {
+			return s.Base.Builder.SyncError(err)
+		}
 		generated := services.WithFactory(factoryFS).
 			WithPathSelect(generatedScaffoldSelect()).
 			WithOverride(shared.OverrideAll()).
@@ -1063,6 +1067,29 @@ type CreateConfiguration struct {
 	*services.Information
 	Settings *Settings
 	Envs     []string
+	// ProtoGoPackage is the existing service's declared go_package during sync.
+	// Create leaves it empty and uses the factory's conventional package.
+	ProtoGoPackage string
+}
+
+func (c CreateConfiguration) GeneratedGoImport() string {
+	if c.ProtoGoPackage != "" {
+		value, _, _ := strings.Cut(c.ProtoGoPackage, ";")
+		return value
+	}
+	return c.Service.Name.DNSCase + "/pkg/gen"
+}
+
+func (c CreateConfiguration) GeneratedConnectImport() string {
+	name := "gen"
+	if c.ProtoGoPackage != "" {
+		value, alias, found := strings.Cut(c.ProtoGoPackage, ";")
+		name = filepath.Base(value)
+		if found {
+			name = alias
+		}
+	}
+	return c.GeneratedGoImport() + "/" + name + "connect"
 }
 
 // declareHealthCapability records that the scaffolded gRPC server registers

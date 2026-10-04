@@ -7,8 +7,8 @@ package adapters
 ----------------------------------------------------------------- */
 
 import (
-	"codefly-base/pkg/gen"
-	"codefly-base/pkg/gen/genconnect"
+	gen "codefly-base/pkg/gen"
+	genconnect "codefly-base/pkg/gen/genconnect"
 	"context"
 	"fmt"
 	"net/http"

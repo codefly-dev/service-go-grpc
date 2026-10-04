@@ -7,8 +7,8 @@ package adapters
 ----------------------------------------------------------------- */
 
 import (
-	"{{ .Service.Name.DNSCase }}/pkg/gen"
-	"{{ .Service.Name.DNSCase }}/pkg/gen/genconnect"
+	gen "{{ .GeneratedGoImport }}"
+	genconnect "{{ .GeneratedConnectImport }}"
 	"context"
 	"fmt"
 	"net/http"

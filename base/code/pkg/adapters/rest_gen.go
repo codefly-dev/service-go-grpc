@@ -7,7 +7,7 @@ package adapters
 ----------------------------------------------------------------- */
 
 import (
-	"codefly-base/pkg/gen"
+	gen "codefly-base/pkg/gen"
 	"codefly-base/plugins"
 	"context"
 	"fmt"
