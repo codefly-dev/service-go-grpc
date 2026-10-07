@@ -616,11 +616,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 		}
 		return s.Base.Runtime.StartErrorf(err, "compilation failed")
 	}
-	buildMode := "built"
-	if s.RunnerEnvironment.UsedCache() {
-		buildMode = "cached"
-	}
-	s.Wool.Forwardf("go binary ready mode=%s elapsed=%s", buildMode, time.Since(buildStarted).Round(100*time.Millisecond))
+	s.Wool.Forwardf("go binary ready elapsed=%s", time.Since(buildStarted).Round(100*time.Millisecond))
 
 	// runningContext is detached from the request ctx (the binary must outlive
 	// the Start RPC) but cancellable, so an intentional stop can signal the
