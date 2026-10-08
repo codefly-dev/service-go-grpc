@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -108,8 +109,22 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 
 	workspace := &resources.Workspace{Name: "test"}
 
+	// The workspace has to exist ON DISK, not only in this test. A service
+	// running locally resolves its own address through the workspace found above
+	// it; only a DEPLOYED process resolves from the injected carriers (sdk-go
+	// for.go: no workspace and not deployed is ErrNoDeclaredEndpoints). This
+	// fixture used to keep the workspace in memory alone, so the scaffolded
+	// service found none, could not resolve the address it was told to listen
+	// on, and the only symptom was a port that never accepted a connection.
+	//
+	// layout: modules, with an explicit path -- a flat workspace IS one module
+	// named after itself and carries no list of others.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, resources.WorkspaceConfigurationName),
+		[]byte("name: test\nlayout: modules\nmodules:\n    - name: mod\n      path: mod\n"), 0o600))
+
 	service := &resources.Service{Name: "svc", Version: "0.0.0"}
-	err = service.SaveAtDir(ctx, path.Join(tmpDir, fmt.Sprintf("mod/%s", service.Name)))
+	err = service.SaveAtDir(ctx, path.Join(tmpDir, fmt.Sprintf("mod/services/%s", service.Name)))
 	require.NoError(t, err)
 	service.WithModule("mod")
 	mod := &resources.Module{Name: "mod"}
@@ -117,13 +132,22 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 	err = mod.SaveToDir(ctx, path.Join(tmpDir, "mod"))
 	require.NoError(t, err)
 
+	// The module has to DECLARE the service, for the same reason the workspace
+	// declares the module: resolution reads manifests, it does not scan
+	// directories, so a service saved beside an empty module manifest is one
+	// LoadServiceFromName cannot find ("resource <svc> of type <service> not
+	// found").
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, "mod", resources.ModuleConfigurationName),
+		[]byte("name: mod\nservices:\n    - name: svc\n      path: svc\n"), 0o600))
+
 	identity := &basev0.ServiceIdentity{
 		Name:                service.Name,
 		Version:             service.Version,
 		Module:              "mod",
 		Workspace:           workspace.Name,
 		WorkspacePath:       tmpDir,
-		RelativeToWorkspace: fmt.Sprintf("mod/%s", service.Name),
+		RelativeToWorkspace: fmt.Sprintf("mod/services/%s", service.Name),
 	}
 	env := resources.LocalEnvironment()
 
@@ -171,7 +195,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 		// service it creates must say so — that declaration is what turns the
 		// rendered Kubernetes probes from transport-only into semantic ones.
 		require.Equal(t, HealthModeGrpc, builder.GoGrpc.Settings.Health.Mode)
-		spec, err := os.ReadFile(path.Join(tmpDir, "mod", service.Name, "service.codefly.yaml"))
+		spec, err := os.ReadFile(path.Join(tmpDir, "mod", "services", service.Name, "service.codefly.yaml"))
 		require.NoError(t, err)
 		require.Contains(t, string(spec), "mode: grpc")
 
