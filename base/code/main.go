@@ -22,7 +22,9 @@ func doWork(ctx context.Context) (Clean, error) {
 import (
 	"codefly-base/pkg/adapters"
 	"context"
+	"errors"
 	"fmt"
+	"github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/standards"
 	"os/signal"
@@ -36,6 +38,23 @@ func Must[T any](t T, err error) T {
 		panic(err)
 	}
 	return t
+}
+
+// optionalPort resolves an endpoint this service may or may not declare. It
+// reports declared=false only when the producer declares no such endpoint
+// (resources.ErrNoSuchEndpoint); anything else -- an absent carrier, an
+// endpoint this service may not reach, a malformed one -- is returned as an
+// error, because a declared endpoint that cannot be resolved is a
+// misconfiguration to refuse by name rather than a port to skip in silence.
+func optionalPort(ctx context.Context, api string) (uint16, bool, error) {
+	instance, err := codefly.For(ctx).API(api).ResolveNetworkInstance()
+	if err == nil {
+		return instance.Port, true, nil
+	}
+	if errors.Is(err, resources.ErrNoSuchEndpoint) {
+		return 0, false, nil
+	}
+	return 0, false, fmt.Errorf("cannot resolve this service's declared %s address: %w", api, err)
 }
 
 type Clean func()
@@ -74,6 +93,10 @@ func main() {
 	// failure — an absent carrier, an endpoint this service may not reach —
 	// so reading .Port off it panics at startup with nothing to read, and
 	// the service simply never listens.
+	//
+	// WithDefaultNetwork() is not dropped by choice: sdk-go deleted it, and
+	// guards that it stays deleted. Resolution now reads the declaration
+	// first and the carrier second, so there is no default network to ask for.
 	grpcInstance, err := codefly.For(ctx).API(standards.GRPC).ResolveNetworkInstance()
 	if err != nil {
 		panic(fmt.Errorf("cannot resolve this service's %s address: %w", standards.GRPC, err))
@@ -81,11 +104,22 @@ func main() {
 	config := &adapters.Configuration{
 		EndpointGrpcPort: grpcInstance.Port,
 	}
-	if net := codefly.For(ctx).API(standards.REST).NetworkInstance(); net != nil {
-		config.EndpointHttpPort = shared.Pointer(net.Port)
+	// REST and CONNECT are optional, but "not declared" and "declared and
+	// unresolvable" are different answers and must not share a path.
+	// NetworkInstance() collapses them: it answers nil for both, so a service
+	// that DECLARES a REST endpoint it cannot resolve starts cleanly, serves
+	// gRPC, and never listens on REST -- absence read as conformance, with a
+	// dead port as the only symptom. ErrNoSuchEndpoint is core's answer for
+	// the one case that is genuinely optional; every other error is a refusal.
+	if port, declared, err := optionalPort(ctx, standards.REST); err != nil {
+		panic(err)
+	} else if declared {
+		config.EndpointHttpPort = shared.Pointer(port)
 	}
-	if net := codefly.For(ctx).API(standards.CONNECT).NetworkInstance(); net != nil {
-		config.EndpointConnectPort = shared.Pointer(net.Port)
+	if port, declared, err := optionalPort(ctx, standards.CONNECT); err != nil {
+		panic(err)
+	} else if declared {
+		config.EndpointConnectPort = shared.Pointer(port)
 	}
 	if configure != nil {
 		clean, err := configure(ctx, config)
