@@ -26,7 +26,7 @@ const namedEndpointName = "authority"
 // and a named grpc endpoint, and proposes network mappings for every endpoint
 // Load reported — exactly as the CLI's runner does (GenerateNetworkMappings over
 // LoadResponse.Endpoints).
-func loadNamedEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContext) (*Runtime, []*basev0.NetworkMapping, string) {
+func loadNamedEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContext, configure ...func(*resources.Service)) (*Runtime, []*basev0.NetworkMapping, string) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -56,6 +56,9 @@ func loadNamedEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContex
 		},
 		Spec: map[string]any{"rest-endpoint": true, "hot-reload": false},
 	}
+	for _, apply := range configure {
+		apply(service)
+	}
 	require.NoError(t, service.SaveAtDir(ctx, serviceDir))
 	require.NoError(t, (&resources.Module{Name: "mod"}).SaveToDir(ctx, filepath.Join(workspacePath, "mod")))
 
@@ -78,14 +81,14 @@ func loadNamedEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContex
 	})
 	require.NoError(t, err)
 	require.Equal(t, runtimev0.LoadStatus_READY, load.GetStatus().GetState(), load.GetStatus().GetMessage())
-	require.Len(t, load.GetEndpoints(), 3, "Load must report the named endpoint, or the CLI never proposes a mapping for it")
+	require.Len(t, load.GetEndpoints(), len(service.Endpoints), "Load must report the named endpoint, or the CLI never proposes a mapping for it")
 
 	manager, err := network.NewRuntimeManager(ctx, nil)
 	require.NoError(t, err)
 	manager.WithTemporaryPorts()
 	mappings, err := manager.GenerateNetworkMappings(ctx, env, workspace, runtime.Identity, load.GetEndpoints(), runtimeContext)
 	require.NoError(t, err)
-	require.Len(t, mappings, 3)
+	require.Len(t, mappings, len(service.Endpoints))
 
 	return runtime, mappings, workspacePath
 }
@@ -228,4 +231,40 @@ func TestContainerRunnerPublishesNamedEndpointPorts(t *testing.T) {
 			mapping.GetEndpoint().GetName(), instance.GetPort(), published)
 	}
 	require.Len(t, docker.PortMappings(), 3, "each endpoint's port is published exactly once")
+}
+
+// A declared listener must reach the process even when the service owns its
+// handler and disables generated REST/Connect scaffolding. Otherwise the CLI
+// advertises an address to consumers that the service never learns to bind.
+func TestInitExportsDeclaredListenersWithoutScaffolding(t *testing.T) {
+	for name, runtimeContext := range map[string]*basev0.RuntimeContext{
+		"native":    resources.NewRuntimeContextNative(),
+		"container": resources.NewRuntimeContextContainer(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			runtime, mappings, workspacePath := loadNamedEndpointRuntime(t, runtimeContext, func(service *resources.Service) {
+				service.Spec["rest-endpoint"] = false
+				service.Spec["connect-endpoint"] = false
+				service.Endpoints = append(service.Endpoints, &resources.Endpoint{Name: "connect", API: "connect"})
+			})
+			runner, err := golanghelpers.NewNativeGoRunner(ctx, workspacePath, "mod/svc/code")
+			require.NoError(t, err)
+			runner.WithLocalCacheDir(filepath.Join(workspacePath, ".cache"))
+			runtime.bindRunnerEnvironment(runner)
+			result, err := runtime.Init(ctx, &runtimev0.InitRequest{RuntimeContext: runtimeContext, ProposedNetworkMappings: mappings})
+			require.NoError(t, err)
+			require.Equal(t, runtimev0.InitStatus_READY, result.GetStatus().GetState(), result.GetStatus().GetMessage())
+			all, err := runtime.EnvironmentVariables.All()
+			require.NoError(t, err)
+			for _, mapping := range mappings {
+				endpoint := mapping.GetEndpoint()
+				want, err := resources.FindNetworkInstanceInNetworkMappings(ctx, mappings, endpoint, resources.NewNativeNetworkAccess())
+				require.NoError(t, err)
+				carrier := resources.EndpointAsEnvironmentVariable(&resources.EndpointAccess{Endpoint: endpoint, NetworkInstance: want})
+				require.Contains(t, resources.EnvironmentVariableAsStrings(all), resources.EnvironmentVariableAsStrings([]*resources.EnvironmentVariable{carrier})[0], "declared %s listener missing", endpoint.Name)
+			}
+			require.Len(t, runtime.EnvironmentVariables.Endpoints(), len(mappings), "each listener must be injected exactly once")
+		})
+	}
 }
