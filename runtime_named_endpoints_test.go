@@ -49,7 +49,10 @@ func loadNamedEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContex
 		Endpoints: []*resources.Endpoint{
 			{Name: standards.GRPC, API: standards.GRPC},
 			{Name: standards.REST, API: standards.REST},
-			{Name: namedEndpointName, API: standards.GRPC, Visibility: resources.VisibilityModule},
+			// core v0.15.0 retired `module` visibility: reach is private, internal or
+			// public, and `internal` is what this fixture meant — reachable by
+			// whatever composes the module.
+			{Name: namedEndpointName, API: standards.GRPC, Visibility: resources.VisibilityInternal},
 		},
 		Spec: map[string]any{"rest-endpoint": true, "hot-reload": false},
 	}

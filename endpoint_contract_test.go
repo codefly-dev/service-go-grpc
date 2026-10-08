@@ -19,12 +19,15 @@ func TestRuntimeContractAcceptsInternalEndpoints(t *testing.T) {
 
 	err = validator.Validate(&runtimev0.LoadResponse{
 		Endpoints: []*basev0.Endpoint{{
-			Name:         "grpc",
-			Service:      "work-coordinator",
-			Module:       "coordination",
-			Api:          "grpc",
-			Visibility:   "internal",
-			AllowModules: []string{"mind"},
+			Name:       "grpc",
+			Service:    "work-coordinator",
+			Module:     "coordination",
+			Api:        "grpc",
+			Visibility: "internal",
+			// core v0.15.0 removed AllowModules from the endpoint: an allow-list is
+			// derived from the consumers' declared service dependencies and may
+			// never be authored on the endpoint it would grant. `internal` alone
+			// is what this fixture now means — reachable by whatever composes it.
 		}},
 	})
 	require.NoError(t, err)

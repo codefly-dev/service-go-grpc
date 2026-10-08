@@ -70,12 +70,12 @@ func main() {
 	defer codefly.CatchPanic(ctx)
 
 	config := &adapters.Configuration{
-		EndpointGrpcPort: codefly.For(ctx).WithDefaultNetwork().API(standards.GRPC).NetworkInstance().Port,
+		EndpointGrpcPort: codefly.For(ctx).API(standards.GRPC).NetworkInstance().Port,
 	}
-	if net := codefly.For(ctx).WithDefaultNetwork().API(standards.REST).NetworkInstance(); net != nil {
+	if net := codefly.For(ctx).API(standards.REST).NetworkInstance(); net != nil {
 		config.EndpointHttpPort = shared.Pointer(net.Port)
 	}
-	if net := codefly.For(ctx).WithDefaultNetwork().API(standards.CONNECT).NetworkInstance(); net != nil {
+	if net := codefly.For(ctx).API(standards.CONNECT).NetworkInstance(); net != nil {
 		config.EndpointConnectPort = shared.Pointer(net.Port)
 	}
 	if configure != nil {
