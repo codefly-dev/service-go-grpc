@@ -475,13 +475,21 @@ func NewService() *Service {
 }
 
 // GoVersion is the exact Go patch release used for container builds.
-const GoVersion = "1.27.0"
+const GoVersion = "1.27.2"
 
 // AlpineVersion is the exact runtime Alpine patch release used for container builds.
 const AlpineVersion = "3.23.5"
 
-// Runtime Image
-var runtimeImage = &configurations.DockerImage{Name: "codeflydev/go", Tag: "0.0.11"}
+// runtimeImage is the container a service is built and run in under the
+// container runtime context: service-go's locked Go runtime image
+// (service-go pkg/runtime/runtime-image.json), by manifest digest. Its Go
+// is the exact release GoVersion names, so a scaffolded module builds in
+// both the runtime container and the builder stage.
+var runtimeImage = &configurations.DockerImage{
+	Name:   "ghcr.io/codefly-dev/service-go-runtime",
+	Tag:    "go1.27.2-alpine3.23",
+	Digest: "sha256:341506e8e2657c2c3c164bc913d22b1950869c5b59381b39a60e390aee680732",
+}
 
 func main() {
 	svc := NewService()
