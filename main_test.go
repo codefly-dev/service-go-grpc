@@ -71,6 +71,32 @@ func TestSetRuntimeContextNative(t *testing.T) {
 // name conflict. See its use in testCreateToRun.
 var protoCompanionMu sync.Mutex
 
+// cleanupRuntime must be registered before Init: initialization can create a
+// container and then fail. Fresh contexts also let cleanup run after a test's
+// request/readiness timeout, and a failed Stop must not prevent Destroy.
+func cleanupRuntime(t *testing.T, runtime *Runtime) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		stop, err := runtime.Stop(ctx, &runtimev0.StopRequest{})
+		cancel()
+		if err != nil {
+			t.Errorf("stop runtime: %v", err)
+		} else if stop.GetStatus().GetState() != runtimev0.StopStatus_SUCCESS {
+			t.Errorf("stop runtime: %v", stop.GetStatus())
+		}
+
+		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		destroy, err := runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
+		if err != nil {
+			t.Errorf("destroy runtime: %v", err)
+		} else if destroy.GetStatus().GetState() != runtimev0.DestroyStatus_SUCCESS {
+			t.Errorf("destroy runtime: %v", destroy.GetStatus())
+		}
+	})
+}
+
 // These create-to-run cases each drive the full pipeline — proto companion
 // codegen, a Go/Docker build of the scaffolded service, then a live boot —
 // so a single case runs on the order of a minute. Run serially they overrun
@@ -230,15 +256,13 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 	require.NotNil(t, networkMappings)
 	require.Equal(t, expectedEndpoints, len(networkMappings))
 
+	cleanupRuntime(t, runtime)
 	init, err := runtime.Init(ctx, &runtimev0.InitRequest{
 		RuntimeContext:          runtimeContext,
 		ProposedNetworkMappings: networkMappings})
 	require.NoError(t, err)
 	require.NotNil(t, init)
-
-	defer func() {
-		_, _ = runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
-	}()
+	require.Equal(t, runtimev0.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus().GetMessage())
 
 	testRun(t, runtime, ctx, identity, networkMappings)
 
