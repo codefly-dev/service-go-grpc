@@ -211,8 +211,8 @@ func TestContainerRunnerPublishesNamedEndpointPorts(t *testing.T) {
 	require.True(t, runtime.Base.Runtime.IsContainerRuntime())
 	runtime.NetworkMappings = mappings
 
+	cleanupRuntime(t, runtime)
 	require.NoError(t, runtime.CreateRunnerEnvironment(ctx))
-	t.Cleanup(func() { _ = runtime.RunnerEnvironment.Shutdown(ctx) })
 
 	docker, ok := runtime.RunnerEnvironment.Env().(*dockerrun.DockerEnvironment)
 	require.Truef(t, ok, "container runtime produced a %T runner", runtime.RunnerEnvironment.Env())

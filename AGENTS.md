@@ -84,6 +84,11 @@ starts a live in-process agent and talks to it through the generated client. So:
 that builds an image and is opt-in via `CODEFLY_PACKAGING_IMAGE_TEST=1`. Around
 90 s warm with backends present, several minutes cold.
 
+Tests that create a Runtime container register `cleanupRuntime` before `Init`
+or runner creation. It stops and destroys with fresh cleanup contexts, even
+after fatal assertions or request/readiness timeouts, and reports teardown
+errors. Go's process-wide test timeout or a killed binary cannot run `t.Cleanup`.
+
 Name a test for the invariant it holds, and give it a comment explaining why the
 bug it prevents is possible. The existing tests do; match them.
 
