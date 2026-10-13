@@ -170,9 +170,10 @@ bug it prevents is possible. The existing tests do; match them.
   a log store with its own retention, and the buffering kept any handler from
   being reached before EOF. `TestGeneratedRestListenerLogsNoRequestPayload` and
   `TestRESTListenerDispatchesBeforeTheRequestBodyCompletes` hold both halves.
-- **Version moves as one change.** The embedded `agent.codefly.yaml` version,
-  the `core` pin in both `go.mod`s, the core reusable-workflow ref in `ci.yml`,
-  and the release tag belong in the same PR.
+- **Pins move together; the version moves at release.** The `core` pin in both
+  `go.mod`s and the core reusable-workflow ref in `ci.yml` move in one PR. The
+  `agent.codefly.yaml` version and the tag move only in the release PR that
+  `codefly publish` opens: a version bumped by hand makes publish skip it.
 
 ## Workflow
 
