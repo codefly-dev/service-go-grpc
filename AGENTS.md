@@ -59,7 +59,7 @@ generates: a defect is almost always observed in one repo and owned by another.
 ## Build and test
 
 Derived from `.github/workflows/ci.yml`: a `dependency-lock` gate, then
-`codefly-dev/core/.github/workflows/go-service-ci.yml@main`.
+`codefly-dev/core/.github/workflows/go-service-ci.yml@v0.19.4`.
 
 ```bash
 go test ./... -count=1 -run '^Test(FactoryDependencyLocksMatchBase|BaseGeneratedServiceBuildsFromCleanModuleCache)$'
@@ -171,7 +171,8 @@ bug it prevents is possible. The existing tests do; match them.
   being reached before EOF. `TestGeneratedRestListenerLogsNoRequestPayload` and
   `TestRESTListenerDispatchesBeforeTheRequestBodyCompletes` hold both halves.
 - **Version moves as one change.** The embedded `agent.codefly.yaml` version,
-  the `core` pin in both `go.mod`s, and the release tag belong in the same PR.
+  the `core` pin in both `go.mod`s, the core reusable-workflow ref in `ci.yml`,
+  and the release tag belong in the same PR.
 
 ## Workflow
 
