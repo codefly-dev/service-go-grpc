@@ -1,13 +1,11 @@
 # Working in codefly-dev/service-go-grpc
 
-`github.com/codefly-dev/service-go-grpc` (Go 1.27) is the codefly **service
-agent** for Go services whose API is a protobuf contract. It is a plugin binary
-served over gRPC, not a CLI: `codefly` starts it and drives its Builder and
-Runtime RPCs. It owns the scaffolding a go-grpc service is generated from, the
-proto→Go sync pipeline, the Docker build *recipe*, and the deployment manifests.
+`github.com/codefly-dev/service-go-grpc` (Go 1.27) is the codefly **service agent**
+for protobuf-contract Go services. `codefly` drives this gRPC plugin's Builder and
+Runtime RPCs. It owns scaffolding, proto→Go sync, the Docker build *recipe* and
+deployment manifests.
 
 It does **not** own:
-
 - **`codefly-dev/core`** — the resource model, the agent contracts, the proto
   source of truth, network and configuration. Contracts are consumed here and
   changed there.
@@ -22,7 +20,6 @@ It does **not** own:
   touches it.
 
 ## How to behave
-
 Fleet standard — [handbook#68](https://github.com/obin-ai/handbook/issues/68).
 These bite here because this agent sits between the CLI and a service it
 generates: a defect is almost always observed in one repo and owned by another.
@@ -133,6 +130,8 @@ bug it prevents is possible. The existing tests do; match them.
 - **This agent never builds an image.** `Build` renders `templates/builder` into
   the caller's output directory and returns a `DockerBuildPlan`. A test that
   shells out to `docker build` means you are solving it in the wrong repo.
+- **Service protocol comes from the endpoint API.** See
+  [protocol metadata](docs/service-protocol.md); preserve Connect's h2c support.
 - **Private Go modules are the CLI's credential, never the recipe's.** The
   Dockerfile declares `ARG GOPRIVATE` and mounts the optional BuildKit secret
   `netrc` at `/root/.netrc` on every `go mod download`; the CLI supplies both
@@ -192,7 +191,6 @@ bug it prevents is possible. The existing tests do; match them.
   `codefly publish` opens: a version bumped by hand makes publish skip it.
 
 ## Workflow
-
 - Branch and PR; never commit to `main`. Conventional Commits for the title.
 - CodeRabbit does not review automatically; ask for one with a PR comment.
 - Keep this file under ~150 lines (hard cap 200). Push depth into a nested
