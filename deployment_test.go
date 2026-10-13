@@ -862,6 +862,48 @@ func TestNamedPortsComeFromTheServicesOwnMappings(t *testing.T) {
 	}
 }
 
+// Explicit HTTP metadata enables L7 handling for ordinary HTTP listeners.
+// Connect also serves native gRPC over h2c: preserve its protocol negotiation
+// instead of forcing HTTP/1.1 upstream in a mesh. Names never classify an API.
+func TestServicePortsDeclareHTTPFromTheEndpointAPI(t *testing.T) {
+	var mappings []*basev0.NetworkMapping
+	for i, api := range []string{"http", "rest", "connect", "mcp", "grpc", "tcp"} {
+		mappings = append(mappings, &basev0.NetworkMapping{
+			Endpoint:  &basev0.Endpoint{Name: "extra-" + api, Api: api, Service: "api", Module: "host"},
+			Instances: []*basev0.NetworkInstance{{Hostname: "api.host.svc.cluster.local", Port: uint32(11000 + i), Access: resources.NewContainerNetworkAccess()}},
+		})
+	}
+	ports, err := namedPorts(context.Background(), mappings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{
+		Health: undeclaredHealth(), RestPort: 8080, ConnectPort: 8081, NamedPorts: ports,
+	})
+	rendered, err := os.ReadFile(filepath.Join(dir, "base", "service.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var service corev1.Service
+	if err := k8syaml.UnmarshalStrict(rendered, &service); err != nil {
+		t.Fatal(err)
+	}
+	want := map[int32]string{9090: "", 8080: "http", 8081: "", 11000: "http", 11001: "http", 11002: "", 11003: "http", 11004: "", 11005: ""}
+	if len(service.Spec.Ports) != len(want) {
+		t.Fatalf("rendered %d ports, want %d", len(service.Spec.Ports), len(want))
+	}
+	for _, port := range service.Spec.Ports {
+		expected, exists := want[port.Port]
+		actual := ""
+		if port.AppProtocol != nil {
+			actual = *port.AppProtocol
+		}
+		if !exists || actual != expected || port.Protocol != corev1.ProtocolTCP || port.TargetPort.IntValue() != int(port.Port) {
+			t.Errorf("port %+v: appProtocol %q, want %q with unchanged TCP/target port", port, actual, expected)
+		}
+	}
+}
+
 // TestDeclaredRestEndpointIsAdvertisedWithoutTheScaffold is the regression test
 // for a declared endpoint whose listener the service owns.
 //

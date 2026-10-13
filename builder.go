@@ -884,6 +884,8 @@ type NamedPort struct {
 	// mesh that detects protocol from the port-name prefix reads it correctly.
 	Name string
 	Port uint32
+	// AppProtocol is derived from the endpoint API, never its chosen name.
+	AppProtocol string
 }
 
 // conventionalEndpoints are the listeners the templates always know: grpc is
@@ -959,7 +961,13 @@ func namedPorts(ctx context.Context, mappings []*basev0.NetworkMapping) ([]Named
 			return nil, fmt.Errorf("endpoints %q and %q resolve to the same port %d", owner, endpoint.GetName(), instance.GetPort())
 		}
 		seen[instance.GetPort()] = endpoint.GetName()
-		out = append(out, NamedPort{Name: name, Port: instance.GetPort()})
+		port := NamedPort{Name: name, Port: instance.GetPort()}
+		// Connect also serves native gRPC over h2c; explicit http can
+		// force HTTP/1.1 upstream in a mesh, so retain negotiation there.
+		if standards.IsHTTPBasedAPI(endpoint.GetApi()) && endpoint.GetApi() != standards.CONNECT {
+			port.AppProtocol = "http"
+		}
+		out = append(out, port)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
