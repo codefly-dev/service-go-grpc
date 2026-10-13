@@ -23,4 +23,4 @@ jobs:
 
   ci:
     needs: dependency-lock
-    uses: codefly-dev/core/.github/workflows/go-service-ci.yml@main
+    uses: codefly-dev/core/.github/workflows/go-service-ci.yml@v0.19.4
