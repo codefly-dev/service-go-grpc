@@ -428,20 +428,16 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	return s.Base.Runtime.InitResponse()
 }
 
-// namedEndpoints returns the endpoints this service declares beyond the
-// conventional gRPC, REST and Connect ones, in declaration order.
-//
-// The conventional endpoints are exported by their own settings-gated code, so
-// they are excluded twice over: by identity (the conventional gRPC endpoint may
-// carry any name when it is the only one) and by name (a declared rest or
-// connect endpoint whose setting is off stays unexported, as before). Deploy
-// draws the same line through conventionalEndpoints, so a local run and a cell
-// agree on which listeners a service has.
+// namedEndpoints returns declared endpoints not already exported by the
+// conventional listener setup. The REST/Connect settings control scaffold
+// generation, not whether a service-owned listener receives its binding.
+// Compare identities only: an endpoint named rest or connect still needs
+// injection when its scaffold is disabled. This matches deployment rendering.
 func (s *Runtime) namedEndpoints() []*basev0.Endpoint {
 	conventional := []*basev0.Endpoint{s.GoGrpc.GrpcEndpoint, s.GoGrpc.RestEndpoint, s.GoGrpc.ConnectEndpoint}
 	var named []*basev0.Endpoint
 	for _, endpoint := range s.Endpoints {
-		if endpoint == nil || conventionalEndpoints[endpoint.Name] {
+		if endpoint == nil {
 			continue
 		}
 		isConventional := false
