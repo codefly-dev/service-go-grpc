@@ -193,7 +193,10 @@ bug it prevents is possible. The existing tests do; match them.
 - **Pins move together; the version moves at release.** The `core` pin in both
   `go.mod`s and the core reusable-workflow ref in `ci.yml` move in one PR. The
   `agent.codefly.yaml` version and the tag move only in the release PR that
-  `codefly publish` opens: a version bumped by hand makes publish skip it.
+  `codefly publish` opens: a version bumped by hand makes publish skip it. A
+  `replace` of `core` never leaves your working tree —
+  `TestTheCorePinIsAReleaseNotAReplace` refuses one, because the require-line
+  gate cannot see it and GoReleaser builds from the tag.
 
 ## Workflow
 

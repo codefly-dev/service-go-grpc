@@ -35,11 +35,18 @@ an interpreter identifies nothing about the service.
   — it would resolve against the user's terminal — and refuses one by naming
   this agent. A relative path from the runner is therefore logged and dropped
   rather than reported.
-- **A container-backed start reports nothing.** Under the container runtime
-  context the build runs inside a Docker companion, whose `/build` path names no
-  file on the host; `Executable()` answers empty and this agent reports nothing
-  rather than a path the consumer cannot open. Native delivery of a
-  container-backed workload is core's question, not this agent's.
+- **A start whose build ran in a Docker companion reports nothing.** That
+  companion writes to `/build`, which names no file on the host, so
+  `Executable()` answers empty and this agent reports nothing rather than a path
+  the consumer cannot open. This is narrower than "the container runtime
+  context": with no Docker engine the companion backend falls back to nix or
+  local, the build lands in the host cache, and the agent does report it. The
+  empty case is logged at `Warn` naming the runtime context, because that is the
+  one configuration where this agent advertises the capability and reports
+  nothing — and the consumer's refusal then tells the user to implement a
+  contract the agent does implement. Native delivery of a container-backed
+  workload is core's and the CLI's question, not this agent's (the CLI's native
+  cluster is a no-op under the container runtime context today).
 
 The capability is advertised on `GetAgentInformation`, which is a claim about
 this Runtime's own behaviour: core never advertises it for an agent built on it,
@@ -52,10 +59,20 @@ consumer trusts.
 
 | Test | Invariant |
 | --- | --- |
-| `TestNativeStartReportsTheBinaryItRan` | the reported path is absolute, a regular file, and the file the started process itself says it is running as — not a path that merely looks right |
-| `TestEveryNativeStartReportsItsOwnBinary` | a rebuild-replace restart reports again |
+| `TestNativeStartReportsTheBinaryItRan` | the reported path is absolute, a regular file, and the file the started process itself says it is running as — not a path that merely looks right. It also asserts the advertised capability, so the claim and the behaviour cannot drift apart |
+| `TestEveryNativeStartReportsItsOwnBinary` | a rebuild-replace restart reports again, and reports the file the process now running says it is running as, with different bytes from the first build. The runner reuses one path per build environment, so comparing paths alone would prove nothing about which build is named |
 | `TestFailedStartReportsNoArtifact` | a compile failure reports nothing, and does not inherit the previous success's report |
-| `TestAdvertisementAdoptsRuntimeStartedArtifact` | the advertised capability keeps matching what `Start` does |
+| `TestTeardownWaitsForAStartAttempt` | `Stop` and `Destroy` wait for an attempt in flight, so a teardown cannot be overwritten by that attempt's STARTED and have a build approved for a process it killed |
+
+`TestAdvertisementAdoptsItsOperationContracts` (in `provenance_contract_test.go`)
+holds that the capability is advertised at all, beside this agent's other
+operation-contract claims and the base contract.
+
+The pin this needs is a core release, never a `replace`:
+`TestTheCorePinIsAReleaseNotAReplace` fails while one stands, because a replace
+is invisible to the dependency-lock gate and GoReleaser builds from the tag — a
+release merged with one publishes an agent whose module graph points away from
+core.
 
 Core's own contract and reader live in `agents/services/base_runtime.go` and
 `agents/services/runtime_status.go`; the consumer is the CLI's
