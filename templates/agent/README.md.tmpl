@@ -15,8 +15,8 @@ It handles code generation, building, testing, and deployment.
 - **Kubernetes deployment** manifests
 - **Native runs report the build**: on a local `codefly run` the agent names the
   executable it built and started, so the run approves exactly what is running.
-  A build that ran inside the Docker companion names no host file, so nothing is
-  reported for it
+  A build that ran inside the Docker companion names no file on the host, so
+  nothing is reported for it
 
 Build requests require an absolute `output_directory`. The agent writes and returns
 a verifiable Docker build plan; the CLI selects the builder, applies caches, builds,

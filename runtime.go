@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -492,32 +491,28 @@ func (s *Runtime) revokeReadiness(message string) {
 // reportStartedBinary names the executable this start attempt launched, for
 // StartStatus.started_artifact (runtime-started-artifact/v1).
 //
-// The runner environment owns that path and is asked for it: it answers with
-// the host path of the last successful build, and with nothing when the build
-// ran inside a Docker companion, whose /build path names no file on the host.
-// Deriving the path here from the runner's layout is what this contract exists
-// to end — the CLI used to derive every workload's build from the Go agents'
-// .cache/native/main, which is why a service on any other agent was never
-// delivered (cli#989).
+// The runner environment owns that path and is asked for it: HostExecutable
+// answers with the executable the last successful build produced as the HOST
+// sees it, and refuses — rather than offering a path to substitute — when there
+// is no such file, when the build was a Docker companion's (its executable
+// exists only inside that container), or when the recorded path is not
+// absolute, which a consumer refuses anyway. Reconstructing the path here from
+// the runner's cache layout would be a second answer to a question that type
+// answers, and it is the derivation this contract exists to end: the CLI used
+// to derive every workload's build from the Go agents' .cache/native/main,
+// which is why a service on any other agent was never delivered (cli#989).
 //
 // A compiled runtime starts its own build, so the executable alone identifies
-// it and sources stays empty. Only an absolute path is reported: a consumer
-// resolves none and refuses a relative one by naming this agent, so a relative
-// path earns a warning and no report rather than a report nobody can use.
+// it and sources stays empty.
 func (s *Runtime) reportStartedBinary() {
-	exe := s.RunnerEnvironment.Executable()
-	if exe == "" {
-		// The build ran in a Docker companion: its /build path names no file on
-		// the host, so there is nothing truthful to name. Said out loud,
-		// because this agent advertises the capability and a consumer that
-		// needs an artifact refuses by telling the user to implement a contract
-		// this agent does implement.
-		s.Wool.Warn("no host executable for this start, so no started artifact is reported",
+	exe, ok := s.RunnerEnvironment.HostExecutable()
+	if !ok {
+		// Said out loud rather than traced: this agent advertises the
+		// capability, so a consumer that needs an artifact and is reported
+		// none refuses by telling the user to implement a contract this agent
+		// does implement.
+		s.Wool.Warn("the runner names no host executable for this start, so no started artifact is reported",
 			wool.Field("runtime-context", s.Base.Runtime.RuntimeContext.GetKind()))
-		return
-	}
-	if !filepath.IsAbs(exe) {
-		s.Wool.Warn("the runner named a relative executable; reporting no started artifact", wool.FileField(exe))
 		return
 	}
 	s.Base.Runtime.ReportStartedArtifact(&runtimev0.StartedArtifact{Executable: exe})

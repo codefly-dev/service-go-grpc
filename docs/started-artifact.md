@@ -16,11 +16,12 @@ an interpreter identifies nothing about the service.
 ## What the rules are, and why each one is load-bearing
 
 - **The path comes from the runner, never from this agent's layout.**
-  `GoRunnerEnvironment.Executable()` answers with the host path of the last
-  successful `BuildBinary`. Deriving it here is exactly what the contract
-  exists to end: the CLI used to derive every workload's build from the Go
-  agents' `.cache/native/main`, so a service on any other agent was never
-  delivered ([cli#989](https://github.com/codefly-dev/cli/issues/989)).
+  `GoRunnerEnvironment.HostExecutable()` (core#810) answers with the executable
+  the last successful `BuildBinary` produced as the **host** sees it, and
+  refuses rather than offering a path to substitute. Deriving it here is exactly
+  what the contract exists to end: the CLI used to derive every workload's build
+  from the Go agents' `.cache/native/main`, so a service on any other agent was
+  never delivered ([cli#989](https://github.com/codefly-dev/cli/issues/989)).
 - **Report before `StartResponse`.** `StartResponse` stamps the report on the
   status *and consumes it* — a report describes one process. A report made
   after the commit belongs to no start at all.
@@ -31,22 +32,21 @@ an interpreter identifies nothing about the service.
 - **A failed start reports nothing.** Core's `StartError` discards any pending
   report, and this agent reports only after `runner.Start` has returned without
   error, so a compile failure or a launch failure names no build.
-- **Only an absolute path is reported.** The consumer resolves no relative path
-  — it would resolve against the user's terminal — and refuses one by naming
-  this agent. A relative path from the runner is therefore logged and dropped
-  rather than reported.
-- **A start whose build ran in a Docker companion reports nothing.** That
-  companion writes to `/build`, which names no file on the host, so
-  `Executable()` answers empty and this agent reports nothing rather than a path
-  the consumer cannot open. This is narrower than "the container runtime
-  context": with no Docker engine the companion backend falls back to nix or
-  local, the build lands in the host cache, and the agent does report it. The
-  empty case is logged at `Warn` naming the runtime context, because that is the
-  one configuration where this agent advertises the capability and reports
-  nothing — and the consumer's refusal then tells the user to implement a
-  contract the agent does implement. Native delivery of a container-backed
-  workload is core's and the CLI's question, not this agent's (the CLI's native
-  cluster is a no-op under the container runtime context today).
+- **Nothing is reported when the runner refuses, and this agent substitutes
+  nothing.** `HostExecutable` returns false for three reasons, each of which
+  makes a report untruthful rather than merely missing: no build has succeeded;
+  the build was a Docker companion's, whose executable exists only inside that
+  container (narrower than "the container runtime context" — with no Docker
+  engine the companion backend falls back to nix or local, the build lands in
+  the host cache, and the agent does report it); or the recorded path is not
+  absolute, which the consumer would refuse anyway since it resolves nothing
+  against a user's terminal. The agent logs the refusal at `Warn` with the
+  runtime context, because this is the one configuration where it advertises the
+  capability and reports nothing — and the consumer's refusal then tells the
+  user to implement a contract this agent does implement. Native delivery of a
+  container-backed workload is core's and the CLI's question, not this agent's
+  (the CLI's native cluster is a no-op under the container runtime context
+  today).
 
 The capability is advertised on `GetAgentInformation`, which is a claim about
 this Runtime's own behaviour: core never advertises it for an agent built on it,
