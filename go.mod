@@ -5,7 +5,7 @@ go 1.27.2
 require (
 	buf.build/go/protovalidate v1.4.0
 	github.com/bufbuild/protocompile v0.14.1
-	github.com/codefly-dev/core v0.19.4
+	github.com/codefly-dev/core v0.19.5
 	github.com/codefly-dev/service-go v0.0.70
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/mod v0.41.0
@@ -160,9 +160,3 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.1 // indirect
 )
-
-// STOPGAP until the v0.19.5 tag is cut: core#810 (HostExecutable, the accessor
-// this needs) and core#803 (the version bump) are both on core main, and the
-// version-tag workflow cuts v0.19.5 from it. Drop this and move the require
-// line to v0.19.5; TestTheCorePinIsAReleaseNotAReplace fails until then.
-replace github.com/codefly-dev/core => github.com/codefly-dev/core v0.19.5-0.20261017214652-ce29e08b80e0
