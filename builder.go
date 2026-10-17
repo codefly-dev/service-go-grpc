@@ -962,9 +962,16 @@ func namedPorts(ctx context.Context, mappings []*basev0.NetworkMapping) ([]Named
 		}
 		seen[instance.GetPort()] = endpoint.GetName()
 		port := NamedPort{Name: name, Port: instance.GetPort()}
-		// Connect also serves native gRPC over h2c; explicit http can
-		// force HTTP/1.1 upstream in a mesh, so retain negotiation there.
-		if standards.IsHTTPBasedAPI(endpoint.GetApi()) && endpoint.GetApi() != standards.CONNECT {
+		// The agent does not generate a named endpoint's listener, so the
+		// declaration follows the endpoint's declared API. Connect carries
+		// native gRPC over h2c, which http would downgrade to HTTP/1.1 at an
+		// L7 hop, so it declares http2. A service that declares Connect and
+		// serves plain HTTP/1.1 contradicts its own declaration; the manifest
+		// does not paper over that.
+		switch api := endpoint.GetApi(); {
+		case api == standards.CONNECT:
+			port.AppProtocol = "http2"
+		case standards.IsHTTPBasedAPI(api):
 			port.AppProtocol = "http"
 		}
 		out = append(out, port)

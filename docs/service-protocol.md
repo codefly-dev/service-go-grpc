@@ -29,12 +29,14 @@ it as HTTP/1.1. `http2` and the Kubernetes-standard `kubernetes.io/h2c`
 `http2` is used because more consumers recognise it, and this template ships to
 arbitrary clusters.
 
-**Named ports** are classified from their declared endpoint API using Core's
-`standards.IsHTTPBasedAPI`. HTTP, REST and MCP endpoints declare
-`appProtocol: http`. Connect is excluded, because `http` would force HTTP/1.1
-onto a listener that also carries gRPC over h2c. A named Connect endpoint is
-served by the service's own listener, so it declares nothing. gRPC and TCP
-ports are unchanged.
+**Named ports** are classified from their declared endpoint API. Connect
+endpoints declare `appProtocol: http2`, and HTTP, REST and MCP endpoints
+(Core's `standards.IsHTTPBasedAPI`) declare `appProtocol: http`. The agent
+does not generate a named endpoint's listener, so the declaration follows the
+API the service declared, exactly as the `http` derivation does. A service that
+declares a Connect endpoint and serves plain HTTP/1.1 on it contradicts its own
+declaration, and the manifest does not paper over that. gRPC and TCP ports are
+unchanged.
 
 Names and resolved ports are preserved, and a name alone never establishes the
 protocol. Consumer manifests and overlays select ports by name, so a protocol
@@ -48,5 +50,5 @@ configuration and consumer qualification.
 port's name, number and `appProtocol` to its listener. It fails if REST stops
 declaring `http` or declares HTTP/2, and if Connect stops declaring `http2`.
 `TestServicePortsDeclareHTTPFromTheEndpointAPI` checks the named-port
-derivation. Both render the real templates. They are renderer evidence, not a
+derivation, including `http2` on a named Connect endpoint. Both render the real templates. They are renderer evidence, not a
 live proxy negotiation test.

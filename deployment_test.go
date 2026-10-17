@@ -914,9 +914,10 @@ func TestNamedPortsComeFromTheServicesOwnMappings(t *testing.T) {
 
 // Explicit HTTP metadata enables L7 handling for ordinary HTTP listeners.
 // Connect also serves native gRPC over h2c, so it must never be declared http:
-// that forces HTTP/1.1 upstream in a mesh. The conventional Connect port is
-// the agent's own h2c listener and declares http2; a named Connect endpoint
-// keeps no declaration. Names never classify an API.
+// that forces HTTP/1.1 upstream in a mesh. Both the conventional Connect port
+// and a named Connect endpoint declare http2 — the named one from its declared
+// API, since the agent does not generate its listener. Names never classify an
+// API.
 func TestServicePortsDeclareHTTPFromTheEndpointAPI(t *testing.T) {
 	var mappings []*basev0.NetworkMapping
 	for i, api := range []string{"http", "rest", "connect", "mcp", "grpc", "tcp"} {
@@ -940,7 +941,7 @@ func TestServicePortsDeclareHTTPFromTheEndpointAPI(t *testing.T) {
 	if err := k8syaml.UnmarshalStrict(rendered, &service); err != nil {
 		t.Fatal(err)
 	}
-	want := map[int32]string{9090: "", 8080: "http", 8081: "http2", 11000: "http", 11001: "http", 11002: "", 11003: "http", 11004: "", 11005: ""}
+	want := map[int32]string{9090: "", 8080: "http", 8081: "http2", 11000: "http", 11001: "http", 11002: "http2", 11003: "http", 11004: "", 11005: ""}
 	if len(service.Spec.Ports) != len(want) {
 		t.Fatalf("rendered %d ports, want %d", len(service.Spec.Ports), len(want))
 	}
