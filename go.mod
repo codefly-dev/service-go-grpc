@@ -160,3 +160,8 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.1 // indirect
 )
+
+// STOPGAP until codefly-dev/core#805 is released: GoRunnerEnvironment.Executable(),
+// the accessor that names the binary this agent built, is not in a core tag yet.
+// Drop this and pin the core release that carries it (v0.19.5 or later).
+replace github.com/codefly-dev/core => github.com/GuillermoMalena/core v0.19.5-0.20261015041254-e349d77814e7

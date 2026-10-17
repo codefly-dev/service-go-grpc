@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -485,6 +486,34 @@ func (s *Runtime) revokeReadiness(message string) {
 	s.Base.Runtime.StartStatus = &runtimev0.StartStatus{State: runtimev0.StartStatus_UNKNOWN, Message: message}
 }
 
+// reportStartedBinary names the executable this start attempt launched, for
+// StartStatus.started_artifact (runtime-started-artifact/v1).
+//
+// The runner environment owns that path and is asked for it: it answers with
+// the host path of the last successful build, and with nothing when the build
+// ran inside a Docker companion, whose /build path names no file on the host.
+// Deriving the path here from the runner's layout is what this contract exists
+// to end — the CLI used to derive every workload's build from the Go agents'
+// .cache/native/main, which is why a service on any other agent was never
+// delivered (cli#989).
+//
+// A compiled runtime starts its own build, so the executable alone identifies
+// it and sources stays empty. Only an absolute path is reported: a consumer
+// resolves none and refuses a relative one by naming this agent, so a relative
+// path earns a warning and no report rather than a report nobody can use.
+func (s *Runtime) reportStartedBinary() {
+	exe := s.RunnerEnvironment.Executable()
+	if exe == "" {
+		s.Wool.Trace("the runner names no host executable for this start; reporting no artifact")
+		return
+	}
+	if !filepath.IsAbs(exe) {
+		s.Wool.Warn("the runner named a relative executable; reporting no started artifact", wool.FileField(exe))
+		return
+	}
+	s.Base.Runtime.ReportStartedArtifact(&runtimev0.StartedArtifact{Executable: exe})
+}
+
 // commitStarted publishes STARTED for the start attempt in flight. It takes
 // the same lock as reportRunnerExit, so committing before supervision is armed
 // guarantees an immediate child exit lands strictly after — and therefore wins
@@ -666,6 +695,10 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	if err != nil {
 		return s.Base.Runtime.StartErrorf(err, "starting runner")
 	}
+	// Name what was started before committing STARTED: StartResponse stamps the
+	// report on the status it builds and consumes it, so a report made after
+	// that commit would belong to no start at all.
+	s.reportStartedBinary()
 
 	// Commit STARTED before arming supervision. A binary that dies instantly
 	// would otherwise have its failure written first and then overwritten by
