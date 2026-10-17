@@ -633,14 +633,15 @@ func TestSettingsValidateHealth(t *testing.T) {
 // an unserved listener is the #78 failure — a Service routing to a dead port
 // and, when probed, a pod that restart-loops forever.
 //
-// It also pins the protocol each Service port declares to the one its listener
-// speaks, because an L7 hop (a waypoint, an ingress) picks the upstream
-// protocol from that declaration and nothing else (#184). The Connect listener
-// is h2c.NewHandler and carries native gRPC over cleartext HTTP/2, but its name
-// declares nothing, so dropping its appProtocol lets the hop downgrade that gRPC
-// to HTTP/1.1. The REST listener is a plain http.Server that refuses
-// prior-knowledge HTTP/2, so declaring it h2c would break every REST call
-// through such a hop. The names stay pinned too: consumers select ports by them.
+// It also pins the appProtocol each Service port declares to the one its
+// listener speaks, because an L7 hop (a waypoint, an ingress) picks the
+// upstream protocol from that declaration (#184). The Connect listener is
+// h2c.NewHandler and carries native gRPC over cleartext HTTP/2, but its name
+// declares nothing, so dropping http2 lets the hop downgrade that gRPC to
+// HTTP/1.1. The REST listener is a plain http.Server that refuses
+// prior-knowledge HTTP/2, so declaring it http2 would break every REST call
+// through such a hop. The gRPC port declares by its grpc- name alone. Names
+// stay pinned too: consumers select ports by them.
 func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 	type portCheck struct {
 		token   string
@@ -652,9 +653,9 @@ func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 		{"containerPort: 8080", func(p DeploymentParameters) bool { return p.RestPort != 0 }},
 		{"containerPort: 8081", func(p DeploymentParameters) bool { return p.ConnectPort != 0 }},
 	}
-	grpcPort := servicePortDeclaration{Name: "grpc-port", Port: 9090, Protocol: "grpc"}
-	restPort := servicePortDeclaration{Name: "http-port", Port: int32(restContainerPort), Protocol: "http"}
-	connectPort := servicePortDeclaration{Name: "connect-port", Port: int32(connectContainerPort), Protocol: "kubernetes.io/h2c"}
+	grpcPort := servicePortDeclaration{Name: "grpc-port", Port: 9090, AppProtocol: ""}
+	restPort := servicePortDeclaration{Name: "http-port", Port: int32(restContainerPort), AppProtocol: "http"}
+	connectPort := servicePortDeclaration{Name: "connect-port", Port: int32(connectContainerPort), AppProtocol: "http2"}
 	cases := map[string]struct {
 		params DeploymentParameters
 		want   []servicePortDeclaration
@@ -692,18 +693,18 @@ func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 }
 
 // servicePortDeclaration is what an L7 hop reads off a Service port: the port,
-// the name consumers select it by, and the protocol it declares.
+// the name consumers select it by, and the appProtocol it declares ("" when
+// none).
 type servicePortDeclaration struct {
-	Name     string
-	Port     int32
-	Protocol string
+	Name        string
+	Port        int32
+	AppProtocol string
 }
 
 // declaredServicePorts parses a rendered Service and reports each port's
-// declared protocol the way a mesh reads it: appProtocol when set, otherwise
-// the port name's prefix (Istio's naming convention). It refuses a port whose
-// target differs from its port or that is not TCP, so the declaration it
-// reports belongs to the listener the container binds.
+// declaration. It refuses a port whose target differs from its port or that is
+// not TCP, so the declaration it reports belongs to the listener the container
+// binds.
 func declaredServicePorts(t *testing.T, rendered []byte) []servicePortDeclaration {
 	t.Helper()
 	var service corev1.Service
@@ -715,11 +716,11 @@ func declaredServicePorts(t *testing.T, rendered []byte) []servicePortDeclaratio
 		if port.Protocol != corev1.ProtocolTCP || port.TargetPort.IntValue() != int(port.Port) {
 			t.Fatalf("service port %+v: want TCP targeting its own port", port)
 		}
-		protocol, _, _ := strings.Cut(port.Name, "-")
+		declaration := servicePortDeclaration{Name: port.Name, Port: port.Port}
 		if port.AppProtocol != nil {
-			protocol = *port.AppProtocol
+			declaration.AppProtocol = *port.AppProtocol
 		}
-		out = append(out, servicePortDeclaration{Name: port.Name, Port: port.Port, Protocol: protocol})
+		out = append(out, declaration)
 	}
 	return out
 }
@@ -908,6 +909,50 @@ func TestNamedPortsComeFromTheServicesOwnMappings(t *testing.T) {
 	}
 	if _, err := namedPorts(ctx, []*basev0.NetworkMapping{mapping("a", "grpc", 9100), mapping("b", "grpc", 9100)}); err == nil {
 		t.Fatal("two named endpoints on one port must refuse the render")
+	}
+}
+
+// Explicit HTTP metadata enables L7 handling for ordinary HTTP listeners.
+// Connect also serves native gRPC over h2c, so it must never be declared http:
+// that forces HTTP/1.1 upstream in a mesh. The conventional Connect port is
+// the agent's own h2c listener and declares http2; a named Connect endpoint
+// keeps no declaration. Names never classify an API.
+func TestServicePortsDeclareHTTPFromTheEndpointAPI(t *testing.T) {
+	var mappings []*basev0.NetworkMapping
+	for i, api := range []string{"http", "rest", "connect", "mcp", "grpc", "tcp"} {
+		mappings = append(mappings, &basev0.NetworkMapping{
+			Endpoint:  &basev0.Endpoint{Name: "extra-" + api, Api: api, Service: "api", Module: "host"},
+			Instances: []*basev0.NetworkInstance{{Hostname: "api.host.svc.cluster.local", Port: uint32(11000 + i), Access: resources.NewContainerNetworkAccess()}},
+		})
+	}
+	ports, err := namedPorts(context.Background(), mappings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{
+		Health: undeclaredHealth(), RestPort: 8080, ConnectPort: 8081, NamedPorts: ports,
+	})
+	rendered, err := os.ReadFile(filepath.Join(dir, "base", "service.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var service corev1.Service
+	if err := k8syaml.UnmarshalStrict(rendered, &service); err != nil {
+		t.Fatal(err)
+	}
+	want := map[int32]string{9090: "", 8080: "http", 8081: "http2", 11000: "http", 11001: "http", 11002: "", 11003: "http", 11004: "", 11005: ""}
+	if len(service.Spec.Ports) != len(want) {
+		t.Fatalf("rendered %d ports, want %d", len(service.Spec.Ports), len(want))
+	}
+	for _, port := range service.Spec.Ports {
+		expected, exists := want[port.Port]
+		actual := ""
+		if port.AppProtocol != nil {
+			actual = *port.AppProtocol
+		}
+		if !exists || actual != expected || port.Protocol != corev1.ProtocolTCP || port.TargetPort.IntValue() != int(port.Port) {
+			t.Errorf("port %+v: appProtocol %q, want %q with unchanged TCP/target port", port, actual, expected)
+		}
 	}
 }
 

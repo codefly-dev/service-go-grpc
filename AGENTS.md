@@ -120,7 +120,7 @@ bug it prevents is possible. The existing tests do; match them.
 | `build_commands.go`, `runtime_asset_sources.go` | validation of what the recipe is allowed to stage |
 | `commands.go`, `techniques.go` | agent commands (`proto`, `health`, `grpcurl…`) and prompts shipped **to the user's** agent — not guidance for this repo |
 | `templates/factory` | what `Create` renders into a new service |
-| `templates/builder`, `templates/deployment` | Dockerfile recipe; kustomize base + environment overlay ([Service ports](docs/deployment-service-ports.md)) |
+| `templates/builder`, `templates/deployment` | Dockerfile recipe; kustomize base + environment overlay ([Service ports](docs/service-protocol.md)) |
 | `base/` | a real, compiling generated service — the canonical fixture the factory templates must render to |
 
 ## Rules that bite
