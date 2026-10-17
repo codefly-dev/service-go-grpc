@@ -632,47 +632,97 @@ func TestSettingsValidateHealth(t *testing.T) {
 // REST endpoint, connect only with the Connect endpoint. A port advertised for
 // an unserved listener is the #78 failure — a Service routing to a dead port
 // and, when probed, a pod that restart-loops forever.
+//
+// It also pins the appProtocol each Service port declares to the one its
+// listener speaks, because an L7 hop (a waypoint, an ingress) picks the
+// upstream protocol from that declaration (#184). The Connect listener is
+// h2c.NewHandler and carries native gRPC over cleartext HTTP/2, but its name
+// declares nothing, so dropping http2 lets the hop downgrade that gRPC to
+// HTTP/1.1. The REST listener is a plain http.Server that refuses
+// prior-knowledge HTTP/2, so declaring it http2 would break every REST call
+// through such a hop. The gRPC port declares by its grpc- name alone. Names
+// stay pinned too: consumers select ports by them.
 func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 	type portCheck struct {
 		token   string
 		wantFor func(DeploymentParameters) bool
 	}
-	// Substrings unique to each listener's port block across deployment.yaml
-	// (containerPort) and service.yaml (Service port).
+	// Substrings unique to each listener's port block in deployment.yaml.
 	checks := []portCheck{
 		{"containerPort: 9090", func(DeploymentParameters) bool { return true }},
-		{"name: grpc-port", func(DeploymentParameters) bool { return true }},
 		{"containerPort: 8080", func(p DeploymentParameters) bool { return p.RestPort != 0 }},
-		{"name: http-port", func(p DeploymentParameters) bool { return p.RestPort != 0 }},
 		{"containerPort: 8081", func(p DeploymentParameters) bool { return p.ConnectPort != 0 }},
-		{"name: connect-port", func(p DeploymentParameters) bool { return p.ConnectPort != 0 }},
 	}
-	cases := map[string]DeploymentParameters{
-		"grpc only":      {Health: undeclaredHealth()},
-		"grpc + rest":    {RestPort: restContainerPort, Health: undeclaredHealth()},
-		"grpc + connect": {ConnectPort: connectContainerPort, Health: undeclaredHealth()},
-		"all":            {RestPort: restContainerPort, ConnectPort: connectContainerPort, Health: undeclaredHealth()},
+	grpcPort := servicePortDeclaration{Name: "grpc-port", Port: 9090, AppProtocol: ""}
+	restPort := servicePortDeclaration{Name: "http-port", Port: int32(restContainerPort), AppProtocol: "http"}
+	connectPort := servicePortDeclaration{Name: "connect-port", Port: int32(connectContainerPort), AppProtocol: "http2"}
+	cases := map[string]struct {
+		params DeploymentParameters
+		want   []servicePortDeclaration
+	}{
+		"grpc only":      {DeploymentParameters{Health: undeclaredHealth()}, []servicePortDeclaration{grpcPort}},
+		"grpc + rest":    {DeploymentParameters{RestPort: restContainerPort, Health: undeclaredHealth()}, []servicePortDeclaration{grpcPort, restPort}},
+		"grpc + connect": {DeploymentParameters{ConnectPort: connectContainerPort, Health: undeclaredHealth()}, []servicePortDeclaration{grpcPort, connectPort}},
+		"all": {
+			DeploymentParameters{RestPort: restContainerPort, ConnectPort: connectContainerPort, Health: undeclaredHealth()},
+			[]servicePortDeclaration{grpcPort, restPort, connectPort},
+		},
 	}
-	for name, params := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, params)
+			dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, tc.params)
 			deployment, err := os.ReadFile(filepath.Join(dir, "base", "deployment.yaml"))
 			if err != nil {
 				t.Fatalf("read deployment: %v", err)
 			}
-			service, err := os.ReadFile(filepath.Join(dir, "base", "service.yaml"))
+			for _, check := range checks {
+				got := strings.Contains(string(deployment), check.token)
+				if want := check.wantFor(tc.params); got != want {
+					t.Errorf("port token %q present=%v, want %v\n%s", check.token, got, want, deployment)
+				}
+			}
+			rendered, err := os.ReadFile(filepath.Join(dir, "base", "service.yaml"))
 			if err != nil {
 				t.Fatalf("read service: %v", err)
 			}
-			rendered := string(deployment) + string(service)
-			for _, check := range checks {
-				got := strings.Contains(rendered, check.token)
-				if want := check.wantFor(params); got != want {
-					t.Errorf("port token %q present=%v, want %v\n%s", check.token, got, want, rendered)
-				}
+			if got := declaredServicePorts(t, rendered); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("service ports = %+v, want %+v\n%s", got, tc.want, rendered)
 			}
 		})
 	}
+}
+
+// servicePortDeclaration is what an L7 hop reads off a Service port: the port,
+// the name consumers select it by, and the appProtocol it declares ("" when
+// none).
+type servicePortDeclaration struct {
+	Name        string
+	Port        int32
+	AppProtocol string
+}
+
+// declaredServicePorts parses a rendered Service and reports each port's
+// declaration. It refuses a port whose target differs from its port or that is
+// not TCP, so the declaration it reports belongs to the listener the container
+// binds.
+func declaredServicePorts(t *testing.T, rendered []byte) []servicePortDeclaration {
+	t.Helper()
+	var service corev1.Service
+	if err := k8syaml.UnmarshalStrict(rendered, &service); err != nil {
+		t.Fatalf("rendered service is not a valid Service: %v\n%s", err, rendered)
+	}
+	var out []servicePortDeclaration
+	for _, port := range service.Spec.Ports {
+		if port.Protocol != corev1.ProtocolTCP || port.TargetPort.IntValue() != int(port.Port) {
+			t.Fatalf("service port %+v: want TCP targeting its own port", port)
+		}
+		declaration := servicePortDeclaration{Name: port.Name, Port: port.Port}
+		if port.AppProtocol != nil {
+			declaration.AppProtocol = *port.AppProtocol
+		}
+		out = append(out, declaration)
+	}
+	return out
 }
 
 // renderOverlayWithConfigMap renders the deployment templates the way
@@ -859,6 +909,51 @@ func TestNamedPortsComeFromTheServicesOwnMappings(t *testing.T) {
 	}
 	if _, err := namedPorts(ctx, []*basev0.NetworkMapping{mapping("a", "grpc", 9100), mapping("b", "grpc", 9100)}); err == nil {
 		t.Fatal("two named endpoints on one port must refuse the render")
+	}
+}
+
+// Explicit HTTP metadata enables L7 handling for ordinary HTTP listeners.
+// Connect also serves native gRPC over h2c, so it must never be declared http:
+// that forces HTTP/1.1 upstream in a mesh. Both the conventional Connect port
+// and a named Connect endpoint declare http2 — the named one from its declared
+// API, since the agent does not generate its listener. Names never classify an
+// API.
+func TestServicePortsDeclareHTTPFromTheEndpointAPI(t *testing.T) {
+	var mappings []*basev0.NetworkMapping
+	for i, api := range []string{"http", "rest", "connect", "mcp", "grpc", "tcp"} {
+		mappings = append(mappings, &basev0.NetworkMapping{
+			Endpoint:  &basev0.Endpoint{Name: "extra-" + api, Api: api, Service: "api", Module: "host"},
+			Instances: []*basev0.NetworkInstance{{Hostname: "api.host.svc.cluster.local", Port: uint32(11000 + i), Access: resources.NewContainerNetworkAccess()}},
+		})
+	}
+	ports, err := namedPorts(context.Background(), mappings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{
+		Health: undeclaredHealth(), RestPort: 8080, ConnectPort: 8081, NamedPorts: ports,
+	})
+	rendered, err := os.ReadFile(filepath.Join(dir, "base", "service.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var service corev1.Service
+	if err := k8syaml.UnmarshalStrict(rendered, &service); err != nil {
+		t.Fatal(err)
+	}
+	want := map[int32]string{9090: "", 8080: "http", 8081: "http2", 11000: "http", 11001: "http", 11002: "http2", 11003: "http", 11004: "", 11005: ""}
+	if len(service.Spec.Ports) != len(want) {
+		t.Fatalf("rendered %d ports, want %d", len(service.Spec.Ports), len(want))
+	}
+	for _, port := range service.Spec.Ports {
+		expected, exists := want[port.Port]
+		actual := ""
+		if port.AppProtocol != nil {
+			actual = *port.AppProtocol
+		}
+		if !exists || actual != expected || port.Protocol != corev1.ProtocolTCP || port.TargetPort.IntValue() != int(port.Port) {
+			t.Errorf("port %+v: appProtocol %q, want %q with unchanged TCP/target port", port, actual, expected)
+		}
 	}
 }
 

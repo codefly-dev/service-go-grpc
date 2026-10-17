@@ -884,6 +884,8 @@ type NamedPort struct {
 	// mesh that detects protocol from the port-name prefix reads it correctly.
 	Name string
 	Port uint32
+	// AppProtocol is derived from the endpoint API, never its chosen name.
+	AppProtocol string
 }
 
 // conventionalEndpoints are the listeners the templates always know: grpc is
@@ -959,7 +961,20 @@ func namedPorts(ctx context.Context, mappings []*basev0.NetworkMapping) ([]Named
 			return nil, fmt.Errorf("endpoints %q and %q resolve to the same port %d", owner, endpoint.GetName(), instance.GetPort())
 		}
 		seen[instance.GetPort()] = endpoint.GetName()
-		out = append(out, NamedPort{Name: name, Port: instance.GetPort()})
+		port := NamedPort{Name: name, Port: instance.GetPort()}
+		// The agent does not generate a named endpoint's listener, so the
+		// declaration follows the endpoint's declared API. Connect carries
+		// native gRPC over h2c, which http would downgrade to HTTP/1.1 at an
+		// L7 hop, so it declares http2. A service that declares Connect and
+		// serves plain HTTP/1.1 contradicts its own declaration; the manifest
+		// does not paper over that.
+		switch api := endpoint.GetApi(); {
+		case api == standards.CONNECT:
+			port.AppProtocol = "http2"
+		case standards.IsHTTPBasedAPI(api):
+			port.AppProtocol = "http"
+		}
+		out = append(out, port)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
