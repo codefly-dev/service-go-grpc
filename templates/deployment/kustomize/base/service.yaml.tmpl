@@ -20,6 +20,10 @@ spec:
 {{- with .Deployment.Parameters.ConnectPort }}
     - protocol: TCP
       name: connect-port
+      # The Connect listener is h2c.NewHandler: it carries native gRPC over
+      # cleartext HTTP/2 beside Connect and gRPC-Web. The name declares no
+      # protocol, so an L7 hop needs this to keep that HTTP/2 upstream.
+      appProtocol: kubernetes.io/h2c
       port: {{ . }}
       targetPort: {{ . }}
 {{- end }}
