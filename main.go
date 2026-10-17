@@ -467,7 +467,14 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInfor
 	// edges with the request's composition provenance on this core; the host
 	// requires the live advertisement, not the linked core version.
 	advertisement.Contract = contract.Current()
-	advertisement.Contract.Capabilities = append(advertisement.Contract.Capabilities, contract.DeploymentCompositionProvenance)
+	advertisement.Contract.Capabilities = append(advertisement.Contract.Capabilities,
+		contract.DeploymentCompositionProvenance,
+		// This Runtime calls ReportStartedArtifact on every native start, which
+		// is the only thing that earns this capability: core never advertises
+		// it for an agent built on it, because an agent that claims it and
+		// reports nothing is the false promise a consumer then trusts.
+		contract.RuntimeStartedArtifact,
+	)
 	return advertisement, nil
 }
 

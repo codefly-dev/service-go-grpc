@@ -63,7 +63,10 @@ type Runtime struct {
 	// startMu gives a start attempt exclusive ownership of runner,
 	// runnerCancel and the generation sequence for its whole duration. gRPC
 	// dispatches every RPC on its own goroutine and nothing upstream promises
-	// Start is called once at a time.
+	// Start is called once at a time. Stop and Destroy hold it too: they mutate
+	// the same fields, and a teardown that interleaved would be overwritten by
+	// the attempt's STARTED — together with the artifact it reported, which a
+	// consumer would then approve as the build of a process that was killed.
 	startMu sync.Mutex
 
 	// lifecycle orders the STARTED commit against the exit report of the
@@ -485,6 +488,36 @@ func (s *Runtime) revokeReadiness(message string) {
 	s.Base.Runtime.StartStatus = &runtimev0.StartStatus{State: runtimev0.StartStatus_UNKNOWN, Message: message}
 }
 
+// reportStartedBinary names the executable this start attempt launched, for
+// StartStatus.started_artifact (runtime-started-artifact/v1).
+//
+// The runner environment owns that path and is asked for it: HostExecutable
+// answers with the executable the last successful build produced as the HOST
+// sees it, and refuses — rather than offering a path to substitute — when there
+// is no such file, when the build was a Docker companion's (its executable
+// exists only inside that container), or when the recorded path is not
+// absolute, which a consumer refuses anyway. Reconstructing the path here from
+// the runner's cache layout would be a second answer to a question that type
+// answers, and it is the derivation this contract exists to end: the CLI used
+// to derive every workload's build from the Go agents' .cache/native/main,
+// which is why a service on any other agent was never delivered (cli#989).
+//
+// A compiled runtime starts its own build, so the executable alone identifies
+// it and sources stays empty.
+func (s *Runtime) reportStartedBinary() {
+	exe, ok := s.RunnerEnvironment.HostExecutable()
+	if !ok {
+		// Said out loud rather than traced: this agent advertises the
+		// capability, so a consumer that needs an artifact and is reported
+		// none refuses by telling the user to implement a contract this agent
+		// does implement.
+		s.Wool.Warn("the runner names no host executable for this start, so no started artifact is reported",
+			wool.Field("runtime-context", s.Base.Runtime.RuntimeContext.GetKind()))
+		return
+	}
+	s.Base.Runtime.ReportStartedArtifact(&runtimev0.StartedArtifact{Executable: exe})
+}
+
 // commitStarted publishes STARTED for the start attempt in flight. It takes
 // the same lock as reportRunnerExit, so committing before supervision is armed
 // guarantees an immediate child exit lands strictly after — and therefore wins
@@ -666,6 +699,10 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	if err != nil {
 		return s.Base.Runtime.StartErrorf(err, "starting runner")
 	}
+	// Name what was started before committing STARTED: StartResponse stamps the
+	// report on the status it builds and consumes it, so a report made after
+	// that commit would belong to no start at all.
+	s.reportStartedBinary()
 
 	// Commit STARTED before arming supervision. A binary that dies instantly
 	// would otherwise have its failure written first and then overwritten by
@@ -696,6 +733,14 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 	defer s.Wool.Catch()
 
 	ctx = s.Wool.Inject(ctx)
+
+	// A teardown waits for any start attempt in flight. startMu owns runner and
+	// runnerCancel, which this mutates, and interleaving with Start is not just
+	// a stale status: the attempt's commitStarted would overwrite the stop with
+	// STARTED and the artifact it reported, so a consumer would approve and
+	// register a build for a process this call deliberately killed.
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
 
 	s.Wool.Trace("stopping service")
 	if s.testProc != nil {
@@ -733,6 +778,12 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*runtimev0.DestroyResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
+
+	// Same reason as Stop, plus one of its own: this removes cacheLocation, and
+	// the executable a start attempt reports lives under it — a destroy that
+	// interleaved would leave a consumer digesting a path that no longer exists.
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
 
 	s.Wool.Trace("destroying service")
 	err := golanghelpers.DestroyGoRuntime(ctx, s.Base.Runtime.RuntimeContext, runtimeImage,

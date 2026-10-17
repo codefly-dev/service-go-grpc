@@ -186,10 +186,17 @@ bug it prevents is possible. The existing tests do; match them.
   a log store with its own retention, and the buffering kept any handler from
   being reached before EOF. `TestGeneratedRestListenerLogsNoRequestPayload` and
   `TestRESTListenerDispatchesBeforeTheRequestBodyCompletes` hold both halves.
+- **A native start says what it ran.** `Start` reports the executable the runner
+  built before `StartResponse`, which consumes it: every start reports, a failed
+  one reports nothing, and the path is the runner's answer, never derived here —
+  [the started artifact](docs/started-artifact.md).
 - **Pins move together; the version moves at release.** The `core` pin in both
   `go.mod`s and the core reusable-workflow ref in `ci.yml` move in one PR. The
   `agent.codefly.yaml` version and the tag move only in the release PR that
-  `codefly publish` opens: a version bumped by hand makes publish skip it.
+  `codefly publish` opens: a version bumped by hand makes publish skip it. A
+  `replace` of `core` never leaves your working tree —
+  `TestTheCorePinIsAReleaseNotAReplace` refuses one, because the require-line
+  gate cannot see it and GoReleaser builds from the tag.
 
 ## Workflow
 
