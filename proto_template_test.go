@@ -450,12 +450,23 @@ func TestGeneratedScaffoldTargetsRequireGeneratedRoot(t *testing.T) {
 		t.Fatalf("generated scaffold targets = %v, want %v", targets, want)
 	}
 
+	// A service declared in another proto file, an implemented Codefly interface
+	// served through a plugin, leaves the scaffold current.
 	writeTestFile(t, filepath.Join(protoRoot, "extra.proto"), "syntax = \"proto3\"; service OtherService {}\n")
 	targets, err = generatedScaffoldTargets(root, protoRoot, "WidgetService")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !reflect.DeepEqual(targets, want) {
+		t.Fatalf("an interface service in another file stopped the scaffold: %v", targets)
+	}
+	// Two services in api.proto itself is a hand-written layout the scaffold leaves alone.
+	writeTestFile(t, filepath.Join(protoRoot, "api.proto"), "syntax = \"proto3\"; service WidgetService {} service SecondService {}\n")
+	targets, err = generatedScaffoldTargets(root, protoRoot, "WidgetService")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(targets) != 0 {
-		t.Fatalf("multi-service protocol claimed single-service scaffolding: %v", targets)
+		t.Fatalf("two services in api.proto claimed single-service scaffolding: %v", targets)
 	}
 }
