@@ -19,6 +19,7 @@ import (
 	runners "github.com/codefly-dev/core/runners/base"
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/codefly-dev/core/shared"
+	"github.com/codefly-dev/core/standards"
 	"github.com/codefly-dev/core/wool"
 
 	goruntime "github.com/codefly-dev/service-go/pkg/runtime"
@@ -432,7 +433,11 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 }
 
 // namedEndpoints returns the endpoints this service declares beyond the
-// conventional gRPC, REST and Connect ones, in declaration order.
+// listeners the agent scaffolds, in declaration order. A declared rest or
+// connect endpoint whose setting is off is one the service serves itself, so it
+// is named here and handed its address like any other: the setting says who
+// writes the handler, never whether the endpoint exists (conventionalPort draws
+// the same line for a cell).
 //
 // The conventional endpoints are exported by their own settings-gated code, so
 // they are excluded twice over: by identity (the conventional gRPC endpoint may
@@ -444,7 +449,7 @@ func (s *Runtime) namedEndpoints() []*basev0.Endpoint {
 	conventional := []*basev0.Endpoint{s.GoGrpc.GrpcEndpoint, s.GoGrpc.RestEndpoint, s.GoGrpc.ConnectEndpoint}
 	var named []*basev0.Endpoint
 	for _, endpoint := range s.Endpoints {
-		if endpoint == nil || conventionalEndpoints[endpoint.Name] {
+		if endpoint == nil || s.scaffolds(endpoint.Name) {
 			continue
 		}
 		isConventional := false
@@ -459,6 +464,20 @@ func (s *Runtime) namedEndpoints() []*basev0.Endpoint {
 		}
 	}
 	return named
+}
+
+// scaffolds reports whether the agent writes and binds the listener of the
+// conventional endpoint named name: gRPC always, REST and Connect when enabled.
+func (s *Runtime) scaffolds(name string) bool {
+	switch name {
+	case standards.GRPC:
+		return true
+	case standards.REST:
+		return s.GoGrpc.Settings.RestEndpoint
+	case standards.CONNECT:
+		return s.GoGrpc.Settings.ConnectEndpoint
+	}
+	return false
 }
 
 // nextGeneration opens a new start attempt and returns its generation.
