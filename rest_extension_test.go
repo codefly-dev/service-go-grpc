@@ -258,3 +258,25 @@ func TestBaseGeneratedServiceServesRESTExtensionSeams(t *testing.T) {
 		t.Fatalf("generated service REST extension suite: %v\n%s", err, output)
 	}
 }
+
+// TestPluginInterfaceFollowsTheRestSetting: a service with no REST listener
+// asks its plugins for no REST handlers, so grpc-gateway leaves its go.mod.
+func TestPluginInterfaceFollowsTheRestSetting(t *testing.T) {
+	withREST := renderScaffold(t, "templates/factory/code/pkg/framework/plugin.go.tmpl", &Settings{RestEndpoint: true, ConnectEndpoint: true})
+	base, err := os.ReadFile(filepath.Join("base", "code", "pkg", "framework", "plugin.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withREST != string(base) {
+		t.Fatalf("plugin template drifted from base/code/pkg/framework/plugin.go\n--- rendered ---\n%s", withREST)
+	}
+	connectOnly := renderScaffold(t, "templates/factory/code/pkg/framework/plugin.go.tmpl", &Settings{ConnectEndpoint: true})
+	for _, absent := range []string{"RegisterREST", "grpc-gateway", `"context"`} {
+		if strings.Contains(connectOnly, absent) {
+			t.Errorf("connect-only plugin interface still carries %q", absent)
+		}
+	}
+	if !strings.Contains(connectOnly, "RegisterGRPC(server *grpc.Server)") {
+		t.Error("connect-only plugin interface lost RegisterGRPC")
+	}
+}

@@ -1,23 +1,27 @@
 package framework
 
 import (
+{{- if .Settings.RestEndpoint }}
 	"context"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+{{- end }}
 	"google.golang.org/grpc"
 )
 
 // Plugin defines the interface that all service plugins must implement.
-// Each plugin contributes gRPC services, REST handlers, and database migrations.
+// Each plugin contributes gRPC services{{ if .Settings.RestEndpoint }}, REST handlers,{{ end }} and database migrations.
 type Plugin interface {
 	// Name returns a unique identifier for this plugin.
 	Name() string
 
 	// RegisterGRPC registers the plugin's gRPC service implementations on the server.
 	RegisterGRPC(server *grpc.Server)
+{{- if .Settings.RestEndpoint }}
 
 	// RegisterREST registers the plugin's REST gateway handlers.
 	RegisterREST(ctx context.Context, mux *runtime.ServeMux, endpoint string, opts []grpc.DialOption) error
+{{- end }}
 
 	// Migrations returns an ordered list of SQL migration file paths.
 	// Return nil if the plugin has no migrations.
