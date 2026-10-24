@@ -116,8 +116,7 @@ func TestGeneratedConnectListenerDispatchesThroughTheGRPCServer(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{
-		"genconnect.Unimplemented",
-		"ServiceHandler(",
+		"genconnect.",
 		"connectHandler",
 	} {
 		if strings.Contains(content, unwanted) {
