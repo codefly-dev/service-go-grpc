@@ -99,7 +99,6 @@ func TestGeneratedRestListenerExposesExtensionSeams(t *testing.T) {
 	}
 	for _, want := range []string{
 		"func gatewayMuxOptions(extra ...runtime.ServeMuxOption) []runtime.ServeMuxOption",
-		"func gatewayDialOptions(extra ...grpc.DialOption) []grpc.DialOption",
 		"return append(options, extra...)",
 		"gwMux := runtime.NewServeMux(gatewayMuxOptions(s.config.ServeMuxOptions...)...)",
 		"opts := gatewayDialOptions(s.config.GatewayDialOptions...)",
@@ -125,10 +124,37 @@ func TestGeneratedRestListenerExposesExtensionSeams(t *testing.T) {
 		"Routes []Route",
 		"Middleware []func(http.Handler) http.Handler",
 		"GatewayDialOptions []grpc.DialOption",
+		// The dial options helper lives beside the field, so the Connect face
+		// has it with or without a REST listener.
+		"func gatewayDialOptions(extra ...grpc.DialOption) []grpc.DialOption",
 	} {
 		if !strings.Contains(string(grpcRaw), want) {
 			t.Errorf("Configuration does not declare %q", want)
 		}
+	}
+}
+
+// TestConnectWithoutRESTStillHasItsDialOptions holds the shape the hop-fronted
+// services take: connect-endpoint on, rest-endpoint off. The Connect face dials
+// the gRPC server with Configuration.GatewayDialOptions, so both must be
+// generated without a REST listener — a service declaring only Connect once
+// rendered a tree that did not compile (connect_gen.go named a field and a
+// helper only the REST setting emitted).
+func TestConnectWithoutRESTStillHasItsDialOptions(t *testing.T) {
+	grpcOnly := renderScaffold(t, "templates/factory/code/pkg/adapters/grpc_gen.go.tmpl", &Settings{ConnectEndpoint: true})
+	for _, want := range []string{"GatewayDialOptions []grpc.DialOption", "func gatewayDialOptions(extra ...grpc.DialOption) []grpc.DialOption", `"google.golang.org/grpc/credentials/insecure"`} {
+		if !strings.Contains(grpcOnly, want) {
+			t.Errorf("connect-endpoint without rest-endpoint: gRPC adapter lacks %q", want)
+		}
+	}
+	for _, absent := range []string{"ServeMuxOptions", "Routes []Route", "Middleware []func"} {
+		if strings.Contains(grpcOnly, absent) {
+			t.Errorf("connect-endpoint without rest-endpoint: gRPC adapter still declares the REST-only %q", absent)
+		}
+	}
+	connect := renderFactoryGo(t, "templates/factory/code/pkg/adapters/connect_gen.go.tmpl", &Settings{ConnectEndpoint: true})
+	if !strings.Contains(string(connect), "gatewayDialOptions(c.GatewayDialOptions...)") {
+		t.Errorf("the Connect face does not dial with the shared options")
 	}
 }
 

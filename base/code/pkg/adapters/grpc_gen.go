@@ -28,6 +28,7 @@ import (
 
 	codefly "github.com/codefly-dev/sdk-go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 )
@@ -102,9 +103,10 @@ type Configuration struct {
 	// headers a browser needs to read it, and inside the generated request
 	// logging so that it is recorded like any other outcome.
 	Middleware []func(http.Handler) http.Handler
-	// GatewayDialOptions are appended to the options the REST listener dials the
-	// gRPC server with, for the gateway's hop and the health probe's client.
-	// Where a service raises gRPC's 4 MiB default call bounds:
+	// GatewayDialOptions are appended to the options the HTTP faces dial the
+	// gRPC server with: the REST listener's gateway and health probe, and the
+	// Connect listener's transcoder. Where a service raises gRPC's 4 MiB
+	// default call bounds:
 	// grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(n), grpc.MaxCallSendMsgSize(n)).
 	// A bound set only on the server leaves the proxy refusing the message the
 	// server would have accepted.
@@ -159,4 +161,15 @@ func (s *GrpcServer) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to serve: %s", err)
 	}
 	return nil
+}
+
+// gatewayDialOptions is how an HTTP face (the REST listener's gateway and
+// health probe, the Connect listener's transcoder) reaches the gRPC server,
+// with extra appended to the generated options. The hop carries whatever an
+// RPC carries, so a service whose messages exceed gRPC's 4 MiB default call
+// bounds raises them here with grpc.WithDefaultCallOptions rather than losing
+// the hop at the proxy.
+func gatewayDialOptions(extra ...grpc.DialOption) []grpc.DialOption {
+	options := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	return append(options, extra...)
 }

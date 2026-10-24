@@ -94,7 +94,8 @@ gatewayMuxOptions(config.ServeMuxOptions...), gatewayDialOptions(...),
 WithRoutes and WithMiddleware rather than a copy, so a change on either side is
 covered without editing the test.
 
-All four fields are generated only when rest-endpoint: true.`,
+ServeMuxOptions, Routes and Middleware are generated only when rest-endpoint: true;
+GatewayDialOptions whenever an HTTP face is (rest-endpoint or connect-endpoint).`,
 		},
 		{
 			Id:          "go-grpc-proto-flow",
