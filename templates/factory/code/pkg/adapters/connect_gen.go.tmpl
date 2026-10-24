@@ -8,13 +8,22 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
+	"connectrpc.com/vanguard"
 	"connectrpc.com/vanguard/vanguardgrpc"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/encoding"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	// Registers gRPC's gzip decompressor. gRPC refuses an encoding it has none
 	// for, and refuses it as Unimplemented, so without this a client that
 	// compresses its requests is told the method does not exist — the very
@@ -47,7 +56,13 @@ type ConnectServer struct {
 // the services it knows at this point, so a later registration is unreachable
 // over Connect.
 func NewConnectServer(c *Configuration, grpcServer *grpc.Server) (*ConnectServer, error) {
-	transcoder, err := vanguardgrpc.NewTranscoder(grpcServer)
+	var transcoder http.Handler
+	var err error
+	if len(c.GatewayDialOptions) == 0 {
+		transcoder, err = vanguardgrpc.NewTranscoder(grpcServer)
+	} else {
+		transcoder, err = dialledTranscoder(c, grpcServer)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to build the Connect transcoder: %w", err)
 	}
@@ -83,4 +98,140 @@ func (s *ConnectServer) Run(ctx context.Context) error {
 
 func (s *ConnectServer) Shutdown(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
+}
+
+// dialledTranscoder is the transcoder for a service whose HTTP faces reach its
+// gRPC methods by dialling rather than in process: the REST face dials the gRPC
+// endpoint with Configuration.GatewayDialOptions, and a dial option there can
+// send the call somewhere first (a hop in front of the service, which decides
+// and stamps every call). The Connect face then dials the same way, so the two
+// faces cannot disagree about the path a call takes. Each call is transcoded to
+// gRPC and forwarded as opaque frames, so the service's own gRPC server, and
+// every interceptor it holds, is still what answers it.
+func dialledTranscoder(c *Configuration, grpcServer *grpc.Server) (http.Handler, error) {
+	conn, err := grpc.NewClient(fmt.Sprintf("0.0.0.0:%d", c.EndpointGrpcPort), gatewayDialOptions(c.GatewayDialOptions...)...)
+	if err != nil {
+		return nil, err
+	}
+	forwarder := grpc.NewServer(grpc.ForceServerCodec(frameCodec{}), grpc.UnknownServiceHandler(func(_ any, in grpc.ServerStream) error {
+		return forwardCall(conn, in)
+	}))
+	codecs := []string{vanguard.CodecProto}
+	if encoding.GetCodec(vanguard.CodecJSON) != nil {
+		codecs = append(codecs, vanguard.CodecJSON)
+	}
+	var services []*vanguard.Service
+	for name := range grpcServer.GetServiceInfo() {
+		services = append(services, vanguard.NewService(name, forwarder))
+	}
+	return vanguard.NewTranscoder(services, vanguard.WithDefaultServiceOptions(
+		vanguard.WithTargetCodecs(codecs...),
+		vanguard.WithTargetProtocols(vanguard.ProtocolGRPC),
+	))
+}
+
+// forwardCall relays one call to conn: the caller's metadata, every message
+// each way, then the answer's header, trailer and status.
+func forwardCall(conn *grpc.ClientConn, in grpc.ServerStream) error {
+	method, _ := grpc.MethodFromServerStream(in)
+	md, _ := metadata.FromIncomingContext(in.Context())
+	out := metadata.MD{}
+	for key, values := range md {
+		if !strings.HasPrefix(key, ":") && key != "content-type" && key != "user-agent" && !strings.HasPrefix(key, "grpc-") {
+			out[key] = values
+		}
+	}
+	ctx, cancel := context.WithCancel(metadata.NewOutgoingContext(in.Context(), out))
+	defer cancel()
+	up, err := conn.NewStream(ctx, &grpc.StreamDesc{ServerStreams: true, ClientStreams: true}, method, grpc.ForceCodec(frameCodec{}))
+	if err != nil {
+		return err
+	}
+	sent, received := make(chan error, 1), make(chan error, 1)
+	go func() {
+		for {
+			f := &frame{}
+			if err := in.RecvMsg(f); err != nil {
+				if errors.Is(err, io.EOF) {
+					sent <- up.CloseSend()
+					return
+				}
+				sent <- err
+				return
+			}
+			if err := up.SendMsg(f); err != nil {
+				sent <- err
+				return
+			}
+		}
+	}()
+	go func() {
+		for first := true; ; first = false {
+			f := &frame{}
+			if err := up.RecvMsg(f); err != nil {
+				if errors.Is(err, io.EOF) {
+					received <- nil
+					return
+				}
+				received <- err
+				return
+			}
+			if first {
+				if header, err := up.Header(); err == nil {
+					_ = in.SendHeader(header)
+				}
+			}
+			if err := in.SendMsg(f); err != nil {
+				received <- err
+				return
+			}
+		}
+	}()
+	for {
+		select {
+		case err := <-sent:
+			if err != nil {
+				return status.Errorf(codes.Internal, "the Connect face could not forward the call: %v", err)
+			}
+			sent = nil
+		case err := <-received:
+			if header, herr := up.Header(); herr == nil {
+				_ = in.SetHeader(header)
+			}
+			in.SetTrailer(up.Trailer())
+			return err
+		}
+	}
+}
+
+// frame is one message, carried without being decoded.
+type frame struct{ payload []byte }
+
+// frameCodec passes a frame through untouched and encodes anything else as
+// protobuf, under protobuf's name so neither end sees another content type.
+type frameCodec struct{}
+
+func (frameCodec) Name() string { return "proto" }
+
+func (frameCodec) Marshal(v any) ([]byte, error) {
+	if f, ok := v.(*frame); ok {
+		return f.payload, nil
+	}
+	m, ok := v.(proto.Message)
+	if !ok {
+		return nil, status.Errorf(codes.Internal, "the Connect face cannot encode %T", v)
+	}
+	return proto.Marshal(m)
+}
+
+func (frameCodec) Unmarshal(data []byte, v any) error {
+	if f, ok := v.(*frame); ok {
+		f.payload = append([]byte(nil), data...)
+		return nil
+	}
+	m, ok := v.(proto.Message)
+	if !ok {
+		return status.Errorf(codes.Internal, "the Connect face cannot decode into %T", v)
+	}
+	return proto.Unmarshal(data, m)
 }
