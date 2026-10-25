@@ -27,6 +27,12 @@ const namedEndpointName = "authority"
 // Load reported — exactly as the CLI's runner does (GenerateNetworkMappings over
 // LoadResponse.Endpoints).
 func loadNamedEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContext) (*Runtime, []*basev0.NetworkMapping, string) {
+	return loadEndpointRuntime(t, runtimeContext, true)
+}
+
+// loadEndpointRuntime is loadNamedEndpointRuntime with the REST scaffold on or
+// off: off, the service declares rest and serves it itself.
+func loadEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContext, restScaffold bool) (*Runtime, []*basev0.NetworkMapping, string) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -54,7 +60,7 @@ func loadNamedEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContex
 			// whatever composes the module.
 			{Name: namedEndpointName, API: standards.GRPC, Visibility: resources.VisibilityInternal},
 		},
-		Spec: map[string]any{"rest-endpoint": true, "hot-reload": false},
+		Spec: map[string]any{"rest-endpoint": restScaffold, "hot-reload": false},
 	}
 	require.NoError(t, service.SaveAtDir(ctx, serviceDir))
 	require.NoError(t, (&resources.Module{Name: "mod"}).SaveToDir(ctx, filepath.Join(workspacePath, "mod")))
@@ -160,6 +166,45 @@ func TestInitExportsNamedEndpoints(t *testing.T) {
 			require.Contains(t, resources.EnvironmentVariableAsStrings(all), resources.EnvironmentVariableAsStrings([]*resources.EnvironmentVariable{carrier})[0])
 		})
 	}
+}
+
+// TestInitExportsADeclaredRestEndpointTheServiceServesItself holds that a
+// service declaring rest with the scaffold off is still handed the address to
+// listen on. It keeps a hand-written HTTP face the scaffold would replace, and
+// Codefly hands every consumer that endpoint's address; without the carrier the
+// process finds no listen address, binds nothing, and every consumer is refused.
+func TestInitExportsADeclaredRestEndpointTheServiceServesItself(t *testing.T) {
+	if !languages.HasGoRuntime(nil) {
+		t.Skip("native go toolchain not available")
+	}
+	ctx := context.Background()
+	runtimeContext := resources.NewRuntimeContextNative()
+	runtime, mappings, workspacePath := loadEndpointRuntime(t, runtimeContext, false)
+
+	runner, err := golanghelpers.NewNativeGoRunner(ctx, workspacePath, "mod/svc/code")
+	require.NoError(t, err)
+	runner.WithLocalCacheDir(filepath.Join(workspacePath, ".cache"))
+	runtime.bindRunnerEnvironment(runner)
+
+	init, err := runtime.Init(ctx, &runtimev0.InitRequest{RuntimeContext: runtimeContext, ProposedNetworkMappings: mappings})
+	require.NoError(t, err)
+	require.Equal(t, runtimev0.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus().GetMessage())
+
+	var rest *basev0.Endpoint
+	for _, endpoint := range runtime.Endpoints {
+		if endpoint.Name == standards.REST {
+			rest = endpoint
+		}
+	}
+	require.NotNil(t, rest)
+	want, err := resources.FindNetworkInstanceInNetworkMappings(ctx, mappings, rest, resources.NewNativeNetworkAccess())
+	require.NoError(t, err)
+	all, err := runtime.EnvironmentVariables.All()
+	require.NoError(t, err)
+	carrier := resources.Env("CODEFLY__ENDPOINT__MOD__SVC__REST__REST", want.GetAddress())
+	require.Contains(t, resources.EnvironmentVariableAsStrings(all), resources.EnvironmentVariableAsStrings([]*resources.EnvironmentVariable{carrier})[0])
+	// Each endpoint exactly once: the scaffold being off does not duplicate it.
+	require.Len(t, runtime.EnvironmentVariables.Endpoints(), 3)
 }
 
 // TestInitRefusesADeclaredEndpointWithoutAMapping holds that an endpoint the

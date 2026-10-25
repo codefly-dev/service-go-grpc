@@ -116,8 +116,7 @@ func TestGeneratedConnectListenerDispatchesThroughTheGRPCServer(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{
-		"genconnect.Unimplemented",
-		"ServiceHandler(",
+		"genconnect.",
 		"connectHandler",
 	} {
 		if strings.Contains(content, unwanted) {
@@ -154,6 +153,85 @@ func TestGeneratedServerAdapterRendersWithoutREST(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "NewConnectServer(config, grpc.gRPC)") {
 		t.Errorf("the Connect listener does not receive the gRPC server:\n%s", rendered)
+	}
+}
+
+// TestGeneratedFacesShareOneMessageBound pins F10 of the module-evaluation
+// review: the Connect listener's transcoder buffered a request of undeclared
+// length up to vanguard's 4 GiB default before gRPC's receive bound, or any
+// interceptor, saw it. Configuration.MaxMessageBytes is now the one bound: the
+// gRPC server installs it after the service's own options, and the Connect
+// listener holds both transcoders (in process and dialled) and the dialled
+// forwarder to it, refusing a declared oversize Connect unary request before
+// reading it. Rendered for every setting a Connect listener is generated
+// under; base/code/pkg/adapters/connect_bound_test.go proves the behaviour.
+func TestGeneratedFacesShareOneMessageBound(t *testing.T) {
+	for _, settings := range []*Settings{{ConnectEndpoint: true}, {RestEndpoint: true, ConnectEndpoint: true}} {
+		grpcAdapter := string(renderFactoryGo(t, "templates/factory/code/pkg/adapters/grpc_gen.go.tmpl", settings))
+		for _, want := range []string{
+			"MaxMessageBytes int",
+			"const defaultMaxMessageBytes = 4 << 20",
+			"grpc.NewServer(c.serverOptions()...)",
+			"options = append(options, c.GRPCServerOptions...)\n\treturn append(options, grpc.MaxRecvMsgSize(c.maxMessageBytes()))",
+		} {
+			if !strings.Contains(grpcAdapter, want) {
+				t.Errorf("gRPC adapter (rest=%v connect=%v) does not contain %q", settings.RestEndpoint, settings.ConnectEndpoint, want)
+			}
+		}
+		connectAdapter := string(renderFactoryGo(t, "templates/factory/code/pkg/adapters/connect_gen.go.tmpl", settings))
+		for _, want := range []string{
+			"vanguardgrpc.NewTranscoder(grpcServer, vanguard.WithDefaultServiceOptions(messageBound(c)))",
+			"vanguard.WithTargetProtocols(vanguard.ProtocolGRPC),\n\t\tmessageBound(c),",
+			"grpc.ForceServerCodec(frameCodec{}), grpc.MaxRecvMsgSize(c.maxMessageBytes())",
+			"refuseDeclaredOversize(transcoder, messageBufferBytes(c))",
+			"mux.Handle(fmt.Sprintf(\"/%s/\", name), bounded)",
+		} {
+			if !strings.Contains(connectAdapter, want) {
+				t.Errorf("Connect adapter (rest=%v connect=%v) does not contain %q", settings.RestEndpoint, settings.ConnectEndpoint, want)
+			}
+		}
+	}
+}
+
+// TestGeneratedConnectListenerBoundsSlowCallers: every rendering of the
+// Connect listener bounds how long it waits on a caller — the HTTP/1.1
+// headers, a one-message request's body, an idle connection on both HTTP/1.1
+// and h2c — through the Configuration fields, and none of them sets a
+// server-wide ReadTimeout, which net/http and x/net/http2 apply to every client
+// stream. The listener used to set no timeout at all, so a caller that dripped
+// its body held the connection for as long as it kept dripping; the behaviour
+// itself is held by base/code/pkg/adapters/connect_timeout_test.go.
+func TestGeneratedConnectListenerBoundsSlowCallers(t *testing.T) {
+	for _, settings := range []*Settings{{ConnectEndpoint: true}, {RestEndpoint: true, ConnectEndpoint: true}} {
+		grpcAdapter := string(renderFactoryGo(t, "templates/factory/code/pkg/adapters/grpc_gen.go.tmpl", settings))
+		for _, want := range []string{
+			"ConnectReadHeaderTimeout time.Duration",
+			"ConnectReadTimeout       time.Duration",
+			"ConnectIdleTimeout       time.Duration",
+		} {
+			if !strings.Contains(grpcAdapter, want) {
+				t.Errorf("gRPC adapter (rest=%v connect=%v) does not contain %q", settings.RestEndpoint, settings.ConnectEndpoint, want)
+			}
+		}
+		connectAdapter := string(renderFactoryGo(t, "templates/factory/code/pkg/adapters/connect_gen.go.tmpl", settings))
+		for _, want := range []string{
+			"defaultConnectReadHeaderTimeout = 10 * time.Second",
+			"defaultConnectReadTimeout       = 30 * time.Second",
+			"defaultConnectIdleTimeout       = 120 * time.Second",
+			"ReadHeaderTimeout: connectTimeout(c.ConnectReadHeaderTimeout, defaultConnectReadHeaderTimeout),",
+			"IdleTimeout:       idle,",
+			"h2c.NewHandler(mux, &http2.Server{IdleTimeout: idle})",
+			"bounded = boundBodyRead(bounded, connectTimeout(c.ConnectReadTimeout, defaultConnectReadTimeout), clientStreamed(grpcServer))",
+			"if method.IsClientStream {",
+			"deadline.SetReadDeadline(time.Now().Add(timeout))",
+		} {
+			if !strings.Contains(connectAdapter, want) {
+				t.Errorf("Connect adapter (rest=%v connect=%v) does not contain %q", settings.RestEndpoint, settings.ConnectEndpoint, want)
+			}
+		}
+		if strings.Contains(connectAdapter, "\tReadTimeout:") {
+			t.Errorf("Connect adapter (rest=%v connect=%v) sets a server-wide ReadTimeout, which cuts every client stream at a fixed age", settings.RestEndpoint, settings.ConnectEndpoint)
+		}
 	}
 }
 

@@ -94,7 +94,8 @@ gatewayMuxOptions(config.ServeMuxOptions...), gatewayDialOptions(...),
 WithRoutes and WithMiddleware rather than a copy, so a change on either side is
 covered without editing the test.
 
-All four fields are generated only when rest-endpoint: true.`,
+ServeMuxOptions, Routes and Middleware are generated only when rest-endpoint: true;
+GatewayDialOptions whenever an HTTP face is (rest-endpoint or connect-endpoint).`,
 		},
 		{
 			Id:          "go-grpc-proto-flow",
@@ -152,9 +153,9 @@ generated file:
   func init() { WithConfigure(configureService) }
 
   func configureService(ctx context.Context, config *adapters.Configuration) (Clean, error) {
-      config.Service = myService                                  // answers every RPC
-      config.GRPCServerOptions = append(config.GRPCServerOptions, // runs before it
-          authInterceptor, grpc.MaxRecvMsgSize(maxMessageBytes))
+      config.Service = myService                                                   // answers every RPC
+      config.GRPCServerOptions = append(config.GRPCServerOptions, authInterceptor) // runs before it
+      config.MaxMessageBytes = maxMessageBytes                                     // every face; 0 = gRPC's 4 MiB
       return nil, nil
   }
 
@@ -162,9 +163,13 @@ How each listener uses that:
 - gRPC listener: serves config.Service with config.GRPCServerOptions applied.
 - Connect listener: serves Connect, gRPC and gRPC-Web on its own port by
   transcoding to gRPC and dispatching through the SAME gRPC server. So
-  config.Service answers Connect calls, your interceptors and message bounds
-  apply there too, and a gRPC status (with its error details) arrives as the
-  equivalent Connect error. Request headers arrive as gRPC metadata.
+  config.Service answers Connect calls, your interceptors and MaxMessageBytes
+  apply there too (an oversize request is refused before it is read in full),
+  and a gRPC status (with its error details) arrives as the equivalent Connect
+  error. Request headers arrive as gRPC metadata. A caller that drips its
+  request is cut off: ConnectReadHeaderTimeout (10 s), ConnectReadTimeout on
+  the body of unary and server-streaming calls (30 s; never a client stream,
+  which bounds itself) and ConnectIdleTimeout (120 s); 0 = default, <0 = none.
 - REST listener: grpc-gateway proxy to the gRPC listener, wrapped in the CORS
   policy. google.api.http annotation paths are served here only.
 
