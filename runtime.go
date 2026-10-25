@@ -439,12 +439,12 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 // writes the handler, never whether the endpoint exists (conventionalPort draws
 // the same line for a cell).
 //
-// The conventional endpoints are exported by their own settings-gated code, so
-// they are excluded twice over: by identity (the conventional gRPC endpoint may
-// carry any name when it is the only one) and by name (a declared rest or
-// connect endpoint whose setting is off stays unexported, as before). Deploy
-// draws the same line through conventionalEndpoints, so a local run and a cell
-// agree on which listeners a service has.
+// The scaffolded listeners are exported by their own settings-gated code, so
+// they are excluded twice over: by name (scaffolds: gRPC always, rest and
+// connect only when their setting is on) and by identity (the conventional
+// gRPC endpoint may carry any name when it is the only one). Deploy draws the
+// same line through conventionalEndpoints, so a local run and a cell agree on
+// which listeners a service has.
 func (s *Runtime) namedEndpoints() []*basev0.Endpoint {
 	conventional := []*basev0.Endpoint{s.GoGrpc.GrpcEndpoint, s.GoGrpc.RestEndpoint, s.GoGrpc.ConnectEndpoint}
 	var named []*basev0.Endpoint

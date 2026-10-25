@@ -177,6 +177,9 @@ Rules:
 - Never implement a Connect-shaped copy of the API (a genconnect handler): it
   would answer without the interceptors the gRPC server holds, so an authority
   or operations guard would silently not apply to Connect traffic.
+- Raise the message bound with config.MaxMessageBytes, which moves every face.
+  A grpc.MaxRecvMsgSize among GRPCServerOptions is honoured (it is applied after
+  the generated default) but reaches the gRPC listener alone.
 - Adding an RPC to the proto serves it on all three listeners once config.Service
   implements it. No scaffold change is needed.
 - Enable a listener by declaring its endpoint and setting rest-endpoint /

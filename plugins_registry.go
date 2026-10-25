@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"golang.org/x/mod/module"
 	"gopkg.in/yaml.v3"
 )
 
@@ -49,15 +51,40 @@ func readPlugins(codeRoot string) ([]PluginEntry, error) {
 	if err := yaml.Unmarshal(raw, &file); err != nil {
 		return nil, fmt.Errorf("plugins/plugins.yaml: %w", err)
 	}
-	seen := map[string]bool{}
+	seen := map[string]string{}
 	for i, p := range file.Plugins {
 		if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.Package) == "" {
 			return nil, fmt.Errorf("plugins/plugins.yaml: entry %d needs a name and a package", i+1)
 		}
-		if seen[p.Alias()] {
-			return nil, fmt.Errorf("plugins/plugins.yaml: plugin %q is listed twice", p.Name)
+		if err := module.CheckImportPath(p.Package); err != nil {
+			return nil, fmt.Errorf("plugins/plugins.yaml: plugin %q: package is not a Go import path: %w", p.Name, err)
 		}
-		seen[p.Alias()] = true
+		alias := p.Alias()
+		if token.IsKeyword(alias) || reservedAliases[alias] {
+			return nil, fmt.Errorf("plugins/plugins.yaml: plugin %q: its import alias %q is reserved in the generated registry; rename the plugin", p.Name, alias)
+		}
+		if first, taken := seen[alias]; taken {
+			if first == p.Name {
+				return nil, fmt.Errorf("plugins/plugins.yaml: plugin %q is listed twice", p.Name)
+			}
+			return nil, fmt.Errorf("plugins/plugins.yaml: plugins %q and %q both import as %q; rename one", first, p.Name, alias)
+		}
+		seen[alias] = p.Name
 	}
 	return file.Plugins, nil
+}
+
+// reservedAliases are the identifiers the generated registry already uses at
+// file scope, which a plugin's import alias would collide with.
+var reservedAliases = map[string]bool{"framework": true, "All": true, "_": true}
+
+// pluginsNeedTheScaffold refuses a service that lists plugins when Sync does
+// not regenerate its scaffold. The registry is part of that scaffold (it
+// imports the scaffold's framework package), so rendering it alone would not
+// compile, and skipping it would drop every listed plugin without a word.
+func pluginsNeedTheScaffold(plugins []PluginEntry, scaffoldTargets []string, notRegenerated string) error {
+	if len(plugins) == 0 || len(scaffoldTargets) > 0 {
+		return nil
+	}
+	return fmt.Errorf("plugins/plugins.yaml lists %d plugin(s), but the plugin registry is not rendered: %s", len(plugins), notRegenerated)
 }

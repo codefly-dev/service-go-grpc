@@ -160,7 +160,7 @@ func TestGeneratedServerAdapterRendersWithoutREST(t *testing.T) {
 // review: the Connect listener's transcoder buffered a request of undeclared
 // length up to vanguard's 4 GiB default before gRPC's receive bound, or any
 // interceptor, saw it. Configuration.MaxMessageBytes is now the one bound: the
-// gRPC server installs it after the service's own options, and the Connect
+// gRPC server installs it before the service's own options, which win, and the Connect
 // listener holds both transcoders (in process and dialled) and the dialled
 // forwarder to it, refusing a declared oversize Connect unary request before
 // reading it. Rendered for every setting a Connect listener is generated
@@ -172,7 +172,7 @@ func TestGeneratedFacesShareOneMessageBound(t *testing.T) {
 			"MaxMessageBytes int",
 			"const defaultMaxMessageBytes = 4 << 20",
 			"grpc.NewServer(c.serverOptions()...)",
-			"options = append(options, c.GRPCServerOptions...)\n\treturn append(options, grpc.MaxRecvMsgSize(c.maxMessageBytes()))",
+			"options = append(options, grpc.MaxRecvMsgSize(c.maxMessageBytes()))\n\treturn append(options, c.GRPCServerOptions...)",
 		} {
 			if !strings.Contains(grpcAdapter, want) {
 				t.Errorf("gRPC adapter (rest=%v connect=%v) does not contain %q", settings.RestEndpoint, settings.ConnectEndpoint, want)
