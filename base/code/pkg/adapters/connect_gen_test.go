@@ -72,13 +72,20 @@ func authorityGuard() grpc.ServerOption {
 // returns the Connect listener's base URL.
 func startServedService(t *testing.T, options ...grpc.ServerOption) (string, *http.Client) {
 	t.Helper()
+	return startConfiguredService(t, &Configuration{GRPCServerOptions: options})
+}
+
+// startConfiguredService boots the generated server with config, its ports and
+// (when unset) its service filled in, and returns the Connect listener's base
+// URL.
+func startConfiguredService(t *testing.T, config *Configuration) (string, *http.Client) {
+	t.Helper()
 	ports := unusedPorts(t, 3)
-	config := &Configuration{
-		EndpointGrpcPort:    ports[0],
-		EndpointHttpPort:    portPointer(ports[1]),
-		EndpointConnectPort: portPointer(ports[2]),
-		GRPCServerOptions:   options,
-		Service:             &configuredService{},
+	config.EndpointGrpcPort = ports[0]
+	config.EndpointHttpPort = portPointer(ports[1])
+	config.EndpointConnectPort = portPointer(ports[2])
+	if config.Service == nil {
+		config.Service = &configuredService{}
 	}
 	server, err := NewServer(config)
 	if err != nil {
@@ -94,7 +101,7 @@ func startServedService(t *testing.T, options ...grpc.ServerOption) (string, *ht
 			t.Error("server did not stop")
 		}
 	})
-	base := fmt.Sprintf("http://127.0.0.1:%d", ports[2])
+	base := fmt.Sprintf("http://127.0.0.1:%d", *config.EndpointConnectPort)
 	waitForHTTP(t, base+"/api.WebService/")
 	return base, &http.Client{Timeout: 10 * time.Second}
 }
@@ -163,13 +170,16 @@ func TestConnectListenerDispatchesConfiguredService(t *testing.T) {
 // TestConnectListenerAppliesGRPCTransportPolicy keeps the two listeners under
 // one policy. The Connect listener dispatches through the gRPC server, so every
 // Configuration.GRPCServerOptions entry — the authority and operations
-// interceptors a service installs, and its message bounds — applies to a
-// Connect caller too. A Connect path that dispatched a service directly would
+// interceptors a service installs — and its MaxMessageBytes apply to a Connect
+// caller too. A Connect path that dispatched a service directly would
 // answer the same RPC with none of them, which is an authority hole that looks
 // like a working endpoint.
 func TestConnectListenerAppliesGRPCTransportPolicy(t *testing.T) {
 	const receiveBound = 1 << 10
-	base, httpClient := startServedService(t, authorityGuard(), grpc.MaxRecvMsgSize(receiveBound))
+	base, httpClient := startConfiguredService(t, &Configuration{
+		GRPCServerOptions: []grpc.ServerOption{authorityGuard()},
+		MaxMessageBytes:   receiveBound,
+	})
 	client := genconnect.NewWebServiceClient(httpClient, base)
 
 	// The installed guard must refuse an unauthorized Connect call, and its gRPC

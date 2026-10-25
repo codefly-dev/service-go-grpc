@@ -67,6 +67,21 @@ type Configuration struct {
 	// GRPCServerOptions installs transport policy such as authentication,
 	// authorization, telemetry, and rate limiting before the listener starts.
 	GRPCServerOptions []grpc.ServerOption
+	// MaxMessageBytes bounds one message a caller sends, on every face: it is
+	// the gRPC server's receive bound (grpc.MaxRecvMsgSize) and the bound the
+	// Connect listener buffers a request to before it reaches that server, so a
+	// larger request is refused with resource_exhausted before the listener
+	// reads the rest of it. Zero keeps gRPC's own 4 MiB default on both faces.
+	//
+	// Raise it here, never with a grpc.MaxRecvMsgSize among GRPCServerOptions:
+	// that would reach the gRPC server alone, so the server applies this bound
+	// after them and it is the one in force.
+	//
+	// The Connect listener measures what is on the wire, in the caller's codec:
+	// a JSON or compressed request body, and a transcoded response, are held to
+	// this bound as sent, the way gRPC's 4 MiB call default bounds what a
+	// client of this server receives.
+	MaxMessageBytes int
 	// Service replaces the generated Version-only implementation when the
 	// service owns substantive RPCs with constructor-injected dependencies.
 	Service gen.WebServiceServer
@@ -113,6 +128,29 @@ type Configuration struct {
 	GatewayDialOptions []grpc.DialOption
 }
 
+// defaultMaxMessageBytes is gRPC's own server receive bound, which every face
+// keeps unless the service sets Configuration.MaxMessageBytes.
+const defaultMaxMessageBytes = 4 << 20
+
+// maxMessageBytes is the one bound every face applies to a message a caller
+// sends.
+func (c *Configuration) maxMessageBytes() int {
+	if c.MaxMessageBytes > 0 {
+		return c.MaxMessageBytes
+	}
+	return defaultMaxMessageBytes
+}
+
+// serverOptions are the service's GRPCServerOptions followed by the message
+// bound, last so that it is the receive bound in force: the Connect listener
+// buffers to the same number, and a grpc.MaxRecvMsgSize among the service's
+// options would otherwise leave the two faces disagreeing.
+func (c *Configuration) serverOptions() []grpc.ServerOption {
+	options := make([]grpc.ServerOption, 0, len(c.GRPCServerOptions)+1)
+	options = append(options, c.GRPCServerOptions...)
+	return append(options, grpc.MaxRecvMsgSize(c.maxMessageBytes()))
+}
+
 type GrpcServer struct {
 	gen.UnimplementedWebServiceServer
 	configuration *Configuration
@@ -122,7 +160,7 @@ type GrpcServer struct {
 }
 
 func NewGrpServer(c *Configuration) (*GrpcServer, error) {
-	grpcServer := grpc.NewServer(c.GRPCServerOptions...)
+	grpcServer := grpc.NewServer(c.serverOptions()...)
 	v, err := protovalidate.New()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create validator: %w", err)

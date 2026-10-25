@@ -265,7 +265,7 @@ func TestGeneratedServiceHasPreStartCompositionSeam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read gRPC adapter template: %v", err)
 	}
-	for _, want := range []string{"GRPCServerOptions []grpc.ServerOption", "Service gen.{{ .Service.Name.Title }}ServiceServer", "grpc.NewServer(c.GRPCServerOptions...)", "if c.Service != nil"} {
+	for _, want := range []string{"GRPCServerOptions []grpc.ServerOption", "Service gen.{{ .Service.Name.Title }}ServiceServer", "grpc.NewServer(c.serverOptions()...)", "if c.Service != nil"} {
 		if !strings.Contains(string(grpcTemplate), want) {
 			t.Errorf("gRPC adapter template does not contain %q", want)
 		}

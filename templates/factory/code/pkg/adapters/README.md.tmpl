@@ -22,7 +22,8 @@ injected the service's capabilities and before any listener starts.
 | Field | What it does |
 | --- | --- |
 | `Service` | The implementation that answers every RPC. Set it to your own type — built with its real dependencies — and the generated Version-only implementation steps aside. |
-| `GRPCServerOptions` | `grpc.ServerOption`s installed on the served gRPC server: authentication and authorization interceptors, telemetry, rate limiting, message bounds such as `grpc.MaxRecvMsgSize`. |
+| `GRPCServerOptions` | `grpc.ServerOption`s installed on the served gRPC server: authentication and authorization interceptors, telemetry, rate limiting. |
+| `MaxMessageBytes` | The largest message a caller may send, on every face: the gRPC server's receive bound and the bound the Connect listener buffers a request to, refusing a larger one with `resource_exhausted` before reading the rest of it. Zero keeps gRPC's 4 MiB default. Raise it here rather than with a `grpc.MaxRecvMsgSize` in `GRPCServerOptions`, which would reach the gRPC server alone; this bound is applied after those options, so it is the one in force. The Connect listener measures the body as sent — JSON or compressed — and holds a transcoded response to the same bound. |
 | `EndpointGrpcPort`, `EndpointHttpPort`, `EndpointConnectPort` | Resolved by codefly from the endpoints the service declares; `main.go` fills them. |
 
 One implementation, one policy chain, three listeners:
@@ -32,7 +33,8 @@ One implementation, one policy chain, three listeners:
 - **Connect** (`connect_gen.go`) serves the Connect, gRPC and gRPC-Web protocols
   on its own port. It transcodes each request to gRPC and dispatches it through
   that same gRPC server, so `Service` answers a Connect call exactly as it
-  answers a gRPC one, every `GRPCServerOptions` entry runs first, and the gRPC
+  answers a gRPC one, every `GRPCServerOptions` entry and `MaxMessageBytes`
+  apply first, and the gRPC
   status a handler returns — error details included — arrives as the equivalent
   Connect error. There is no Connect-shaped copy of your API to implement, and a
   method added to the proto is served over Connect as soon as it is served over

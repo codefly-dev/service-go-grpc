@@ -156,6 +156,43 @@ func TestGeneratedServerAdapterRendersWithoutREST(t *testing.T) {
 	}
 }
 
+// TestGeneratedFacesShareOneMessageBound pins F10 of the module-evaluation
+// review: the Connect listener's transcoder buffered a request of undeclared
+// length up to vanguard's 4 GiB default before gRPC's receive bound, or any
+// interceptor, saw it. Configuration.MaxMessageBytes is now the one bound: the
+// gRPC server installs it after the service's own options, and the Connect
+// listener holds both transcoders (in process and dialled) and the dialled
+// forwarder to it, refusing a declared oversize Connect unary request before
+// reading it. Rendered for every setting a Connect listener is generated
+// under; base/code/pkg/adapters/connect_bound_test.go proves the behaviour.
+func TestGeneratedFacesShareOneMessageBound(t *testing.T) {
+	for _, settings := range []*Settings{{ConnectEndpoint: true}, {RestEndpoint: true, ConnectEndpoint: true}} {
+		grpcAdapter := string(renderFactoryGo(t, "templates/factory/code/pkg/adapters/grpc_gen.go.tmpl", settings))
+		for _, want := range []string{
+			"MaxMessageBytes int",
+			"const defaultMaxMessageBytes = 4 << 20",
+			"grpc.NewServer(c.serverOptions()...)",
+			"options = append(options, c.GRPCServerOptions...)\n\treturn append(options, grpc.MaxRecvMsgSize(c.maxMessageBytes()))",
+		} {
+			if !strings.Contains(grpcAdapter, want) {
+				t.Errorf("gRPC adapter (rest=%v connect=%v) does not contain %q", settings.RestEndpoint, settings.ConnectEndpoint, want)
+			}
+		}
+		connectAdapter := string(renderFactoryGo(t, "templates/factory/code/pkg/adapters/connect_gen.go.tmpl", settings))
+		for _, want := range []string{
+			"vanguardgrpc.NewTranscoder(grpcServer, vanguard.WithDefaultServiceOptions(messageBound(c)))",
+			"vanguard.WithTargetProtocols(vanguard.ProtocolGRPC),\n\t\tmessageBound(c),",
+			"grpc.ForceServerCodec(frameCodec{}), grpc.MaxRecvMsgSize(c.maxMessageBytes())",
+			"refuseDeclaredOversize(transcoder, messageBufferBytes(c))",
+			"mux.Handle(fmt.Sprintf(\"/%s/\", name), bounded)",
+		} {
+			if !strings.Contains(connectAdapter, want) {
+				t.Errorf("Connect adapter (rest=%v connect=%v) does not contain %q", settings.RestEndpoint, settings.ConnectEndpoint, want)
+			}
+		}
+	}
+}
+
 // TestBaseGeneratedServiceServesConfiguredRPCsOverConnect runs the generated
 // base service's own adapter suite, which boots the three listeners and calls
 // the configured service over real Connect, gRPC-Web and gRPC HTTP
