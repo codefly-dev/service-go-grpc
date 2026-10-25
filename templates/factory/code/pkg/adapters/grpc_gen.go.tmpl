@@ -80,9 +80,11 @@ type Configuration struct {
 	// larger request is refused with resource_exhausted before the listener
 	// reads the rest of it. Zero keeps gRPC's own 4 MiB default on both faces.
 	//
-	// Raise it here, never with a grpc.MaxRecvMsgSize among GRPCServerOptions:
-	// that would reach the gRPC server alone, so the server applies this bound
-	// after them and it is the one in force.
+	// Raise it here, so that both faces move together. A grpc.MaxRecvMsgSize
+	// among GRPCServerOptions still wins on the gRPC face, because the server
+	// applies this bound before the service's own options and never overrides
+	// them; it reaches the gRPC server alone, though, so the Connect listener
+	// keeps this bound.
 	//
 	// The Connect listener measures what is on the wire, in the caller's codec:
 	// a JSON or compressed request body, and a transcoded response, are held to
@@ -173,14 +175,14 @@ func (c *Configuration) maxMessageBytes() int {
 	return defaultMaxMessageBytes
 }
 
-// serverOptions are the service's GRPCServerOptions followed by the message
-// bound, last so that it is the receive bound in force: the Connect listener
-// buffers to the same number, and a grpc.MaxRecvMsgSize among the service's
-// options would otherwise leave the two faces disagreeing.
+// serverOptions are the message bound followed by the service's
+// GRPCServerOptions. gRPC applies options in order and the last one wins, so a
+// grpc.MaxRecvMsgSize the service set itself stays the receive bound in force:
+// the generated default never overrides an option the service chose.
 func (c *Configuration) serverOptions() []grpc.ServerOption {
 	options := make([]grpc.ServerOption, 0, len(c.GRPCServerOptions)+1)
-	options = append(options, c.GRPCServerOptions...)
-	return append(options, grpc.MaxRecvMsgSize(c.maxMessageBytes()))
+	options = append(options, grpc.MaxRecvMsgSize(c.maxMessageBytes()))
+	return append(options, c.GRPCServerOptions...)
 }
 
 type GrpcServer struct {

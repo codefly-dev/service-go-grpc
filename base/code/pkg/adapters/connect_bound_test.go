@@ -167,24 +167,25 @@ func TestConnectListenerKeepsGRPCsDefaultBound(t *testing.T) {
 	}
 }
 
-// TestMessageBoundIsOneNumberOnEveryFace: raising MaxMessageBytes raises it on
-// the gRPC face and the Connect face alike, and a grpc.MaxRecvMsgSize among
-// GRPCServerOptions cannot move the gRPC face away from it — the bound is
-// installed after the service's options, so the two faces never disagree.
-func TestMessageBoundIsOneNumberOnEveryFace(t *testing.T) {
-	const bound = 8 << 20
-	config := &Configuration{
-		MaxMessageBytes:   bound,
-		GRPCServerOptions: []grpc.ServerOption{grpc.MaxRecvMsgSize(1 << 30)},
-	}
+// faceClients starts a service under config and returns a Connect and a gRPC
+// client of it.
+func faceClients(t *testing.T, config *Configuration) (genconnect.WebServiceClient, gen.WebServiceClient) {
+	t.Helper()
 	base, httpClient := startConfiguredService(t, config)
-	connectClient := genconnect.NewWebServiceClient(httpClient, base)
 	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", config.EndpointGrpcPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial gRPC: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	grpcClient := gen.NewWebServiceClient(conn)
+	return genconnect.NewWebServiceClient(httpClient, base), gen.NewWebServiceClient(conn)
+}
+
+// TestMessageBoundRaisesEveryFace: raising MaxMessageBytes raises it on the
+// gRPC face and the Connect face alike, and a request over it is refused on
+// both.
+func TestMessageBoundRaisesEveryFace(t *testing.T) {
+	const bound = 8 << 20
+	connectClient, grpcClient := faceClients(t, &Configuration{MaxMessageBytes: bound})
 
 	under, over := paddedMessage(t, 5<<20), paddedMessage(t, bound+(1<<20))
 	if _, err := connectClient.Version(context.Background(), connect.NewRequest(under)); err != nil {
@@ -197,6 +198,34 @@ func TestMessageBoundIsOneNumberOnEveryFace(t *testing.T) {
 		t.Fatalf("Connect: a request over the bound answered %v, want resource_exhausted", err)
 	}
 	if _, err := grpcClient.Version(context.Background(), over); status.Code(err) != codes.ResourceExhausted {
-		t.Fatalf("gRPC: a request over MaxMessageBytes answered %v, want ResourceExhausted: GRPCServerOptions widened the gRPC face past the Connect one", err)
+		t.Fatalf("gRPC: a request over MaxMessageBytes answered %v, want ResourceExhausted", err)
+	}
+}
+
+// TestServiceReceiveBoundIsNeverOverridden is the regression for the
+// generated default overriding a receive bound the service raised itself: a
+// service that appended grpc.MaxRecvMsgSize to GRPCServerOptions (the way
+// services did before MaxMessageBytes existed) had it silently replaced by
+// the 4 MiB default, because grpc-go applies server options in order and the
+// generated bound came last. The service's own option must stay in force on
+// the gRPC face, whether MaxMessageBytes is unset or set lower.
+func TestServiceReceiveBoundIsNeverOverridden(t *testing.T) {
+	const serviceBound = 32 << 20
+	for _, face := range []struct {
+		name   string
+		config *Configuration
+	}{
+		{name: "MaxMessageBytes unset", config: &Configuration{GRPCServerOptions: []grpc.ServerOption{grpc.MaxRecvMsgSize(serviceBound)}}},
+		{name: "MaxMessageBytes lower", config: &Configuration{MaxMessageBytes: 1 << 20, GRPCServerOptions: []grpc.ServerOption{grpc.MaxRecvMsgSize(serviceBound)}}},
+	} {
+		t.Run(face.name, func(t *testing.T) {
+			_, grpcClient := faceClients(t, face.config)
+			if _, err := grpcClient.Version(context.Background(), paddedMessage(t, 6<<20)); err != nil {
+				t.Fatalf("gRPC: a 6 MiB request under the service's own %d-byte receive bound was refused: %v", serviceBound, err)
+			}
+			if _, err := grpcClient.Version(context.Background(), paddedMessage(t, serviceBound+(1<<20))); status.Code(err) != codes.ResourceExhausted {
+				t.Fatalf("gRPC: a request over the service's own receive bound answered %v, want ResourceExhausted", err)
+			}
+		})
 	}
 }
