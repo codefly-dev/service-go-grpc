@@ -63,3 +63,40 @@ func stageBufDirectoryInputs(transaction *syncTransaction, protoDir string) erro
 	}
 	return nil
 }
+
+// stageGoverningGoModules stages, as read-only input, the go.mod that governs
+// each declared output root: the nearest one at or above it inside the
+// service. Core's proto companion calls a vendored proto foreign to Go when
+// its go_package lies in a module that go.mod requires, and removes the
+// bindings buf wrote for it; it reads the go.mod governing the root it
+// generated into, which is this stage. Without the go.mod there the companion
+// sees no requirement, and a sync writes a second registration of every
+// vendored proto whose Go package the service already imports.
+func stageGoverningGoModules(transaction *syncTransaction, outputDirs []string) error {
+	staged := map[string]bool{}
+	for _, output := range outputDirs {
+		relative, err := cleanSyncRelative(output)
+		if err != nil {
+			return fmt.Errorf("generated output %q: %w", output, err)
+		}
+		for dir := relative; ; dir = filepath.Dir(dir) {
+			goMod := filepath.Join(dir, "go.mod")
+			info, err := os.Lstat(filepath.Join(transaction.actualRoot, goMod))
+			switch {
+			case err == nil && info.Mode().IsRegular():
+				if !staged[goMod] {
+					if err := transaction.CopyInput(goMod); err != nil {
+						return err
+					}
+					staged[goMod] = true
+				}
+			case err != nil && !os.IsNotExist(err):
+				return fmt.Errorf("stat %q: %w", goMod, err)
+			case dir != ".":
+				continue
+			}
+			break
+		}
+	}
+	return nil
+}

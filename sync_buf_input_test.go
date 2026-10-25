@@ -69,3 +69,30 @@ func TestSyncRefusesUnavailableBufDirectoryInputs(t *testing.T) {
 		})
 	}
 }
+
+// Core's proto companion reads the go.mod governing a Go output root to decide
+// which vendored protos are foreign; the stage must carry that go.mod, and
+// only that one, or a sync emits bindings the service already imports.
+func TestSyncStagesTheGoModGoverningEachOutputRoot(t *testing.T) {
+	root := t.TempDir()
+	goMod := "module records\n\nrequire github.com/codefly-dev/authority/libraries/hop/go v0.0.0\n"
+	writeTestFile(t, filepath.Join(root, "code", "go.mod"), goMod)
+	if err := os.MkdirAll(filepath.Join(root, "code", "pkg", "gen"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := newSyncTransaction(root, "service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Close() })
+	if err := stageGoverningGoModules(tx, []string{"code/pkg/gen", "openapi"}); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, filepath.Join(tx.StageRoot(), "code", "go.mod"), goMod)
+	if _, err := os.Lstat(filepath.Join(tx.StageRoot(), "go.mod")); !os.IsNotExist(err) {
+		t.Fatalf("an output root with no governing go.mod staged one: %v", err)
+	}
+	if len(tx.targets) != 0 {
+		t.Fatalf("a governing go.mod is input, never a sync target: %v", tx.targets)
+	}
+}
