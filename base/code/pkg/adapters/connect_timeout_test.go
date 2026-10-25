@@ -40,6 +40,10 @@ const cutOffWithin = 3 * time.Second
 // reflection service, whose ServerReflectionInfo is a bidirectional stream; the
 // health service's Watch, registered by NewGrpServer, is a server stream. It
 // returns the listener's address and the gRPC server.
+//
+// NewGrpServer already registers reflection when the environment is local, as
+// it is under `codefly agent ci`, and gRPC refuses a second registration of a
+// service, so reflection is added only when the server does not serve it yet.
 func startTimedFace(t *testing.T, config *Configuration) (string, *GrpcServer) {
 	t.Helper()
 	ports := unusedPorts(t, 2)
@@ -52,7 +56,9 @@ func startTimedFace(t *testing.T, config *Configuration) (string, *GrpcServer) {
 	if err != nil {
 		t.Fatalf("create gRPC server: %v", err)
 	}
-	reflection.Register(grpcServer.gRPC)
+	if _, served := grpcServer.gRPC.GetServiceInfo()[reflectionpb.ServerReflection_ServiceDesc.ServiceName]; !served {
+		reflection.Register(grpcServer.gRPC)
+	}
 	face, err := NewConnectServer(config, grpcServer.gRPC)
 	if err != nil {
 		t.Fatalf("create Connect listener: %v", err)
