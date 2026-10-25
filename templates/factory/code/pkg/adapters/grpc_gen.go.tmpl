@@ -18,6 +18,7 @@ import (
 {{- if .Settings.RestEndpoint }}
 	"net/http"
 {{- end }}
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -88,6 +89,27 @@ type Configuration struct {
 	// this bound as sent, the way gRPC's 4 MiB call default bounds what a
 	// client of this server receives.
 	MaxMessageBytes int
+	// ConnectReadHeaderTimeout, ConnectReadTimeout and ConnectIdleTimeout
+	// bound how long the Connect listener waits on a caller, so a client that
+	// drips its request cannot hold a connection, and the buffer behind it,
+	// for as long as it likes. Zero keeps the default (10 s, 30 s and 120 s);
+	// a negative value removes that bound.
+	//
+	// ConnectReadHeaderTimeout bounds reading an HTTP/1.1 request's headers.
+	//
+	// ConnectReadTimeout bounds reading a request's body, from the moment the
+	// listener starts on it to its end, for every method whose caller sends
+	// one message: unary and server-streaming. It ends with the body, so a
+	// handler slower than it, or a server stream that runs past it, is never
+	// cut. A method whose caller streams (client-streaming, bidirectional) is
+	// not bounded here: its body is the stream, and a fixed time would end a
+	// healthy one, so such a method bounds its stream itself.
+	//
+	// ConnectIdleTimeout closes a connection, HTTP/1.1 or HTTP/2, that has
+	// had no request in flight for that long.
+	ConnectReadHeaderTimeout time.Duration
+	ConnectReadTimeout       time.Duration
+	ConnectIdleTimeout       time.Duration
 	// Service replaces the generated Version-only implementation when the
 	// service owns substantive RPCs with constructor-injected dependencies.
 	Service gen.{{ .Service.Name.Title }}ServiceServer

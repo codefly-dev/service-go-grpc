@@ -166,7 +166,10 @@ How each listener uses that:
   config.Service answers Connect calls, your interceptors and MaxMessageBytes
   apply there too (an oversize request is refused before it is read in full),
   and a gRPC status (with its error details) arrives as the equivalent Connect
-  error. Request headers arrive as gRPC metadata.
+  error. Request headers arrive as gRPC metadata. A caller that drips its
+  request is cut off: ConnectReadHeaderTimeout (10 s), ConnectReadTimeout on
+  the body of unary and server-streaming calls (30 s; never a client stream,
+  which bounds itself) and ConnectIdleTimeout (120 s); 0 = default, <0 = none.
 - REST listener: grpc-gateway proxy to the gRPC listener, wrapped in the CORS
   policy. google.api.http annotation paths are served here only.
 
