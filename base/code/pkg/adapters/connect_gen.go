@@ -139,7 +139,7 @@ func clientStreamed(grpcServer *grpc.Server) map[string]bool {
 // boundBodyRead gives a caller timeout to send the body of a request whose
 // method takes one message, over HTTP/1.1 and HTTP/2 alike: a caller that
 // drips it is cut off — the HTTP/1.1 connection ends, the HTTP/2 stream's
-// body fails — rather than holding the listener for as long as it drips.
+// body fails — rather than keeping the listener busy for as long as it drips.
 //
 // It bounds the caller's sending, never the handler's answer or a server
 // stream: net/http lifts an HTTP/1.1 connection's read deadline once the body
