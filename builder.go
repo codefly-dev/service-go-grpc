@@ -220,6 +220,9 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		}
 		buf.WithGeneratedDirs(filepath.Join(transaction.StageRoot(), relative))
 	}
+	if err := stageGoverningGoModules(transaction, s.GoGrpc.Settings.protocolOutputDirs()); err != nil {
+		return s.Base.Builder.SyncError(err)
+	}
 	if err := transaction.TrackFile(filepath.Join(protoDir, "buf.lock")); err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
