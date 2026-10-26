@@ -7,10 +7,12 @@ spec:
   selector:
     app: {{ .Service.Name.DNSCase}}
   ports:
+{{- if not .Deployment.Parameters.ConnectOnly }}
     - protocol: TCP
       name: grpc-port
       port: 9090
       targetPort: 9090
+{{- end }}
 {{- with .Deployment.Parameters.RestPort }}
     - protocol: TCP
       name: http-port

@@ -162,7 +162,7 @@ func (s *Runtime) grpcAddress(ctx context.Context) (string, error) {
 	if s.runner == nil {
 		return "", fmt.Errorf("service is not running — start it first")
 	}
-	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.GrpcEndpoint, resources.NewNativeNetworkAccess())
+	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.rpcEndpoint(), resources.NewNativeNetworkAccess())
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve grpc endpoint: %w", err)
 	}

@@ -1,21 +1,21 @@
 {{- define "healthProbeHandler" }}
-{{- $mode := .Handler }}
+{{- $mode := .Health.Handler }}
 {{- if eq $mode "grpc" }}
             grpc:
-              port: 9090
-{{- with .GrpcService }}
+              port: {{ .RPCPort }}
+{{- with .Health.GrpcService }}
               service: {{ . | quote }}
 {{- end }}
 {{- else if eq $mode "http" }}
             httpGet:
-              path: {{ .Path | quote }}
-              port: {{ .Port }}
+              path: {{ .Health.Path | quote }}
+              port: {{ .Health.Port }}
 {{- else }}
             tcpSocket:
-              port: grpc
+              port: {{ .RPCPortName }}
 {{- end }}
 {{- end }}
-{{- $health := .Deployment.Parameters.Health -}}
+{{- $health := .Deployment.Parameters -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -68,16 +68,18 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           ports:
-            # Match service.yaml.tmpl. grpc is the raw gRPC listener, always
-            # served. http (grpc-gateway REST facade) and connect are advertised
+            # Match service.yaml.tmpl. grpc is omitted for Connect-only
+            # services. http (grpc-gateway REST facade) and connect are advertised
             # whenever something binds them — the agent's scaffold, OR the
             # service's own listener for an endpoint it declares and owns — on
             # the port Codefly resolved. Advertise a port only when the process
             # binds it, so nothing routes to a dead port, and advertise every
             # port it does bind, so nothing resolves an address that answers
             # nothing.
+{{- if not .Deployment.Parameters.ConnectOnly }}
             - name: grpc
               containerPort: 9090
+{{- end }}
 {{- with .Deployment.Parameters.RestPort }}
             - name: http
               containerPort: {{ . }}
@@ -137,7 +139,7 @@ spec:
           # restarted — restarting it cascades an outage across every consumer.
           livenessProbe:
             tcpSocket:
-              port: grpc
+              port: {{ .Deployment.Parameters.RPCPortName }}
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3

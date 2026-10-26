@@ -10,7 +10,6 @@ implement your APIs there.
 ----------------------------------------------------------------- */
 
 import (
-	"buf.build/go/protovalidate"
 	gen "codefly-base/pkg/gen"
 	"context"
 	"errors"
@@ -19,6 +18,8 @@ import (
 	"net/http"
 	"net/netip"
 	"time"
+
+	"buf.build/go/protovalidate"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -65,6 +66,7 @@ func (s *GrpcServer) Version(ctx context.Context, req *gen.VersionRequest) (*gen
 }
 
 type Configuration struct {
+	// EndpointGrpcPort is zero when only the Connect listener is declared.
 	EndpointGrpcPort    uint16
 	EndpointHttpPort    *uint16
 	EndpointConnectPort *uint16
@@ -163,6 +165,17 @@ type Configuration struct {
 	// balancer.NewSubConnOptions.CredsBundle replaces them on its connections,
 	// and takes on the loopback rule itself.
 	GatewayDialOptions []grpc.DialOption
+}
+
+// rpcPort is the listener serving native gRPC, including health and REST hops.
+func (c *Configuration) rpcPort() uint16 {
+	if c.EndpointGrpcPort != 0 {
+		return c.EndpointGrpcPort
+	}
+	if c.EndpointConnectPort != nil {
+		return *c.EndpointConnectPort
+	}
+	return 0
 }
 
 // defaultMaxMessageBytes is gRPC's own server receive bound, which every face

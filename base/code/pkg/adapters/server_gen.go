@@ -21,6 +21,9 @@ type Server struct {
 }
 
 func NewServer(config *Configuration) (*Server, error) {
+	if config.EndpointGrpcPort == 0 && config.EndpointConnectPort == nil {
+		return nil, fmt.Errorf("cannot start RPC server: no gRPC or Connect listener configured")
+	}
 
 	grpc, err := NewGrpServer(config)
 	if err != nil {
@@ -68,6 +71,9 @@ func (server *Server) Start(ctx context.Context) error {
 		}()
 	}
 	if server.connect != nil {
+		if server.grpc.configuration.EndpointGrpcPort == 0 {
+			return server.connect.Run(ctx)
+		}
 		go func() {
 			err := server.connect.Run(ctx)
 			if err != nil {

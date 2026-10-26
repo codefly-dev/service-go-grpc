@@ -109,16 +109,8 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 		return resp, nil
 	}
 
-	// Discover the protocol endpoints. gRPC is mandatory.
-	s.GoGrpc.GrpcEndpoint, err = resources.FindGRPCEndpoint(ctx, s.Endpoints)
-	if err != nil {
+	if err := s.GoGrpc.discoverEndpoints(ctx); err != nil {
 		return s.Base.Builder.LoadError(err)
-	}
-	if s.GoGrpc.Settings.RestEndpoint {
-		s.GoGrpc.RestEndpoint, err = resources.FindRestEndpoint(ctx, s.Endpoints)
-		if err != nil {
-			return s.Base.Builder.LoadError(err)
-		}
 	}
 	return resp, nil
 }
@@ -168,7 +160,17 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 	if err := pluginsNeedTheScaffold(plugins, scaffoldTargets, notRegenerated); err != nil {
 		return s.Base.Builder.SyncError(err)
 	}
+	if len(scaffoldTargets) == 0 {
+		// The entrypoint only depends on the adapters' Configuration/NewServer
+		// seam, not the proto service name. Keep a marked main current even
+		// when the service owns its adapters (a custom or multi-service API).
+		scaffoldTargets, _, err = generatedEntrypointTarget(s.Location)
+		if err != nil {
+			return s.Base.Builder.SyncError(err)
+		}
+	}
 	if len(scaffoldTargets) > 0 {
+		mainOnly := len(scaffoldTargets) == 1
 		// Regenerating the REST adapter replaces any older, wildcard-open CORS
 		// policy with the same-origin default. That silently blocks cross-origin
 		// callers a service may have depended on, so surface the change and the
@@ -176,10 +178,21 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		if s.GoGrpc.Settings.RestEndpoint && s.GoGrpc.Settings.Cors.DeniesCrossOrigin() {
 			s.Wool.Warn("REST CORS defaults to same-origin: the regenerated adapter refuses all cross-origin requests. Set cors.allowed-origins or cors.allow-all in settings to permit cross-origin access.")
 		}
-		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
-		create.ProtoGoPackage, err = declaredServiceGoPackage(filepath.Join(s.Location, protoDir), s.Information.Service.Name.Title+"Service")
-		if err != nil {
-			return s.Base.Builder.SyncError(err)
+		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}, ConnectOnly: s.GoGrpc.GrpcEndpoint == nil && s.GoGrpc.ConnectEndpoint != nil}
+		if mainOnly {
+			// Custom adapters can own declared listeners with scaffolding off.
+			// Only main is rendered here: its port lookups follow declarations,
+			// without changing the service's adapter-generation settings.
+			entrypointSettings := *s.GoGrpc.Settings
+			entrypointSettings.RestEndpoint = len(resources.FindEndpointsByAPI(ctx, standards.REST, s.Endpoints)) > 0
+			entrypointSettings.ConnectEndpoint = len(resources.FindEndpointsByAPI(ctx, standards.CONNECT, s.Endpoints)) > 0
+			create.Settings = &entrypointSettings
+			create.ConnectOnly = s.GoGrpc.GrpcEndpoint == nil && entrypointSettings.ConnectEndpoint
+		} else {
+			create.ProtoGoPackage, err = declaredServiceGoPackage(filepath.Join(s.Location, protoDir), s.Information.Service.Name.Title+"Service")
+			if err != nil {
+				return s.Base.Builder.SyncError(err)
+			}
 		}
 		create.GoModulePath, err = existingGoModule(filepath.Join(s.Location, moduleRoot, "go.mod"))
 		if err != nil {
@@ -187,7 +200,7 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		}
 		create.Plugins = plugins
 		generated := services.WithFactory(factoryFS).
-			WithPathSelect(generatedScaffoldSelect()).
+			WithPathSelect(generatedScaffoldSelection{mainOnly: mainOnly}).
 			WithOverride(shared.OverrideAll()).
 			WithDestination("%s", transaction.StageRoot())
 		if err := s.Templates(ctx, create, generated); err != nil {
@@ -504,9 +517,12 @@ func generatedScaffoldSelect() shared.PathSelect {
 	return generatedScaffoldSelection{}
 }
 
-type generatedScaffoldSelection struct{}
+type generatedScaffoldSelection struct{ mainOnly bool }
 
-func (generatedScaffoldSelection) Keep(name string) bool {
+func (s generatedScaffoldSelection) Keep(name string) bool {
+	if s.mainOnly {
+		return name == "code" || name == "main.go.tmpl"
+	}
 	switch name {
 	case "code", "pkg", "adapters", "plugins", "main.go.tmpl":
 		return true
@@ -515,10 +531,9 @@ func (generatedScaffoldSelection) Keep(name string) bool {
 	}
 }
 
-// generatedScaffoldTargets are the generator-owned files Sync regenerates. When
-// there are none, the second result says why, so a caller that needed the
-// scaffold (a listed plugin registry) can name the cause rather than drop it.
-func generatedScaffoldTargets(root, protoRoot, expectedService string) ([]string, string, error) {
+// generatedEntrypointTarget identifies the generator-owned entrypoint without
+// claiming ownership of a service's hand-written adapters.
+func generatedEntrypointTarget(root string) ([]string, string, error) {
 	mainPath := filepath.Join(root, "code", "main.go")
 	contents, err := os.ReadFile(mainPath)
 	if os.IsNotExist(err) {
@@ -529,6 +544,16 @@ func generatedScaffoldTargets(root, protoRoot, expectedService string) ([]string
 	}
 	if !bytes.Contains(contents, []byte("This code is generated by the agent")) {
 		return nil, "code/main.go is hand-written (it carries no generated-code marker), so the scaffold is left alone", nil
+	}
+	return []string{filepath.Join("code", "main.go")}, "", nil
+}
+
+// generatedScaffoldTargets are the generator-owned files Sync regenerates. When
+// there are none, the second result says why, so a caller that needed the
+// scaffold (a listed plugin registry) can name the cause rather than drop it.
+func generatedScaffoldTargets(root, protoRoot, expectedService string) ([]string, string, error) {
+	if targets, reason, err := generatedEntrypointTarget(root); err != nil || len(targets) == 0 {
+		return nil, reason, err
 	}
 	// The scaffold adapts the service's own service, and only that one: two
 	// services in the file that declares it is a hand-written layout the scaffold
@@ -942,6 +967,7 @@ func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*
 // — a grpc-only service must not advertise http, and a connect service must
 // advertise its port.
 type DeploymentParameters struct {
+	ConnectOnly    bool
 	ServiceAccount *ServiceAccountSpec
 	// RestPort and ConnectPort are the ports the manifest advertises for the
 	// conventional rest and connect endpoints, 0 when nothing serves them.
@@ -957,6 +983,21 @@ type DeploymentParameters struct {
 	// carries the port Codefly resolved for it, which is the port the process
 	// binds, so the container and the Service advertise exactly that.
 	NamedPorts []NamedPort
+}
+
+// RPCPort and RPCPortName select the listener that serves gRPC health.
+func (p DeploymentParameters) RPCPort() uint32 {
+	if p.ConnectOnly {
+		return p.ConnectPort
+	}
+	return 9090
+}
+
+func (p DeploymentParameters) RPCPortName() string {
+	if p.ConnectOnly {
+		return "connect"
+	}
+	return "grpc"
 }
 
 // NamedPort is one named endpoint's listener as the deployment advertises it.
@@ -1085,7 +1126,21 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		},
 		Prepare: func(ctx context.Context, deployment *services.KustomizeDeploymentContext) error {
 			mappings := deployment.Request.GetNetworkMappings()
-			ports, err := namedPorts(ctx, mappings)
+			connectOnly := s.GoGrpc.GrpcEndpoint == nil && s.GoGrpc.ConnectEndpoint != nil
+			namedMappings := mappings
+			connectName := standards.CONNECT
+			if connectOnly {
+				// Core permits a sole Connect endpoint with a custom name. It is
+				// still the scaffolded listener, not an additional named port.
+				connectName = s.GoGrpc.ConnectEndpoint.Name
+				namedMappings = nil
+				for _, mapping := range mappings {
+					if resources.EndpointDestination(mapping.GetEndpoint()) != resources.EndpointDestination(s.GoGrpc.ConnectEndpoint) {
+						namedMappings = append(namedMappings, mapping)
+					}
+				}
+			}
+			ports, err := namedPorts(ctx, namedMappings)
 			if err != nil {
 				return err
 			}
@@ -1093,11 +1148,12 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			if err != nil {
 				return err
 			}
-			connect, err := conventionalPort(ctx, mappings, standards.CONNECT, s.GoGrpc.Settings.ConnectEndpoint, connectContainerPort)
+			connect, err := conventionalPort(ctx, mappings, connectName, s.GoGrpc.Settings.ConnectEndpoint, connectContainerPort)
 			if err != nil {
 				return err
 			}
 			parameters := deployment.Parameters.(DeploymentParameters)
+			parameters.ConnectOnly = connectOnly
 			parameters.NamedPorts = ports
 			parameters.RestPort = rest
 			parameters.ConnectPort = connect
@@ -1160,6 +1216,8 @@ func (s *Builder) Options() []*agentv0.Question {
 
 // CreateConfiguration is the template context passed to factory templates.
 type CreateConfiguration struct {
+	// ConnectOnly is derived from declared endpoints, never a user setting.
+	ConnectOnly bool
 	*services.Information
 	Settings *Settings
 	Envs     []string

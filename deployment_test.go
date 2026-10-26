@@ -649,7 +649,7 @@ func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 	}
 	// Substrings unique to each listener's port block in deployment.yaml.
 	checks := []portCheck{
-		{"containerPort: 9090", func(DeploymentParameters) bool { return true }},
+		{"containerPort: 9090", func(p DeploymentParameters) bool { return !p.ConnectOnly }},
 		{"containerPort: 8080", func(p DeploymentParameters) bool { return p.RestPort != 0 }},
 		{"containerPort: 8081", func(p DeploymentParameters) bool { return p.ConnectPort != 0 }},
 	}
@@ -660,6 +660,7 @@ func TestDeploymentPortsMatchDeclaredEndpoints(t *testing.T) {
 		params DeploymentParameters
 		want   []servicePortDeclaration
 	}{
+		"connect only":   {DeploymentParameters{ConnectOnly: true, ConnectPort: connectContainerPort, Health: undeclaredHealth()}, []servicePortDeclaration{connectPort}},
 		"grpc only":      {DeploymentParameters{Health: undeclaredHealth()}, []servicePortDeclaration{grpcPort}},
 		"grpc + rest":    {DeploymentParameters{RestPort: restContainerPort, Health: undeclaredHealth()}, []servicePortDeclaration{grpcPort, restPort}},
 		"grpc + connect": {DeploymentParameters{ConnectPort: connectContainerPort, Health: undeclaredHealth()}, []servicePortDeclaration{grpcPort, connectPort}},

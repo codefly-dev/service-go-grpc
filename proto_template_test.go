@@ -297,7 +297,7 @@ func TestGeneratedServiceOmitsRESTImplementationWhenDisabled(t *testing.T) {
 		"if .Settings.RestEndpoint",
 		"API(standards.REST).NetworkInstance()",
 		"if .Settings.ConnectEndpoint",
-		"API(standards.CONNECT).NetworkInstance()",
+		"API(standards.CONNECT).ResolveNetworkInstance()",
 	} {
 		if !strings.Contains(string(mainTemplate), want) {
 			t.Errorf("generated main does not condition protocol discovery on settings: missing %q", want)
