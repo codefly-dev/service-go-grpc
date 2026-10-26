@@ -181,6 +181,10 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		if err != nil {
 			return s.Base.Builder.SyncError(err)
 		}
+		create.GoModulePath, err = existingGoModule(filepath.Join(s.Location, moduleRoot, "go.mod"))
+		if err != nil {
+			return s.Base.Builder.SyncError(err)
+		}
 		create.Plugins = plugins
 		generated := services.WithFactory(factoryFS).
 			WithPathSelect(generatedScaffoldSelect()).
@@ -1165,6 +1169,22 @@ type CreateConfiguration struct {
 	// ProtoGoPackage is the existing service's declared go_package during sync.
 	// Create leaves it empty and uses the factory's conventional package.
 	ProtoGoPackage string
+	// GoModulePath is the module path the service's existing go.mod declares.
+	// Empty for a brand-new service, which takes the factory default.
+	GoModulePath string
+}
+
+// GoModule is the Go module path every generated import is rooted at. The
+// service's own go.mod is authoritative: it is the user's file, and a module
+// path that is a fetchable URL is what lets another module import this one.
+// Rendering the service name in its place (`module chat`) made sync rewrite
+// imports to a path Go cannot fetch. Only a service with no go.mod yet gets
+// the service name.
+func (c CreateConfiguration) GoModule() string {
+	if c.GoModulePath != "" {
+		return c.GoModulePath
+	}
+	return c.Service.Name.DNSCase
 }
 
 func (c CreateConfiguration) GeneratedGoImport() string {
@@ -1172,7 +1192,20 @@ func (c CreateConfiguration) GeneratedGoImport() string {
 		value, _, _ := strings.Cut(c.ProtoGoPackage, ";")
 		return value
 	}
-	return c.Service.Name.DNSCase + "/pkg/gen"
+	return c.GoModule() + "/pkg/gen"
+}
+
+// existingGoModule reads the module path an existing go.mod declares, or ""
+// when there is no go.mod (a service being created) or it names no module.
+func existingGoModule(goModPath string) (string, error) {
+	content, err := os.ReadFile(goModPath)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return modfile.ModulePath(content), nil
 }
 
 func (c CreateConfiguration) GeneratedConnectImport() string {
@@ -1225,6 +1258,12 @@ func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 	s.declareHealthCapability()
 
 	create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
+	moduleRoot, _ := golanghelpers.SplitSourceDir(s.GoGrpc.Settings.GoSourceDir())
+	modulePath, err := existingGoModule(filepath.Join(s.Location, moduleRoot, "go.mod"))
+	if err != nil {
+		return s.Base.Builder.CreateError(err)
+	}
+	create.GoModulePath = modulePath
 	ignore := shared.NewIgnore("go.work*", "service.generation.codefly.yaml")
 	override := shared.OverrideException(shared.NewIgnore("*.proto"))
 

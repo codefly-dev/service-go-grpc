@@ -29,7 +29,7 @@ func TestTheRegistryIsRenderedFromPluginsYAMLInOrder(t *testing.T) {
 	}
 	tmpl := template.Must(template.New("registry").Parse(string(raw)))
 	var out strings.Builder
-	data := map[string]any{"Service": map[string]any{"Name": map[string]any{"DNSCase": "gateway"}}, "Plugins": plugins}
+	data := map[string]any{"GoModule": "gateway", "Plugins": plugins}
 	if err := tmpl.Execute(&out, data); err != nil {
 		t.Fatal(err)
 	}

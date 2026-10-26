@@ -21,7 +21,7 @@ func TestProtoTemplatePinsGoPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read api proto template: %v", err)
 	}
-	if !strings.Contains(string(protoTemplate), `option go_package = "{{ .Service.Name.DNSCase }}/pkg/gen;gen";`) {
+	if !strings.Contains(string(protoTemplate), `option go_package = "{{ .GoModule }}/pkg/gen;gen";`) {
 		t.Fatal("api proto template does not pin the generated Go package")
 	}
 
@@ -77,7 +77,7 @@ func TestFactoryDependencyLocksMatchBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read factory go.mod template: %v", err)
 	}
-	renderedMod := bytes.ReplaceAll(templateMod, []byte("{{ .Service.Name.DNSCase }}"), []byte("codefly-base"))
+	renderedMod := bytes.ReplaceAll(templateMod, []byte("{{ .GoModule }}"), []byte("codefly-base"))
 	if !bytes.Equal(baseMod, renderedMod) {
 		t.Fatal("factory go.mod template drifted from base/code/go.mod")
 	}
