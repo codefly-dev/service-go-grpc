@@ -85,8 +85,11 @@ instead, from your own Configure function (the one you pass to WithConfigure):
     server would have accepted. The hop is plaintext and stays on loopback: a
     custom dialer here still connects, but a connection whose remote address is
     not loopback is refused ("gateway hop refused: ..."), and the hop's
-    transport credentials always win over any set here. A call to another host
-    is a client your service makes, not a gateway dial option.
+    transport credentials win over any set here. The one exception is a custom
+    load-balancing policy that sets balancer.NewSubConnOptions.CredsBundle: its
+    credentials replace the hop's, so it must keep the hop on loopback itself.
+    A call to another host is a client your service makes, not a gateway dial
+    option.
 
 The chain, outermost first: the generated request logging, the CORS policy, your
 Middleware, your Routes, the gateway. A non-200 is logged with its method, path,
