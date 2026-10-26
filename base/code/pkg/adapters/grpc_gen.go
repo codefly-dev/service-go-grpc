@@ -230,8 +230,9 @@ func (s *GrpcServer) Run(ctx context.Context) error {
 // with extra appended to the generated options. The hop carries whatever an
 // RPC carries, so a service whose messages exceed gRPC's 4 MiB default call
 // bounds raises them here with grpc.WithDefaultCallOptions rather than losing
-// the hop at the proxy.
+// the hop at the proxy. Environment proxies must never receive this local
+// traffic, which carries caller metadata and messages.
 func gatewayDialOptions(extra ...grpc.DialOption) []grpc.DialOption {
-	options := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	options := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithNoProxy()}
 	return append(options, extra...)
 }
