@@ -179,7 +179,16 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 			s.Wool.Warn("REST CORS defaults to same-origin: the regenerated adapter refuses all cross-origin requests. Set cors.allowed-origins or cors.allow-all in settings to permit cross-origin access.")
 		}
 		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}, ConnectOnly: s.GoGrpc.GrpcEndpoint == nil && s.GoGrpc.ConnectEndpoint != nil}
-		if !mainOnly {
+		if mainOnly {
+			// Custom adapters can own declared listeners with scaffolding off.
+			// Only main is rendered here: its port lookups follow declarations,
+			// without changing the service's adapter-generation settings.
+			entrypointSettings := *s.GoGrpc.Settings
+			entrypointSettings.RestEndpoint = len(resources.FindEndpointsByAPI(ctx, standards.REST, s.Endpoints)) > 0
+			entrypointSettings.ConnectEndpoint = len(resources.FindEndpointsByAPI(ctx, standards.CONNECT, s.Endpoints)) > 0
+			create.Settings = &entrypointSettings
+			create.ConnectOnly = s.GoGrpc.GrpcEndpoint == nil && entrypointSettings.ConnectEndpoint
+		} else {
 			create.ProtoGoPackage, err = declaredServiceGoPackage(filepath.Join(s.Location, protoDir), s.Information.Service.Name.Title+"Service")
 			if err != nil {
 				return s.Base.Builder.SyncError(err)
