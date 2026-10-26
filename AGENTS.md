@@ -159,8 +159,9 @@ bug it prevents is possible. The existing tests do; match them.
   Local directory inputs in Buf v2 templates are staged too; see
   [protocol generation](docs/protocol-generation.md).
 - **Only the marked scaffold is agent-owned.** Sync overwrites `main.go`, the
-  `*_gen.go` adapters and the plugin registry, and only when the generated
-  marker and the single-service proto shape both hold. If generated output is
+  `*_gen.go` adapters and the plugin registry, when the generated marker
+  and single-service proto shape both hold. A marked `main.go` is refreshed
+  independently for a custom API; its hand-written adapters stay service-owned. If generated output is
   wrong, fix the template — never the output.
 - **One implementation serves every listener.** The Connect listener transcodes
   to the gRPC server (which needs no separate listener for Connect-only services), so `Configuration.Service`, the authority and operations
