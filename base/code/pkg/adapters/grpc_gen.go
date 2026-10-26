@@ -13,9 +13,11 @@ import (
 	"buf.build/go/protovalidate"
 	gen "codefly-base/pkg/gen"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -29,6 +31,7 @@ import (
 
 	codefly "github.com/codefly-dev/sdk-go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -149,6 +152,13 @@ type Configuration struct {
 	// grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(n), grpc.MaxCallSendMsgSize(n)).
 	// A bound set only on the server leaves the proxy refusing the message the
 	// server would have accepted.
+	//
+	// The hop is plaintext and carries every caller's metadata and messages, so
+	// it ends on this host's loopback whatever these options say. A custom
+	// dialer is still the one that connects, but a connection whose remote
+	// address is not loopback is refused, with that reason, before any of the
+	// call is written to it. The hop's transport credentials are applied after
+	// these options, so an option that sets its own does not take effect.
 	GatewayDialOptions []grpc.DialOption
 }
 
@@ -232,7 +242,50 @@ func (s *GrpcServer) Run(ctx context.Context) error {
 // bounds raises them here with grpc.WithDefaultCallOptions rather than losing
 // the hop at the proxy. Environment proxies must never receive this local
 // traffic, which carries caller metadata and messages.
+//
+// The transport credentials come last. gRPC applies options in order and the
+// last one wins, so no option in extra can replace them, and a credentials
+// bundle in extra makes the dial fail rather than take over. They hold the hop
+// to loopback even when extra carries a dialer that ignores the target.
 func gatewayDialOptions(extra ...grpc.DialOption) []grpc.DialOption {
-	options := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithNoProxy()}
-	return append(options, extra...)
+	options := []grpc.DialOption{grpc.WithNoProxy()}
+	options = append(options, extra...)
+	return append(options, grpc.WithTransportCredentials(loopbackTransport{insecure.NewCredentials()}))
+}
+
+// errGatewayHopOffLoopback is why the gateway refuses a connection to the gRPC
+// server: the hop is plaintext and carries caller metadata and messages, so it
+// must end on this host's loopback.
+var errGatewayHopOffLoopback = errors.New("gateway hop refused: the plaintext hop to the gRPC server must stay on loopback")
+
+// loopbackTransport is the gateway hop's transport: plaintext, and only to a
+// loopback peer. It checks the connection gRPC dialled, not the target string,
+// so a dialer that connects somewhere other than its address is caught.
+type loopbackTransport struct {
+	credentials.TransportCredentials
+}
+
+func (t loopbackTransport) ClientHandshake(ctx context.Context, authority string, conn net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	if !isLoopback(conn.RemoteAddr()) {
+		return nil, nil, fmt.Errorf("%w: the connection reached %s", errGatewayHopOffLoopback, conn.RemoteAddr())
+	}
+	return t.TransportCredentials.ClientHandshake(ctx, authority, conn)
+}
+
+func (t loopbackTransport) Clone() credentials.TransportCredentials {
+	return loopbackTransport{t.TransportCredentials.Clone()}
+}
+
+// isLoopback reports whether addr is an IP address on the loopback network,
+// IPv4 or IPv6, including an IPv4 loopback address written in IPv6 form.
+func isLoopback(addr net.Addr) bool {
+	if addr == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return false
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.Unmap().IsLoopback()
 }
