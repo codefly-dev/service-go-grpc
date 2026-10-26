@@ -2,7 +2,7 @@
 package plugins
 
 import (
-	"{{ .Service.Name.DNSCase }}/pkg/framework"
+	"{{ .GoModule }}/pkg/framework"
 {{- range .Plugins }}
 
 	{{ .Alias }} "{{ .Package }}"
