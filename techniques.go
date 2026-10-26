@@ -82,7 +82,11 @@ instead, from your own Configure function (the one you pass to WithConfigure):
     4 MiB default call bounds:
     grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(n), grpc.MaxCallSendMsgSize(n)).
     A bound set only on the server leaves the proxy refusing the message the
-    server would have accepted.
+    server would have accepted. The hop is plaintext and stays on loopback: a
+    custom dialer here still connects, but a connection whose remote address is
+    not loopback is refused ("gateway hop refused: ..."), and the hop's
+    transport credentials always win over any set here. A call to another host
+    is a client your service makes, not a gateway dial option.
 
 The chain, outermost first: the generated request logging, the CORS policy, your
 Middleware, your Routes, the gateway. A non-200 is logged with its method, path,

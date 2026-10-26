@@ -188,12 +188,13 @@ func (s *ConnectServer) Shutdown(ctx context.Context) error {
 
 // dialledTranscoder is the transcoder for a service whose HTTP faces reach its
 // gRPC methods by dialling rather than in process: the REST face dials the gRPC
-// endpoint with Configuration.GatewayDialOptions, and a dial option there can
-// send the call somewhere first (a hop in front of the service, which decides
-// and stamps every call). The Connect face then dials the same way, so the two
-// faces cannot disagree about the path a call takes. Each call is transcoded to
-// gRPC and forwarded as opaque frames, so the service's own gRPC server, and
-// every interceptor it holds, is still what answers it.
+// endpoint with Configuration.GatewayDialOptions, and the Connect face then
+// dials the same way, so the two faces cannot disagree about the path a call
+// takes. Each call is transcoded to gRPC and forwarded as opaque frames, so the
+// service's own gRPC server, and every interceptor it holds, is still what
+// answers it. The dial is plaintext, so it never leaves this host: whatever
+// dialer those options carry, gatewayDialOptions refuses a connection whose
+// remote address is not loopback.
 func dialledTranscoder(c *Configuration, grpcServer *grpc.Server) (http.Handler, error) {
 	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", c.EndpointGrpcPort), gatewayDialOptions(c.GatewayDialOptions...)...)
 	if err != nil {

@@ -65,7 +65,7 @@ gRPC server — are documented with the gRPC listener.
 | `ServeMuxOptions []runtime.ServeMuxOption` | Appended to the gateway mux's generated options. The only way to install a `runtime.WithForwardResponseOption` (a strong `ETag`, a `Cache-Control`, a `304` on one RPC), `WithIncomingHeaderMatcher`, `WithOutgoingHeaderMatcher` or `WithMarshalerOption`: options reach a mux at construction, and the `plugins.RegisterREST` seam receives it already built. |
 | `Routes []Route` | HTTP handlers served ahead of the gateway, matched by plain path prefix. For a protocol the gateway cannot carry — a Connect handler for a second protobuf service, whose every method would otherwise need its own `gwMux.HandlePath` template. |
 | `Middleware []func(http.Handler) http.Handler` | Wraps the chain, the first entry outermost, inside the CORS policy and ahead of the routes and the gateway. For policy that must see a request before anything reads its body: a request-body bound, a tracing span, a rate limit. |
-| `GatewayDialOptions []grpc.DialOption` | Appended to the options this listener dials the gRPC server with, for the gateway's hop and the health probe's client. Where a service raises gRPC's 4 MiB default call bounds — `grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(n), grpc.MaxCallSendMsgSize(n))` — since a bound set only on the server leaves the proxy refusing a message the server would have accepted. |
+| `GatewayDialOptions []grpc.DialOption` | Appended to the options this listener dials the gRPC server with, for the gateway's hop and the health probe's client. Where a service raises gRPC's 4 MiB default call bounds — `grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(n), grpc.MaxCallSendMsgSize(n))` — since a bound set only on the server leaves the proxy refusing a message the server would have accepted. The hop stays plaintext on loopback whatever these options carry: see the third rule below. |
 
 The handler chain, outermost first: the generated request logging, the CORS
 policy from your `cors:` settings, your `Middleware`, your `Routes`, the gateway.
@@ -75,7 +75,7 @@ are named so your own tests build the same mux and the same chain the server
 runs, rather than a copy that drifts from it:
 `runtime.NewServeMux(gatewayMuxOptions(config.ServeMuxOptions...)...)`.
 
-### Two rules that are easy to get wrong
+### Three rules that are easy to get wrong
 
 **Option ordering.** Your `ServeMuxOptions` are applied *after* the generated
 ones, so an option that sets a single value (`WithErrorHandler`, either header
@@ -93,6 +93,21 @@ route is consulted before every gateway path including `/healthz` — so do not
 mount `"/"`. The listener speaks HTTP/1.1, which serves a Connect or gRPC-Web
 caller but not a gRPC-over-h2c one; that is the Connect listener
 `connect-endpoint` declares.
+
+**The hop to the gRPC server stays on loopback.** The REST gateway, its
+`/healthz` client and the dialled Connect transcoder reach your gRPC server in
+plaintext, carrying every caller's metadata and messages, so that connection
+must never leave the host. `gatewayDialOptions` applies the hop's transport
+credentials after your `GatewayDialOptions`, and they refuse any connection
+whose remote address is not loopback, IPv4 or IPv6, with the reason `gateway
+hop refused: the plaintext hop to the gRPC server must stay on loopback`. They
+check the connection that was actually made, not the target, so a
+`grpc.WithContextDialer` among your options still does the connecting but
+cannot send the hop off the host: a dialer to a hop on `127.0.0.1` works, and
+one to any other address is refused before any of the call is written. A
+`grpc.WithTransportCredentials` among your options does not take effect, and a
+`grpc.WithCredentialsBundle` makes the dial fail. A call that must reach another
+host is a client your service makes, not a gateway dial option.
 
 ### What the listener logs
 
