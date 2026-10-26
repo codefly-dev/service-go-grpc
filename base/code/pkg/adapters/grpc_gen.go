@@ -158,7 +158,10 @@ type Configuration struct {
 	// dialer is still the one that connects, but a connection whose remote
 	// address is not loopback is refused, with that reason, before any of the
 	// call is written to it. The hop's transport credentials are applied after
-	// these options, so an option that sets its own does not take effect.
+	// these options, so an option that sets its own does not take effect. The
+	// one exception is a custom load-balancing policy: one that sets
+	// balancer.NewSubConnOptions.CredsBundle replaces them on its connections,
+	// and takes on the loopback rule itself.
 	GatewayDialOptions []grpc.DialOption
 }
 
@@ -247,6 +250,13 @@ func (s *GrpcServer) Run(ctx context.Context) error {
 // last one wins, so no option in extra can replace them, and a credentials
 // bundle in extra makes the dial fail rather than take over. They hold the hop
 // to loopback even when extra carries a dialer that ignores the target.
+//
+// One path outside the options replaces them: a load-balancing policy that a
+// service registers and selects through a service config in extra can set
+// balancer.NewSubConnOptions.CredsBundle, which gRPC still honours though it
+// is deprecated, and that bundle's credentials take over the connection. Such
+// a policy takes on the loopback rule itself. Pinning the policy here would
+// silently drop a service config the service chose, so it is stated instead.
 func gatewayDialOptions(extra ...grpc.DialOption) []grpc.DialOption {
 	options := []grpc.DialOption{grpc.WithNoProxy()}
 	options = append(options, extra...)

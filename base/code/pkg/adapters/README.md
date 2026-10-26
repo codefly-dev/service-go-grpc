@@ -106,8 +106,13 @@ check the connection that was actually made, not the target, so a
 cannot send the hop off the host: a dialer to a hop on `127.0.0.1` works, and
 one to any other address is refused before any of the call is written. A
 `grpc.WithTransportCredentials` among your options does not take effect, and a
-`grpc.WithCredentialsBundle` makes the dial fail. A call that must reach another
-host is a client your service makes, not a gateway dial option.
+`grpc.WithCredentialsBundle` makes the dial fail. One exception is outside the
+options themselves: a custom load-balancing policy you register and select
+through a service config can set `balancer.NewSubConnOptions.CredsBundle`
+(deprecated, still honoured by gRPC), and that bundle's credentials replace the
+hop's on every connection the policy creates. Such a policy carries the loopback
+rule itself. A call that must reach another host is a client your service makes,
+not a gateway dial option.
 
 ### What the listener logs
 
