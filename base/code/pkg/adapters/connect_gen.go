@@ -196,7 +196,7 @@ func (s *ConnectServer) Shutdown(ctx context.Context) error {
 // gRPC and forwarded as opaque frames, so the service's own gRPC server, and
 // every interceptor it holds, is still what answers it.
 func dialledTranscoder(c *Configuration, grpcServer *grpc.Server) (http.Handler, error) {
-	conn, err := grpc.NewClient(fmt.Sprintf("0.0.0.0:%d", c.EndpointGrpcPort), gatewayDialOptions(c.GatewayDialOptions...)...)
+	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", c.EndpointGrpcPort), gatewayDialOptions(c.GatewayDialOptions...)...)
 	if err != nil {
 		return nil, err
 	}
