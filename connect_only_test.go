@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
+	"net/http"
+	"time"
 
 	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
@@ -12,6 +15,7 @@ import (
 	"github.com/codefly-dev/core/shared"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -194,12 +198,15 @@ func TestCustomEntrypointSyncPreservesDeclaredListeners(t *testing.T) {
 	protoCompanionMu.Lock()
 	defer protoCompanionMu.Unlock()
 	for _, tc := range []struct {
-		name, api, port string
-		grpc, connect   bool
+		name, endpoint, api, port string
+		grpc, connect             bool
 	}{
-		{"tasks REST", "rest", "EndpointHttpPort", true, false},
-		{"custom Connect", "connect", "EndpointConnectPort", true, false},
-		{"Connect only", "connect", "EndpointConnectPort", false, true},
+		{"tasks REST", "rest", "rest", "EndpointHttpPort", true, false},
+		{"custom Connect", "connect", "connect", "EndpointConnectPort", true, false},
+		{"Connect only", "connect", "connect", "EndpointConnectPort", false, true},
+		// A sole Connect endpoint keeping its gRPC-era name: main must ask for
+		// it by that name, or the carrier keyed by it is never found.
+		{"Connect only named grpc", "grpc", "connect", "EndpointConnectPort", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
@@ -208,7 +215,7 @@ func TestCustomEntrypointSyncPreservesDeclaredListeners(t *testing.T) {
 			service, err := resources.LoadServiceFromDir(ctx, dir)
 			require.NoError(t, err)
 			service.Name, identity.Name = "tasks", "tasks"
-			service.Endpoints = []*resources.Endpoint{{Name: tc.api, API: tc.api}}
+			service.Endpoints = []*resources.Endpoint{{Name: tc.endpoint, API: tc.api}}
 			if tc.grpc {
 				service.Endpoints = append(service.Endpoints, &resources.Endpoint{Name: "grpc", API: "grpc"})
 			}
@@ -233,7 +240,11 @@ service TaskService {}
 			require.NoError(t, syncResponseError(response))
 			main, err := os.ReadFile(filepath.Join(dir, "code/main.go"))
 			require.NoError(t, err)
-			require.Contains(t, string(main), "API(standards."+strings.ToUpper(tc.api)+")")
+			query := "codefly.For(ctx).API(standards." + strings.ToUpper(tc.api) + ")"
+			if tc.endpoint != tc.api {
+				query = "codefly.For(ctx).Endpoint(\"" + tc.endpoint + "\").API(standards." + strings.ToUpper(tc.api) + ")"
+			}
+			require.Contains(t, string(main), query)
 			require.Contains(t, string(main), "config."+tc.port+" = shared.Pointer(")
 			require.Equal(t, tc.grpc, strings.Contains(string(main), "API(standards.GRPC)"))
 			assertTestFile(t, filepath.Join(dir, "code/pkg/adapters/server.go"), adapter)
@@ -246,4 +257,125 @@ service TaskService {}
 			require.Empty(t, response.GetChangedFiles())
 		})
 	}
+}
+
+// TestConnectOnlyEntrypointStartsOnAListenerNotNamedConnect builds the
+// generated entrypoint of a Connect-only service whose sole endpoint keeps
+// another name (`grpc`, as a service migrated from a gRPC listener does) and
+// starts it with exactly the environment the Runtime injects. Core allows the
+// name; the composition keys the carrier by name and API. A main that asked by
+// API alone was looked up as `connect`, found no carrier and panicked at start,
+// which no render-only or adapter-level test can see.
+func TestConnectOnlyEntrypointStartsOnAListenerNotNamedConnect(t *testing.T) {
+	ctx := t.Context()
+	identity := goGrpcServiceFixture(t)
+	dir := filepath.Join(identity.WorkspacePath, identity.RelativeToWorkspace)
+	service, err := resources.LoadServiceFromDir(ctx, dir)
+	require.NoError(t, err)
+	service.Endpoints = []*resources.Endpoint{{Name: "grpc", API: "connect"}}
+	service.Spec = map[string]any{"connect-endpoint": true, "rest-endpoint": false, "hot-reload": false}
+	require.NoError(t, service.SaveAtDir(ctx, dir))
+	builderClient, builder := startBuilderAgent(t, identity)
+	loaded, err := builderClient.Load(ctx, &builderv0.LoadRequest{Identity: identity})
+	require.NoError(t, err)
+	require.NotEqual(t, builderv0.LoadStatus_ERROR, loaded.GetState().GetState(), loaded)
+	require.Nil(t, builder.GoGrpc.GrpcEndpoint)
+
+	// The generated module: base/code with the factory rendered as Sync
+	// renders it for this declaration.
+	root := t.TempDir()
+	require.NoError(t, os.CopyFS(root, os.DirFS("base/code")))
+	config := baseCreateConfiguration(builder.GoGrpc.Settings)
+	config.ConnectOnly = true
+	require.NoError(t, config.nameDeclaredListeners(ctx, builder.Endpoints))
+	for _, name := range []string{"main.go", "pkg/adapters/grpc_gen.go", "pkg/adapters/server_gen.go", "pkg/adapters/connect_gen.go", "pkg/adapters/rest_gen.go", "pkg/adapters/cors_gen.go"} {
+		raw, err := factoryFS.ReadFile("templates/factory/code/" + name + ".tmpl")
+		require.NoError(t, err)
+		rendered, err := templates.ApplyTemplate(string(raw), config)
+		require.NoError(t, err)
+		formatted, err := imports.Process(name, []byte(rendered), &imports.Options{Comments: true})
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), formatted, 0644))
+	}
+	binary := filepath.Join(t.TempDir(), "service")
+	build := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-o", binary, ".")
+	build.Dir = root
+	build.Env = append(os.Environ(), "GOWORK=off")
+	output, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+
+	// The Runtime's own allocation and injection for this declaration.
+	runtime := NewRuntime(NewService())
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	runtimev0.RegisterRuntimeServer(server, runtime)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	client := runtimev0.NewRuntimeClient(conn)
+	env := resources.LocalEnvironment()
+	load, err := client.Load(ctx, &runtimev0.LoadRequest{Identity: identity, Environment: shared.Must(env.Proto()), DisableCatch: true})
+	require.NoError(t, err)
+	require.Equal(t, runtimev0.LoadStatus_READY, load.GetStatus().GetState(), load.GetStatus())
+	manager, err := network.NewRuntimeManager(ctx, nil)
+	require.NoError(t, err)
+	manager.WithTemporaryPorts()
+	mappings, err := manager.GenerateNetworkMappings(ctx, env, &resources.Workspace{Name: "test"}, runtime.Identity, load.Endpoints, resources.NewRuntimeContextNative())
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = client.Destroy(context.Background(), &runtimev0.DestroyRequest{}) })
+	init, err := client.Init(ctx, &runtimev0.InitRequest{RuntimeContext: resources.NewRuntimeContextNative(), ProposedNetworkMappings: mappings})
+	require.NoError(t, err)
+	require.Equal(t, runtimev0.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus())
+	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, mappings, runtime.GoGrpc.rpcEndpoint(), resources.NewNativeNetworkAccess())
+	require.NoError(t, err)
+	injected, err := runtime.EnvironmentVariables.All()
+	require.NoError(t, err)
+
+	var logs strings.Builder
+	start := exec.CommandContext(ctx, binary)
+	start.Dir = t.TempDir()
+	start.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}, resources.EnvironmentVariableAsStrings(injected)...)
+	start.Stdout, start.Stderr = &logs, &logs
+	require.NoError(t, start.Start())
+	exited := make(chan struct{})
+	var exit error
+	go func() { exit = start.Wait(); close(exited) }()
+	t.Cleanup(func() {
+		_ = start.Process.Kill()
+		<-exited
+	})
+
+	address := fmt.Sprintf("127.0.0.1:%d", instance.Port)
+	health, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = health.Close() })
+	require.Eventually(t, func() bool {
+		select {
+		case <-exited:
+			return true
+		default:
+		}
+		response, err := grpc_health_v1.NewHealthClient(health).Check(ctx, &grpc_health_v1.HealthCheckRequest{})
+		return err == nil && response.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING
+	}, 30*time.Second, 100*time.Millisecond)
+	select {
+	case <-exited:
+		t.Fatalf("the generated service exited (%v):\n%s", exit, logs.String())
+	default:
+	}
+	// The same listener answers the service's own API over Connect.
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+address+"/api.WebService/Version", strings.NewReader("{}"))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Connect-Protocol-Version", "1")
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.StatusCode, "%s", body)
+	require.Contains(t, string(body), `"version"`)
 }

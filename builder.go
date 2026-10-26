@@ -194,6 +194,9 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 				return s.Base.Builder.SyncError(err)
 			}
 		}
+		if err := create.nameDeclaredListeners(ctx, s.Endpoints); err != nil {
+			return s.Base.Builder.SyncError(err)
+		}
 		create.GoModulePath, err = existingGoModule(filepath.Join(s.Location, moduleRoot, "go.mod"))
 		if err != nil {
 			return s.Base.Builder.SyncError(err)
@@ -1218,6 +1221,13 @@ func (s *Builder) Options() []*agentv0.Question {
 type CreateConfiguration struct {
 	// ConnectOnly is derived from declared endpoints, never a user setting.
 	ConnectOnly bool
+	// GrpcEndpointName, RestEndpointName and ConnectEndpointName are the
+	// declared names of the listeners main resolves, set only where a name is
+	// not its API's own. Empty for a new service, whose endpoints are named
+	// after their APIs. See nameDeclaredListeners.
+	GrpcEndpointName    string
+	RestEndpointName    string
+	ConnectEndpointName string
 	*services.Information
 	Settings *Settings
 	Envs     []string
@@ -1230,6 +1240,38 @@ type CreateConfiguration struct {
 	// GoModulePath is the module path the service's existing go.mod declares.
 	// Empty for a brand-new service, which takes the factory default.
 	GoModulePath string
+}
+
+// nameDeclaredListeners records the declared name of each listener main
+// resolves. Core lets a sole endpoint of an API carry any name, and the
+// composition keys that endpoint's carrier by its name and API. An SDK query
+// that gives only the API takes the API for the name, so a Connect listener
+// declared as `grpc` was looked up as `connect`: no carrier, and the service
+// panicked at start. Core's conventional finders select the endpoint here, as
+// discoverEndpoints does, and main names it whenever the two differ.
+func (c *CreateConfiguration) nameDeclaredListeners(ctx context.Context, endpoints []*basev0.Endpoint) error {
+	for _, listener := range []struct {
+		api  string
+		find func(context.Context, []*basev0.Endpoint) (*basev0.Endpoint, error)
+		name *string
+	}{
+		{standards.GRPC, resources.FindGRPCEndpoint, &c.GrpcEndpointName},
+		{standards.REST, resources.FindRestEndpoint, &c.RestEndpointName},
+		{standards.CONNECT, resources.FindConnectEndpoint, &c.ConnectEndpointName},
+	} {
+		*listener.name = ""
+		if len(resources.FindEndpointsByAPI(ctx, listener.api, endpoints)) == 0 {
+			continue
+		}
+		endpoint, err := listener.find(ctx, endpoints)
+		if err != nil {
+			return fmt.Errorf("cannot select the %s listener main resolves: %w", listener.api, err)
+		}
+		if endpoint.Name != listener.api {
+			*listener.name = endpoint.Name
+		}
+	}
+	return nil
 }
 
 // GoModule is the Go module path every generated import is rooted at. The

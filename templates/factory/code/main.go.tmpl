@@ -72,19 +72,19 @@ func main() {
 
 	config := &adapters.Configuration{}
 	{{- if not .ConnectOnly }}
-	grpcInstance, err := codefly.For(ctx).API(standards.GRPC).ResolveNetworkInstance()
+	grpcInstance, err := codefly.For(ctx){{ with .GrpcEndpointName }}.Endpoint({{ printf "%q" . }}){{ end }}.API(standards.GRPC).ResolveNetworkInstance()
 	if err != nil {
 		panic(fmt.Errorf("cannot resolve this service's %s address: %w", standards.GRPC, err))
 	}
 	config.EndpointGrpcPort = grpcInstance.Port
 	{{- end }}
 	{{- if .Settings.RestEndpoint }}
-	if net := codefly.For(ctx).API(standards.REST).NetworkInstance(); net != nil {
+	if net := codefly.For(ctx){{ with .RestEndpointName }}.Endpoint({{ printf "%q" . }}){{ end }}.API(standards.REST).NetworkInstance(); net != nil {
 		config.EndpointHttpPort = shared.Pointer(net.Port)
 	}
 	{{- end }}
 	{{- if .Settings.ConnectEndpoint }}
-	connectInstance, err := codefly.For(ctx).API(standards.CONNECT).ResolveNetworkInstance()
+	connectInstance, err := codefly.For(ctx){{ with .ConnectEndpointName }}.Endpoint({{ printf "%q" . }}){{ end }}.API(standards.CONNECT).ResolveNetworkInstance()
 	if err != nil {
 		panic(fmt.Errorf("cannot resolve this service's %s address: %w", standards.CONNECT, err))
 	}
