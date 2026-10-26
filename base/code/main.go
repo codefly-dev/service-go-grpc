@@ -23,10 +23,11 @@ import (
 	"codefly-base/pkg/adapters"
 	"context"
 	"fmt"
-	"github.com/codefly-dev/core/shared"
-	"github.com/codefly-dev/core/standards"
 	"os/signal"
 	"syscall"
+
+	"github.com/codefly-dev/core/shared"
+	"github.com/codefly-dev/core/standards"
 
 	codefly "github.com/codefly-dev/sdk-go"
 )
@@ -69,24 +70,20 @@ func main() {
 
 	defer codefly.CatchPanic(ctx)
 
-	// The gRPC port is required, so resolve it with the entrypoint that
-	// RETURNS the error. NetworkInstance() answers nil on a resolution
-	// failure — an absent carrier, an endpoint this service may not reach —
-	// so reading .Port off it panics at startup with nothing to read, and
-	// the service simply never listens.
+	config := &adapters.Configuration{}
 	grpcInstance, err := codefly.For(ctx).API(standards.GRPC).ResolveNetworkInstance()
 	if err != nil {
 		panic(fmt.Errorf("cannot resolve this service's %s address: %w", standards.GRPC, err))
 	}
-	config := &adapters.Configuration{
-		EndpointGrpcPort: grpcInstance.Port,
-	}
+	config.EndpointGrpcPort = grpcInstance.Port
 	if net := codefly.For(ctx).API(standards.REST).NetworkInstance(); net != nil {
 		config.EndpointHttpPort = shared.Pointer(net.Port)
 	}
-	if net := codefly.For(ctx).API(standards.CONNECT).NetworkInstance(); net != nil {
-		config.EndpointConnectPort = shared.Pointer(net.Port)
+	connectInstance, err := codefly.For(ctx).API(standards.CONNECT).ResolveNetworkInstance()
+	if err != nil {
+		panic(fmt.Errorf("cannot resolve this service's %s address: %w", standards.CONNECT, err))
 	}
+	config.EndpointConnectPort = shared.Pointer(connectInstance.Port)
 	if configure != nil {
 		clean, err := configure(ctx, config)
 		if err != nil {
@@ -98,7 +95,6 @@ func main() {
 			}
 		}()
 	}
-
 	server, err := adapters.NewServer(config)
 	if err != nil {
 		panic(err)

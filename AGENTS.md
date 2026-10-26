@@ -163,7 +163,7 @@ bug it prevents is possible. The existing tests do; match them.
   marker and the single-service proto shape both hold. If generated output is
   wrong, fix the template — never the output.
 - **One implementation serves every listener.** The Connect listener transcodes
-  to the gRPC server, so `Configuration.Service`, the authority and operations
+  to the gRPC server (which needs no separate listener for Connect-only services), so `Configuration.Service`, the authority and operations
   interceptors, and the message bounds in `GRPCServerOptions` all apply to
   Connect and gRPC-Web callers too. A Connect-side handler would answer without
   them — and Runnable operations are invoked over Connect — so there is none.

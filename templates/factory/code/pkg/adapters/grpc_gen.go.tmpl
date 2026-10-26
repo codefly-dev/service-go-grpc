@@ -16,7 +16,6 @@ import (
 	"errors"
 {{- end }}
 	"fmt"
-	"buf.build/go/protovalidate"
 	"net"
 {{- if .Settings.RestEndpoint }}
 	"net/http"
@@ -25,6 +24,8 @@ import (
 	"net/netip"
 {{- end }}
 	"time"
+
+	"buf.build/go/protovalidate"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -75,6 +76,7 @@ func (s *GrpcServer) Version(ctx context.Context, req *gen.VersionRequest) (*gen
 }
 
 type Configuration struct {
+	// EndpointGrpcPort is zero when only the Connect listener is declared.
 	EndpointGrpcPort    uint16
 	EndpointHttpPort    *uint16
 	EndpointConnectPort *uint16
@@ -177,6 +179,17 @@ type Configuration struct {
 	// and takes on the loopback rule itself.
 	GatewayDialOptions []grpc.DialOption
 {{- end }}
+}
+
+// rpcPort is the listener serving native gRPC, including health and REST hops.
+func (c *Configuration) rpcPort() uint16 {
+	if c.EndpointGrpcPort != 0 {
+		return c.EndpointGrpcPort
+	}
+	if c.EndpointConnectPort != nil {
+		return *c.EndpointConnectPort
+	}
+	return 0
 }
 
 // defaultMaxMessageBytes is gRPC's own server receive bound, which every face

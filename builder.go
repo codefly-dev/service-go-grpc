@@ -109,16 +109,8 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 		return resp, nil
 	}
 
-	// Discover the protocol endpoints. gRPC is mandatory.
-	s.GoGrpc.GrpcEndpoint, err = resources.FindGRPCEndpoint(ctx, s.Endpoints)
-	if err != nil {
+	if err := s.GoGrpc.discoverEndpoints(ctx); err != nil {
 		return s.Base.Builder.LoadError(err)
-	}
-	if s.GoGrpc.Settings.RestEndpoint {
-		s.GoGrpc.RestEndpoint, err = resources.FindRestEndpoint(ctx, s.Endpoints)
-		if err != nil {
-			return s.Base.Builder.LoadError(err)
-		}
 	}
 	return resp, nil
 }
@@ -176,7 +168,7 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		if s.GoGrpc.Settings.RestEndpoint && s.GoGrpc.Settings.Cors.DeniesCrossOrigin() {
 			s.Wool.Warn("REST CORS defaults to same-origin: the regenerated adapter refuses all cross-origin requests. Set cors.allowed-origins or cors.allow-all in settings to permit cross-origin access.")
 		}
-		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}}
+		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}, ConnectOnly: s.GoGrpc.GrpcEndpoint == nil && s.GoGrpc.ConnectEndpoint != nil}
 		create.ProtoGoPackage, err = declaredServiceGoPackage(filepath.Join(s.Location, protoDir), s.Information.Service.Name.Title+"Service")
 		if err != nil {
 			return s.Base.Builder.SyncError(err)
@@ -942,6 +934,7 @@ func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*
 // — a grpc-only service must not advertise http, and a connect service must
 // advertise its port.
 type DeploymentParameters struct {
+	ConnectOnly    bool
 	ServiceAccount *ServiceAccountSpec
 	// RestPort and ConnectPort are the ports the manifest advertises for the
 	// conventional rest and connect endpoints, 0 when nothing serves them.
@@ -957,6 +950,21 @@ type DeploymentParameters struct {
 	// carries the port Codefly resolved for it, which is the port the process
 	// binds, so the container and the Service advertise exactly that.
 	NamedPorts []NamedPort
+}
+
+// RPCPort and RPCPortName select the listener that serves gRPC health.
+func (p DeploymentParameters) RPCPort() uint32 {
+	if p.ConnectOnly {
+		return p.ConnectPort
+	}
+	return 9090
+}
+
+func (p DeploymentParameters) RPCPortName() string {
+	if p.ConnectOnly {
+		return "connect"
+	}
+	return "grpc"
 }
 
 // NamedPort is one named endpoint's listener as the deployment advertises it.
@@ -1085,7 +1093,21 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		},
 		Prepare: func(ctx context.Context, deployment *services.KustomizeDeploymentContext) error {
 			mappings := deployment.Request.GetNetworkMappings()
-			ports, err := namedPorts(ctx, mappings)
+			connectOnly := s.GoGrpc.GrpcEndpoint == nil && s.GoGrpc.ConnectEndpoint != nil
+			namedMappings := mappings
+			connectName := standards.CONNECT
+			if connectOnly {
+				// Core permits a sole Connect endpoint with a custom name. It is
+				// still the scaffolded listener, not an additional named port.
+				connectName = s.GoGrpc.ConnectEndpoint.Name
+				namedMappings = nil
+				for _, mapping := range mappings {
+					if resources.EndpointDestination(mapping.GetEndpoint()) != resources.EndpointDestination(s.GoGrpc.ConnectEndpoint) {
+						namedMappings = append(namedMappings, mapping)
+					}
+				}
+			}
+			ports, err := namedPorts(ctx, namedMappings)
 			if err != nil {
 				return err
 			}
@@ -1093,11 +1115,12 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 			if err != nil {
 				return err
 			}
-			connect, err := conventionalPort(ctx, mappings, standards.CONNECT, s.GoGrpc.Settings.ConnectEndpoint, connectContainerPort)
+			connect, err := conventionalPort(ctx, mappings, connectName, s.GoGrpc.Settings.ConnectEndpoint, connectContainerPort)
 			if err != nil {
 				return err
 			}
 			parameters := deployment.Parameters.(DeploymentParameters)
+			parameters.ConnectOnly = connectOnly
 			parameters.NamedPorts = ports
 			parameters.RestPort = rest
 			parameters.ConnectPort = connect
@@ -1160,6 +1183,8 @@ func (s *Builder) Options() []*agentv0.Question {
 
 // CreateConfiguration is the template context passed to factory templates.
 type CreateConfiguration struct {
+	// ConnectOnly is derived from declared endpoints, never a user setting.
+	ConnectOnly bool
 	*services.Information
 	Settings *Settings
 	Envs     []string

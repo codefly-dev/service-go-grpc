@@ -19,7 +19,6 @@ import (
 	runners "github.com/codefly-dev/core/runners/base"
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/codefly-dev/core/shared"
-	"github.com/codefly-dev/core/standards"
 	"github.com/codefly-dev/core/wool"
 
 	goruntime "github.com/codefly-dev/service-go/pkg/runtime"
@@ -164,23 +163,8 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		return s.Base.Runtime.LoadErrorf(err, "loading endpoints")
 	}
 
-	s.GoGrpc.GrpcEndpoint, err = resources.FindGRPCEndpoint(ctx, s.Endpoints)
-	if err != nil {
-		return s.Base.Runtime.LoadErrorf(err, "finding grpc endpoint")
-	}
-
-	if s.GoGrpc.Settings.RestEndpoint {
-		s.GoGrpc.RestEndpoint, err = resources.FindRestEndpoint(ctx, s.Endpoints)
-		if err != nil {
-			return s.Base.Runtime.LoadErrorf(err, "finding rest endpoint")
-		}
-	}
-
-	if s.GoGrpc.Settings.ConnectEndpoint {
-		s.GoGrpc.ConnectEndpoint, err = resources.FindConnectEndpoint(ctx, s.Endpoints)
-		if err != nil {
-			return s.Base.Runtime.LoadErrorf(err, "finding connect endpoint")
-		}
+	if err := s.GoGrpc.discoverEndpoints(ctx); err != nil {
+		return s.Base.Runtime.LoadErrorf(err, "discovering RPC endpoints")
 	}
 
 	// Register agent commands
@@ -226,36 +210,12 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 
 	// Bind endpoint ports for container runtime (agent-specific).
 	if s.Base.Runtime.IsContainerRuntime() {
-		instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.GrpcEndpoint, resources.NewContainerNetworkAccess())
-		if err != nil {
-			return s.Wool.Wrapf(err, "cannot find grpc network instance")
-		}
-		env.WithPort(ctx, instance.Port)
-
-		if s.GoGrpc.Settings.RestEndpoint {
-			restInstance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.RestEndpoint, resources.NewContainerNetworkAccess())
-			if err != nil {
-				return s.Wool.Wrapf(err, "cannot find rest network instance")
-			}
-			env.WithPort(ctx, restInstance.Port)
-		}
-
-		if s.GoGrpc.Settings.ConnectEndpoint {
-			connectInstance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.ConnectEndpoint, resources.NewContainerNetworkAccess())
-			if err != nil {
-				return s.Wool.Wrapf(err, "cannot find connect network instance")
-			}
-			env.WithPort(ctx, connectInstance.Port)
-		}
-
-		// Every named endpoint listens on a port of its own, so the container
-		// publishes each one exactly as it publishes the conventional three.
-		for _, endpoint := range s.namedEndpoints() {
-			namedInstance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, endpoint, resources.NewContainerNetworkAccess())
+		for _, endpoint := range s.Endpoints {
+			instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, endpoint, resources.NewContainerNetworkAccess())
 			if err != nil {
 				return s.Wool.Wrapf(err, "cannot find %s network instance for endpoint %q", endpoint.Api, endpoint.Name)
 			}
-			env.WithPort(ctx, namedInstance.Port)
+			env.WithPort(ctx, instance.Port)
 		}
 	}
 
@@ -313,76 +273,19 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		return s.Base.Runtime.InitError(err)
 	}
 
-	// Networking: a process is native to itself
-	net, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.GrpcEndpoint, resources.NewNativeNetworkAccess())
-	if err != nil {
-		return s.Base.Runtime.InitError(err)
-	}
-
-	s.Infof("gRPC will run on %s", net.Address)
-
-	// Only add gRPC for now
-	nm, err := resources.FindNetworkMapping(ctx, s.NetworkMappings, s.GoGrpc.GrpcEndpoint)
-	if err != nil {
-		return s.Base.Runtime.InitError(err)
-	}
-	if err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess()); err != nil {
-		return s.Base.Runtime.InitError(err)
-	}
-
-	if s.GoGrpc.Settings.RestEndpoint {
-		nm, err = resources.FindNetworkMapping(ctx, s.NetworkMappings, s.GoGrpc.RestEndpoint)
-		if err != nil {
-			return s.Base.Runtime.InitError(err)
-		}
-		if err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess()); err != nil {
-			return s.Base.Runtime.InitError(err)
-		}
-
-		net, err = resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.RestEndpoint, resources.NewNativeNetworkAccess())
-		if err != nil {
-			return s.Base.Runtime.InitError(err)
-		}
-
-		s.Infof("REST will run on %s", net.Address)
-	}
-
-	if s.GoGrpc.Settings.ConnectEndpoint {
-		nm, err = resources.FindNetworkMapping(ctx, s.NetworkMappings, s.GoGrpc.ConnectEndpoint)
-		if err != nil {
-			return s.Base.Runtime.InitError(err)
-		}
-		if err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess()); err != nil {
-			return s.Base.Runtime.InitError(err)
-		}
-
-		net, err = resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, s.GoGrpc.ConnectEndpoint, resources.NewNativeNetworkAccess())
-		if err != nil {
-			return s.Base.Runtime.InitError(err)
-		}
-
-		s.Infof("Connect will run on %s", net.Address)
-	}
-
-	// Named endpoints: a service may serve one API on more than one endpoint
-	// (a second gRPC endpoint under its own name, say). The CLI proposes a
-	// mapping for every endpoint Load reported, and the service resolves each
-	// by name from its environment, so each must be exported here or the
-	// service never learns the address it is meant to listen on.
-	for _, endpoint := range s.namedEndpoints() {
-		nm, err = resources.FindNetworkMapping(ctx, s.NetworkMappings, endpoint)
+	// Every declared listener receives exactly the mapping Codefly allocated.
+	for _, endpoint := range s.Endpoints {
+		nm, err := resources.FindNetworkMapping(ctx, s.NetworkMappings, endpoint)
 		if err != nil {
 			return s.Base.Runtime.InitError(s.Wool.Wrapf(err, "endpoint %q (%s) is declared but no network mapping was proposed for it", endpoint.Name, endpoint.Api))
 		}
 		if err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess()); err != nil {
 			return s.Base.Runtime.InitError(err)
 		}
-
-		net, err = resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, endpoint, resources.NewNativeNetworkAccess())
+		net, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, endpoint, resources.NewNativeNetworkAccess())
 		if err != nil {
 			return s.Base.Runtime.InitError(err)
 		}
-
 		s.Infof("%s endpoint %q will run on %s", endpoint.Api, endpoint.Name, net.Address)
 	}
 
@@ -430,54 +333,6 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	s.Wool.Info("successful init of runner")
 
 	return s.Base.Runtime.InitResponse()
-}
-
-// namedEndpoints returns the endpoints this service declares beyond the
-// listeners the agent scaffolds, in declaration order. A declared rest or
-// connect endpoint whose setting is off is one the service serves itself, so it
-// is named here and handed its address like any other: the setting says who
-// writes the handler, never whether the endpoint exists (conventionalPort draws
-// the same line for a cell).
-//
-// The scaffolded listeners are exported by their own settings-gated code, so
-// they are excluded twice over: by name (scaffolds: gRPC always, rest and
-// connect only when their setting is on) and by identity (the conventional
-// gRPC endpoint may carry any name when it is the only one). Deploy draws the
-// same line through conventionalEndpoints, so a local run and a cell agree on
-// which listeners a service has.
-func (s *Runtime) namedEndpoints() []*basev0.Endpoint {
-	conventional := []*basev0.Endpoint{s.GoGrpc.GrpcEndpoint, s.GoGrpc.RestEndpoint, s.GoGrpc.ConnectEndpoint}
-	var named []*basev0.Endpoint
-	for _, endpoint := range s.Endpoints {
-		if endpoint == nil || s.scaffolds(endpoint.Name) {
-			continue
-		}
-		isConventional := false
-		for _, c := range conventional {
-			if c != nil && resources.EndpointDestination(c) == resources.EndpointDestination(endpoint) {
-				isConventional = true
-				break
-			}
-		}
-		if !isConventional {
-			named = append(named, endpoint)
-		}
-	}
-	return named
-}
-
-// scaffolds reports whether the agent writes and binds the listener of the
-// conventional endpoint named name: gRPC always, REST and Connect when enabled.
-func (s *Runtime) scaffolds(name string) bool {
-	switch name {
-	case standards.GRPC:
-		return true
-	case standards.REST:
-		return s.GoGrpc.Settings.RestEndpoint
-	case standards.CONNECT:
-		return s.GoGrpc.Settings.ConnectEndpoint
-	}
-	return false
 }
 
 // nextGeneration opens a new start attempt and returns its generation.

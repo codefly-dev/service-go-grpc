@@ -27,7 +27,14 @@ injected the service's capabilities and before any listener starts.
 | `ConnectReadHeaderTimeout`, `ConnectReadTimeout`, `ConnectIdleTimeout` | How long the Connect listener waits on a caller, so a client that drips its request cannot hold a connection open: the HTTP/1.1 headers (default 10 s), the body of a request whose caller sends one message — unary and server-streaming — from when the listener starts on it to its end (30 s), and a connection with no request in flight, HTTP/1.1 or HTTP/2 (120 s). Zero keeps the default; a negative value removes that bound. The body bound ends with the body, so a slow handler or a long server stream is never cut, and a method whose caller streams (client-streaming, bidirectional) is not bounded by it: such a method bounds its own stream. |
 | `EndpointGrpcPort`, `EndpointHttpPort`, `EndpointConnectPort` | Resolved by codefly from the endpoints the service declares; `main.go` fills them. |
 
-One implementation, one policy chain, three listeners:
+A service may declare only a `connect` endpoint with `connect-endpoint: true`.
+Generation then starts one listener for Connect, gRPC-Web and native gRPC,
+including `grpc.health.v1.Health`. `EndpointGrpcPort` remains zero; no separate
+gRPC listener or gRPC address is required. Existing services declaring both
+endpoints keep both listeners. REST gateway hops and `GatewayDialOptions` use
+the listener that serves gRPC, including the Connect port in this shape.
+
+One implementation and one policy chain serve the declared listeners:
 
 - **gRPC** (`grpc_gen.go`) serves `Service` directly, with `GRPCServerOptions`
   applied.

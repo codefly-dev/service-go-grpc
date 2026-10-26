@@ -11,9 +11,10 @@ import (
 	"codefly-base/plugins"
 	"context"
 	"fmt"
-	"google.golang.org/grpc/status"
 	"net/http"
 	"strings"
+
+	"google.golang.org/grpc/status"
 
 	"github.com/codefly-dev/core/wool"
 
@@ -82,20 +83,20 @@ func (s *RestServer) Run(ctx context.Context) error {
 
 	opts := gatewayDialOptions(s.config.GatewayDialOptions...)
 
-	err := gen.RegisterWebServiceHandlerFromEndpoint(ctx, gwMux, fmt.Sprintf("127.0.0.1:%d", s.config.EndpointGrpcPort), opts)
+	err := gen.RegisterWebServiceHandlerFromEndpoint(ctx, gwMux, fmt.Sprintf("127.0.0.1:%d", s.config.rpcPort()), opts)
 	if err != nil {
 		return err
 	}
 
 	// Register plugin REST handlers
 	for _, p := range plugins.All() {
-		if err := p.RegisterREST(ctx, gwMux, fmt.Sprintf("127.0.0.1:%d", s.config.EndpointGrpcPort), opts); err != nil {
+		if err := p.RegisterREST(ctx, gwMux, fmt.Sprintf("127.0.0.1:%d", s.config.rpcPort()), opts); err != nil {
 			return fmt.Errorf("plugin %s REST registration failed: %w", p.Name(), err)
 		}
 	}
 
 	// Expose the gRPC health check as /healthz for HTTP probes
-	healthConn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", s.config.EndpointGrpcPort), opts...)
+	healthConn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", s.config.rpcPort()), opts...)
 	if err != nil {
 		return fmt.Errorf("failed to create health client connection: %w", err)
 	}
