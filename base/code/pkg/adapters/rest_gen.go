@@ -11,6 +11,7 @@ import (
 	"codefly-base/plugins"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -33,7 +34,7 @@ type RestServer struct {
 func NewRestServer(c *Configuration) (*RestServer, error) {
 	server := &RestServer{
 		config: c,
-		server: &http.Server{Addr: fmt.Sprintf(":%d", *c.EndpointHttpPort)},
+		server: &http.Server{Addr: net.JoinHostPort(c.EndpointHttpHost, fmt.Sprint(*c.EndpointHttpPort))},
 	}
 	// Start Rest server (and proxy calls to gRPC server endpoint)
 	return server, nil
@@ -83,20 +84,20 @@ func (s *RestServer) Run(ctx context.Context) error {
 
 	opts := gatewayDialOptions(s.config.GatewayDialOptions...)
 
-	err := gen.RegisterWebServiceHandlerFromEndpoint(ctx, gwMux, fmt.Sprintf("127.0.0.1:%d", s.config.rpcPort()), opts)
+	err := gen.RegisterWebServiceHandlerFromEndpoint(ctx, gwMux, s.config.rpcAddress(), opts)
 	if err != nil {
 		return err
 	}
 
 	// Register plugin REST handlers
 	for _, p := range plugins.All() {
-		if err := p.RegisterREST(ctx, gwMux, fmt.Sprintf("127.0.0.1:%d", s.config.rpcPort()), opts); err != nil {
+		if err := p.RegisterREST(ctx, gwMux, s.config.rpcAddress(), opts); err != nil {
 			return fmt.Errorf("plugin %s REST registration failed: %w", p.Name(), err)
 		}
 	}
 
 	// Expose the gRPC health check as /healthz for HTTP probes
-	healthConn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", s.config.rpcPort()), opts...)
+	healthConn, err := grpc.NewClient(s.config.rpcAddress(), opts...)
 	if err != nil {
 		return fmt.Errorf("failed to create health client connection: %w", err)
 	}

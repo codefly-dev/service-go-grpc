@@ -70,6 +70,11 @@ type Configuration struct {
 	EndpointGrpcPort    uint16
 	EndpointHttpPort    *uint16
 	EndpointConnectPort *uint16
+	// Endpoint hosts are filled by main from the resolved native endpoints.
+	// Empty retains wildcard binding for container ingress and custom bootstraps.
+	EndpointGrpcHost    string
+	EndpointHttpHost    string
+	EndpointConnectHost string
 	// GRPCServerOptions installs transport policy such as authentication,
 	// authorization, telemetry, and rate limiting before the listener starts.
 	GRPCServerOptions []grpc.ServerOption
@@ -178,6 +183,20 @@ func (c *Configuration) rpcPort() uint16 {
 	return 0
 }
 
+// rpcAddress follows the actual gRPC listener, including Connect-only mode.
+// Wildcard listeners are reached through loopback; gatewayDialOptions still
+// checks the connected peer and refuses any off-host plaintext hop.
+func (c *Configuration) rpcAddress() string {
+	host := c.EndpointGrpcHost
+	if c.EndpointGrpcPort == 0 {
+		host = c.EndpointConnectHost
+	}
+	if host == "" || net.ParseIP(host).IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, fmt.Sprint(c.rpcPort()))
+}
+
 // defaultMaxMessageBytes is gRPC's own server receive bound, which every face
 // keeps unless the service sets Configuration.MaxMessageBytes.
 const defaultMaxMessageBytes = 4 << 20
@@ -240,7 +259,7 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 
 func (s *GrpcServer) Run(ctx context.Context) error {
 	fmt.Println("Starting gRPC server at", s.configuration.EndpointGrpcPort)
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.configuration.EndpointGrpcPort))
+	lis, err := net.Listen("tcp", net.JoinHostPort(s.configuration.EndpointGrpcHost, fmt.Sprint(s.configuration.EndpointGrpcPort)))
 	if err != nil {
 		return fmt.Errorf("failed to listen: %v", err)
 	}

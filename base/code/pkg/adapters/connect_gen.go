@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -102,7 +103,7 @@ func NewConnectServer(c *Configuration, grpcServer *grpc.Server) (*ConnectServer
 		// deadline per request instead, to the methods whose caller sends one
 		// message.
 		server: &http.Server{
-			Addr:              fmt.Sprintf(":%d", *c.EndpointConnectPort),
+			Addr:              net.JoinHostPort(c.EndpointConnectHost, fmt.Sprint(*c.EndpointConnectPort)),
 			ReadHeaderTimeout: connectTimeout(c.ConnectReadHeaderTimeout, defaultConnectReadHeaderTimeout),
 			IdleTimeout:       idle,
 		},
@@ -209,7 +210,7 @@ func (s *ConnectServer) Shutdown(ctx context.Context) error {
 // dialer those options carry, gatewayDialOptions refuses a connection whose
 // remote address is not loopback.
 func dialledTranscoder(c *Configuration, grpcServer *grpc.Server) (http.Handler, error) {
-	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", c.rpcPort()), gatewayDialOptions(c.GatewayDialOptions...)...)
+	conn, err := grpc.NewClient(c.rpcAddress(), gatewayDialOptions(c.GatewayDialOptions...)...)
 	if err != nil {
 		return nil, err
 	}

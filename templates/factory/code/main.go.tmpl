@@ -26,8 +26,10 @@ import (
 	{{- if or .Settings.RestEndpoint .Settings.ConnectEndpoint }}
 	"github.com/codefly-dev/core/shared"
 	{{- end }}
+	"github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/core/standards"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	codefly "github.com/codefly-dev/sdk-go"
@@ -77,10 +79,16 @@ func main() {
 		panic(fmt.Errorf("cannot resolve this service's %s address: %w", standards.GRPC, err))
 	}
 	config.EndpointGrpcPort = grpcInstance.Port
+	{{- if not .CustomAdapters }}
+	config.EndpointGrpcHost = listenerHost(grpcInstance.Hostname)
+	{{- end }}
 	{{- end }}
 	{{- if .Settings.RestEndpoint }}
 	if net := codefly.For(ctx){{ with .RestEndpointName }}.Endpoint({{ printf "%q" . }}){{ end }}.API(standards.REST).NetworkInstance(); net != nil {
 		config.EndpointHttpPort = shared.Pointer(net.Port)
+		{{- if not .CustomAdapters }}
+	config.EndpointHttpHost = listenerHost(net.Hostname)
+	{{- end }}
 	}
 	{{- end }}
 	{{- if .Settings.ConnectEndpoint }}
@@ -89,6 +97,9 @@ func main() {
 		panic(fmt.Errorf("cannot resolve this service's %s address: %w", standards.CONNECT, err))
 	}
 	config.EndpointConnectPort = shared.Pointer(connectInstance.Port)
+	{{- if not .CustomAdapters }}
+	config.EndpointConnectHost = listenerHost(connectInstance.Hostname)
+	{{- end }}
 	{{- end }}
 	if configure != nil {
 		clean, err := configure(ctx, config)
@@ -131,3 +142,24 @@ func main() {
 	fmt.Println("got interruption signal")
 
 }
+
+{{ if not .CustomAdapters }}
+// listenerHost preserves the resolved own endpoint for host-native execution.
+// Containers keep wildcard ingress: their own carrier is localized for self-dial,
+// not a container-interface bind address. Older renders without a nonempty context carrier
+// retain that behavior; an explicitly supplied context follows Core's semantics.
+func listenerHost(hostname string) string {
+	if _, present := codefly.RuntimeValue("RUNTIME_CONTEXT"); !present {
+		return ""
+	}
+	switch resources.RuntimeContextFromEnv().GetKind() {
+	case resources.RuntimeContextNative, resources.RuntimeContextNix:
+		if strings.TrimSpace(hostname) == "" {
+			panic("cannot start native listener: resolved endpoint hostname is empty")
+		}
+		return hostname
+	default:
+		return ""
+	}
+}
+{{ end }}

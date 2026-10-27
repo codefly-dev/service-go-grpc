@@ -245,7 +245,7 @@ func TestGeneratedConnectListenerBoundsSlowCallers(t *testing.T) {
 // that CI never executes. It needs the network on a cold module cache, like
 // TestBaseGeneratedServiceBuildsFromCleanModuleCache beside it.
 func TestBaseGeneratedServiceServesConfiguredRPCsOverConnect(t *testing.T) {
-	command := exec.CommandContext(t.Context(), "go", "test", "-mod=readonly", "-count=1", "./pkg/adapters/")
+	command := exec.CommandContext(t.Context(), "go", "test", "-mod=readonly", "-count=1", "./...")
 	command.Dir = filepath.Join("base", "code")
 	command.Env = append(os.Environ(), "GOWORK=off")
 	output, err := command.CombinedOutput()

@@ -45,7 +45,7 @@ func TestConnectOnlyFactoryServesEveryProtocol(t *testing.T) {
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}
-		if strings.HasSuffix(path, "_test.go") && entry.Name() != "connect_only_test.go" {
+		if strings.HasSuffix(path, "_test.go") && entry.Name() != "connect_only_test.go" && entry.Name() != "main_test.go" {
 			return nil
 		}
 		data, err := os.ReadFile(path)
@@ -56,6 +56,7 @@ func TestConnectOnlyFactoryServesEveryProtocol(t *testing.T) {
 	}))
 	config := baseCreateConfiguration(&Settings{ConnectEndpoint: true})
 	config.ConnectOnly = true
+	config.ConnectEndpointName = "face2"
 	for _, name := range []string{"main.go", "pkg/adapters/grpc_gen.go", "pkg/adapters/server_gen.go", "pkg/adapters/connect_gen.go", "pkg/adapters/rest_gen.go", "pkg/adapters/cors_gen.go"} {
 		raw, err := factoryFS.ReadFile("templates/factory/code/" + name + ".tmpl")
 		require.NoError(t, err)
@@ -70,7 +71,7 @@ func TestConnectOnlyFactoryServesEveryProtocol(t *testing.T) {
 	}
 	command := exec.CommandContext(t.Context(), "go", "test", "-mod=readonly", "-count=1", "./...")
 	command.Dir = root
-	command.Env = append(os.Environ(), "GOWORK=off")
+	command.Env = append(os.Environ(), "GOWORK=off", "TEST_CONNECT_ONLY=1")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 }
@@ -246,6 +247,7 @@ service TaskService {}
 			}
 			require.Contains(t, string(main), query)
 			require.Contains(t, string(main), "config."+tc.port+" = shared.Pointer(")
+			require.NotContains(t, string(main), "Host = listenerHost", "custom adapters do not acquire new Configuration fields through main-only Sync")
 			require.Equal(t, tc.grpc, strings.Contains(string(main), "API(standards.GRPC)"))
 			assertTestFile(t, filepath.Join(dir, "code/pkg/adapters/server.go"), adapter)
 			require.NoFileExists(t, filepath.Join(dir, "code/pkg/adapters/server_gen.go"))
@@ -257,6 +259,45 @@ service TaskService {}
 			require.Empty(t, response.GetChangedFiles())
 		})
 	}
+}
+
+// A main-only sync cannot extend a service-owned Configuration. Compile the
+// actual template against the established seam, so new field assignments fail
+// here rather than breaking a custom service on its next sync.
+func TestCustomEntrypointBuildsAgainstPortOnlyAdapters(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"go.mod", "go.sum"} {
+		data, err := os.ReadFile(filepath.Join("base/code", name))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), data, 0644))
+	}
+	config := baseCreateConfiguration(&Settings{RestEndpoint: true, ConnectEndpoint: true})
+	config.CustomAdapters = true
+	raw, err := factoryFS.ReadFile("templates/factory/code/main.go.tmpl")
+	require.NoError(t, err)
+	rendered, err := templates.ApplyTemplate(string(raw), config)
+	require.NoError(t, err)
+	formatted, err := imports.Process("main.go", []byte(rendered), &imports.Options{Comments: true})
+	require.NoError(t, err)
+	writeTestFile(t, filepath.Join(root, "main.go"), string(formatted))
+	// Compile-only contract fixture; no calls or listener behavior are simulated.
+	writeTestFile(t, filepath.Join(root, "pkg/adapters/server.go"), `package adapters
+import "context"
+type Configuration struct {
+ EndpointGrpcPort uint16
+ EndpointHttpPort *uint16
+ EndpointConnectPort *uint16
+}
+type Server struct{}
+func NewServer(*Configuration) (*Server, error) { panic("compile-only fixture") }
+func (*Server) Start(context.Context) error { panic("compile-only fixture") }
+func (*Server) Stop() { panic("compile-only fixture") }
+`)
+	command := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "./...")
+	command.Dir = root
+	command.Env = append(os.Environ(), "GOWORK=off")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
 }
 
 // TestConnectOnlyEntrypointStartsOnAListenerNotNamedConnect builds the
