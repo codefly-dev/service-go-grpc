@@ -197,7 +197,11 @@ bug it prevents is possible. The existing tests do; match them.
   `codefly publish` opens: a version bumped by hand makes publish skip it. A
   `replace` of `core` never leaves your working tree —
   `TestTheCorePinIsAReleaseNotAReplace` refuses one, because the require-line
-  gate cannot see it and GoReleaser builds from the tag.
+  gate cannot see it and GoReleaser builds from the tag. The Alpine pin is two
+  values (`AlpineVersion`, `AlpineDigest`, the digest also the recipe's literal);
+  only the digest resolves, so a version moved alone reads patched and ships
+  nothing. The binding test cannot tell the digest is that version's — check the
+  registry, musl as well as OpenSSL.
 
 ## Workflow
 

@@ -492,7 +492,17 @@ func NewService() *Service {
 const GoVersion = "1.27.3"
 
 // AlpineVersion is the exact runtime Alpine patch release used for container builds.
-const AlpineVersion = "3.23.5"
+const AlpineVersion = "3.23.7"
+
+// AlpineDigest is the multi-arch index digest of alpine:AlpineVersion and the
+// value the Dockerfile template's final stage pins. An Alpine patch release is
+// what carries musl and OpenSSL fixes into the runtime image, so the two move
+// together: 3.23.5 (sha256:fd791d74...) shipped libssl3/libcrypto3 3.5.7-r0 and
+// musl 1.2.5-r23, leaving the OpenSSL fixes released in 3.5.8-r0 and the musl
+// fix for CVE-2026-107891 in 1.2.5-r24 unapplied. 3.23.7 is the latest patch of
+// the supported v3.23 branch (EOL 2027-11-01) and carries 3.5.9-r0 and
+// 1.2.5-r24; 3.23.6 would have fixed OpenSSL and kept the musl exposure.
+const AlpineDigest = "sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359fde849b6703d63"
 
 // runtimeImage is the container a service is built and run in under the
 // container runtime context: service-go's locked Go runtime image

@@ -123,6 +123,25 @@ Runtime assets must exist as ordinary files without symlinks; they keep their
 source-relative paths in the final image. Build evidence does not establish feed
 approval, a security scan, publication or an installed release.
 
+The runtime base is a pinned Alpine patch release, named by version and resolved
+by immutable digest, and `runtime-packages` installs into that image. Moving onto
+a patched base is a pin change in the agent, released like any other agent change,
+and not something a service configures or can pull forward on its own. A service
+built `with-cgo` links the base's C library at runtime and takes its patch level
+directly; without CGO the binary is statically linked Go and carries none of it.
+
+The pin fixes the base layer's bytes and no more than that. The final stage still
+runs `apk add` for the CA bundle and for any `runtime-packages`, resolving from a
+live Alpine repository at build time, so two builds of one recipe can install
+different package revisions. The recipe never runs `apk upgrade`, which bounds
+that drift rather than removing it. So the pin says which base an image was built
+from — not that the finished image has been inventoried or scanned, and not that
+any released agent carries it. Qualifying a production image means naming that
+image's own digest and scanning it.
+
+The container a service is built and run in under the container runtime context is
+a separate, separately pinned image; moving the runtime base does not move it.
+
 ## Kubernetes health probes
 
 `health` declares the contract the rendered readiness and startup probes speak.

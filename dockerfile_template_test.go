@@ -40,6 +40,39 @@ func TestDockerfileTemplateUsesPinnedMinimalImages(t *testing.T) {
 	}
 }
 
+func TestRuntimeBaseIsThePinnedAlpineDigest(t *testing.T) {
+	t.Parallel()
+
+	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+	require.NoError(t, err)
+	rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{DockerTemplating: golanghelpers.DockerTemplating{
+		GoVersion:     GoVersion,
+		AlpineVersion: AlpineVersion,
+		ModuleRoot:    "code",
+		BuildTarget:   ".",
+	}})
+	require.NoError(t, err)
+
+	runtimeStage := rendered[strings.Index(rendered, "# Final stage"):]
+
+	// The digest is what the daemon actually resolves; the tag beside it is
+	// decoration. So the recorded pin and the literal the recipe ships must be
+	// the same string: an edit to either one alone would leave AlpineDigest --
+	// which carries the patch provenance a reviewer reads -- describing a base
+	// the recipe does not build on, with nothing failing. That the digest
+	// belongs to alpine:AlpineVersion is a registry fact this test cannot
+	// check without a network call; it is verified when the pin is moved and
+	// recorded in AlpineDigest's comment.
+	require.Contains(t, runtimeStage, "@"+AlpineDigest)
+	require.Contains(t, runtimeStage, "FROM alpine:"+AlpineVersion+"@")
+
+	// The base is patched by moving the pin, never by upgrading packages during
+	// the build. An `apk upgrade` resolves against whatever the mirror serves at
+	// build time, so it would make the image's package levels unreproducible
+	// from the recipe and silently undo the point of pinning a digest at all.
+	require.NotContains(t, runtimeStage, "apk upgrade")
+}
+
 func TestDockerfileTemplateCarriesModuleFixturesForWorkspaceBuilds(t *testing.T) {
 	t.Parallel()
 
