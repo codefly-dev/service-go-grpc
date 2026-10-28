@@ -7,8 +7,9 @@ import (
 
 // WithNoProxy and loopback are independent safeguards: the runtime regression
 // exercises the shared dial options, while this holds every generated target,
-// including plugin registration, to the local server's IPv4 loopback address.
-func TestGatewaySelfDialTargetsAreLoopback(t *testing.T) {
+// including plugin registration, to the address of the resolved local listener.
+// The wire tests separately enforce loopback peers, including IPv6 and custom dialers.
+func TestGatewaySelfDialTargetsUseResolvedListener(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		dials int
@@ -21,8 +22,8 @@ func TestGatewaySelfDialTargetsAreLoopback(t *testing.T) {
 			if strings.Contains(rendered, `"0.0.0.0:%d"`) {
 				t.Fatal("generated gateway still dials a wildcard address")
 			}
-			if got := strings.Count(rendered, `fmt.Sprintf("127.0.0.1:%d",`); got != tc.dials {
-				t.Fatalf("loopback self-dials = %d, want %d", got, tc.dials)
+			if got := strings.Count(rendered, `.rpcAddress()`); got != tc.dials {
+				t.Fatalf("resolved self-dials = %d, want %d", got, tc.dials)
 			}
 		})
 	}

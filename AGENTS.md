@@ -75,7 +75,7 @@ generates: a defect is almost always observed in one repo and owned by another.
 ## Build and test
 
 Derived from `.github/workflows/ci.yml`: a `dependency-lock` gate, then
-`codefly-dev/core/.github/workflows/go-service-ci.yml@v0.19.4`.
+`codefly-dev/core/.github/workflows/go-service-ci.yml@v0.19.10`.
 
 ```bash
 go test ./... -count=1 -run '^Test(FactoryDependencyLocksMatchBase|BaseGeneratedServiceBuildsFromCleanModuleCache)$'

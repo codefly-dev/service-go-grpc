@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -23,7 +24,6 @@ import (
 	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -64,7 +64,8 @@ func NewConnectServer(c *Configuration, grpcServer *grpc.Server) (*ConnectServer
 	var transcoder http.Handler
 	var err error
 	if len(c.GatewayDialOptions) == 0 {
-		transcoder, err = vanguardgrpc.NewTranscoder(grpcServer, vanguard.WithDefaultServiceOptions(messageBound(c)))
+		transcoder, err = vanguardgrpc.NewTranscoder(grpcServer, connectJSONCodec(), vanguard.WithDefaultServiceOptions(
+			vanguard.WithTargetCodecs(vanguard.CodecProto), messageBound(c)))
 	} else {
 		transcoder, err = dialledTranscoder(c, grpcServer)
 	}
@@ -102,7 +103,7 @@ func NewConnectServer(c *Configuration, grpcServer *grpc.Server) (*ConnectServer
 		// deadline per request instead, to the methods whose caller sends one
 		// message.
 		server: &http.Server{
-			Addr:              fmt.Sprintf(":%d", *c.EndpointConnectPort),
+			Addr:              net.JoinHostPort(c.EndpointConnectHost, fmt.Sprint(*c.EndpointConnectPort)),
 			ReadHeaderTimeout: connectTimeout(c.ConnectReadHeaderTimeout, defaultConnectReadHeaderTimeout),
 			IdleTimeout:       idle,
 		},
@@ -209,26 +210,36 @@ func (s *ConnectServer) Shutdown(ctx context.Context) error {
 // dialer those options carry, gatewayDialOptions refuses a connection whose
 // remote address is not loopback.
 func dialledTranscoder(c *Configuration, grpcServer *grpc.Server) (http.Handler, error) {
-	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", c.rpcPort()), gatewayDialOptions(c.GatewayDialOptions...)...)
+	conn, err := grpc.NewClient(c.rpcAddress(), gatewayDialOptions(c.GatewayDialOptions...)...)
 	if err != nil {
 		return nil, err
 	}
 	forwarder := grpc.NewServer(grpc.ForceServerCodec(frameCodec{}), grpc.MaxRecvMsgSize(c.maxMessageBytes()), grpc.UnknownServiceHandler(func(_ any, in grpc.ServerStream) error {
 		return forwardCall(conn, in)
 	}))
-	codecs := []string{vanguard.CodecProto}
-	if encoding.GetCodec(vanguard.CodecJSON) != nil {
-		codecs = append(codecs, vanguard.CodecJSON)
-	}
 	var services []*vanguard.Service
 	for name := range grpcServer.GetServiceInfo() {
 		services = append(services, vanguard.NewService(name, forwarder))
 	}
-	return vanguard.NewTranscoder(services, vanguard.WithDefaultServiceOptions(
-		vanguard.WithTargetCodecs(codecs...),
+	return vanguard.NewTranscoder(services, connectJSONCodec(), vanguard.WithDefaultServiceOptions(
+		vanguard.WithTargetCodecs(vanguard.CodecProto),
 		vanguard.WithTargetProtocols(vanguard.ProtocolGRPC),
 		messageBound(c),
 	))
+}
+
+// connectJSONCodec uses the omitted-default ProtoJSON profile for Connect JSON.
+// Both constructors target protobuf so an upstream JSON codec cannot bypass it.
+func connectJSONCodec() vanguard.TranscoderOption {
+	return vanguard.WithCodec(func(res vanguard.TypeResolver) vanguard.Codec {
+		codec := vanguard.NewJSONCodec(res)
+		codec.MarshalOptions.EmitUnpopulated = false
+		codec.MarshalOptions.EmitDefaultValues = false
+		codec.MarshalOptions.UseProtoNames = false
+		codec.MarshalOptions.UseEnumNumbers = false
+		codec.MarshalOptions.AllowPartial = false
+		return codec
+	})
 }
 
 // messageBound holds the transcoder to the gRPC server's receive bound,

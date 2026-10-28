@@ -27,6 +27,20 @@ injected the service's capabilities and before any listener starts.
 | `ConnectReadHeaderTimeout`, `ConnectReadTimeout`, `ConnectIdleTimeout` | How long the Connect listener waits on a caller, so a client that drips its request cannot hold a connection open: the HTTP/1.1 headers (default 10 s), the body of a request whose caller sends one message — unary and server-streaming — from when the listener starts on it to its end (30 s), and a connection with no request in flight, HTTP/1.1 or HTTP/2 (120 s). Zero keeps the default; a negative value removes that bound. The body bound ends with the body, so a slow handler or a long server stream is never cut, and a method whose caller streams (client-streaming, bidirectional) is not bounded by it: such a method bounds its own stream. |
 | `EndpointGrpcPort`, `EndpointHttpPort`, `EndpointConnectPort` | Resolved by codefly from the endpoints the service declares; `main.go` fills them. |
 
+Generated `main.go` also fills `EndpointGrpcHost`, `EndpointHttpHost` and
+`EndpointConnectHost` from each resolved own endpoint for native/Nix execution.
+Those hosts bind the listeners and select their loopback self-hop, including
+IPv6. An empty native endpoint hostname fails before startup. Container and
+Kubernetes contexts retain wildcard ingress; older launches without a nonempty runtime
+context carrier retain their previous wildcard behavior. An explicitly supplied
+unknown context follows Core's native default. Custom bootstraps leaving the host
+fields empty retain wildcard binding. Advertised `SELF_ENDPOINT` peer addresses
+are never used for binding. Loopback restricts off-machine ingress, not other
+processes on this host. When Sync owns only a marked entrypoint and leaves custom
+adapters untouched, it retains their established port-only Configuration seam
+and warns that those adapters own native host binding; it does not claim or
+rewrite their listener implementation.
+
 A service may declare only a `connect` endpoint with `connect-endpoint: true`.
 Generation then starts one listener for Connect, gRPC-Web and native gRPC,
 including `grpc.health.v1.Health`. `EndpointGrpcPort` remains zero; no separate
@@ -56,6 +70,21 @@ One implementation and one policy chain serve the declared listeners:
 Each listener is started only when its endpoint is declared and scaffolded
 (`rest-endpoint` / `connect-endpoint` in the service's settings), and the three
 are independent: enabling Connect changes nothing about how gRPC or REST start.
+
+## Connect JSON encoding
+
+Connect JSON uses ProtoJSON with omitted defaults: absent ordinary messages and
+Timestamps, implicit-presence zero scalars and empty lists/maps have no key. A present empty
+message remains `{}`; an explicit `google.protobuf.Value` null remains `null`,
+and a present zero wrapper carries its zero value. Field JSON names (including
+custom names), named enums, quoted 64-bit integers and well-known type formats
+follow protobuf's JSON mapping. Unknown request fields are discarded.
+
+Both the in-process and dialled bridges use Vanguard's JSON codec with its
+resolver, and target protobuf upstream. A registered upstream gRPC JSON codec
+therefore cannot bypass this Connect JSON profile. Native gRPC JSON on the
+Connect-only direct-dispatch path and REST's separately configured gateway
+retain their own codec behavior; this promise covers Connect JSON.
 
 ## Extending the REST listener
 

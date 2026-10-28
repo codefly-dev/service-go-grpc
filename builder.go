@@ -178,8 +178,9 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 		if s.GoGrpc.Settings.RestEndpoint && s.GoGrpc.Settings.Cors.DeniesCrossOrigin() {
 			s.Wool.Warn("REST CORS defaults to same-origin: the regenerated adapter refuses all cross-origin requests. Set cors.allowed-origins or cors.allow-all in settings to permit cross-origin access.")
 		}
-		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}, ConnectOnly: s.GoGrpc.GrpcEndpoint == nil && s.GoGrpc.ConnectEndpoint != nil}
+		create := CreateConfiguration{Information: s.Information, Settings: s.GoGrpc.Settings, Envs: []string{}, ConnectOnly: s.GoGrpc.GrpcEndpoint == nil && s.GoGrpc.ConnectEndpoint != nil, CustomAdapters: mainOnly}
 		if mainOnly {
+			s.Wool.Warn("Custom adapters own listener binding: refreshed main preserves their port-only Configuration seam; native listeners must honor their resolved endpoint host.")
 			// Custom adapters can own declared listeners with scaffolding off.
 			// Only main is rendered here: its port lookups follow declarations,
 			// without changing the service's adapter-generation settings.
@@ -1221,6 +1222,8 @@ func (s *Builder) Options() []*agentv0.Question {
 type CreateConfiguration struct {
 	// ConnectOnly is derived from declared endpoints, never a user setting.
 	ConnectOnly bool
+	// CustomAdapters means Sync owns only main, not the listener Configuration.
+	CustomAdapters bool
 	// GrpcEndpointName, RestEndpointName and ConnectEndpointName are the
 	// declared names of the listeners main resolves, set only where a name is
 	// not its API's own. Empty for a new service, whose endpoints are named

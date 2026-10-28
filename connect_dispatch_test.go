@@ -180,7 +180,8 @@ func TestGeneratedFacesShareOneMessageBound(t *testing.T) {
 		}
 		connectAdapter := string(renderFactoryGo(t, "templates/factory/code/pkg/adapters/connect_gen.go.tmpl", settings))
 		for _, want := range []string{
-			"vanguardgrpc.NewTranscoder(grpcServer, vanguard.WithDefaultServiceOptions(messageBound(c)))",
+			"vanguardgrpc.NewTranscoder(grpcServer, connectJSONCodec(), vanguard.WithDefaultServiceOptions(",
+			"vanguard.WithTargetCodecs(vanguard.CodecProto), messageBound(c)))",
 			"vanguard.WithTargetProtocols(vanguard.ProtocolGRPC),\n\t\tmessageBound(c),",
 			"grpc.ForceServerCodec(frameCodec{}), grpc.MaxRecvMsgSize(c.maxMessageBytes())",
 			"refuseDeclaredOversize(transcoder, messageBufferBytes(c))",
@@ -245,7 +246,7 @@ func TestGeneratedConnectListenerBoundsSlowCallers(t *testing.T) {
 // that CI never executes. It needs the network on a cold module cache, like
 // TestBaseGeneratedServiceBuildsFromCleanModuleCache beside it.
 func TestBaseGeneratedServiceServesConfiguredRPCsOverConnect(t *testing.T) {
-	command := exec.CommandContext(t.Context(), "go", "test", "-mod=readonly", "-count=1", "./pkg/adapters/")
+	command := exec.CommandContext(t.Context(), "go", "test", "-mod=readonly", "-count=1", "./...")
 	command.Dir = filepath.Join("base", "code")
 	command.Env = append(os.Environ(), "GOWORK=off")
 	output, err := command.CombinedOutput()
