@@ -4,7 +4,7 @@ name: go-grpc
 version: 0.1.69
 source:
   directory: .
-  agent: codefly.dev/go:0.0.70
+  agent: codefly.dev/go:0.0.74
 release:
   owner: workflow
   workflow: releaser.yml
