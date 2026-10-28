@@ -71,6 +71,21 @@ Each listener is started only when its endpoint is declared and scaffolded
 (`rest-endpoint` / `connect-endpoint` in the service's settings), and the three
 are independent: enabling Connect changes nothing about how gRPC or REST start.
 
+## Connect JSON encoding
+
+Connect JSON uses ProtoJSON with omitted defaults: absent ordinary messages and
+Timestamps, implicit-presence zero scalars and empty lists/maps have no key. A present empty
+message remains `{}`; an explicit `google.protobuf.Value` null remains `null`,
+and a present zero wrapper carries its zero value. Field JSON names (including
+custom names), named enums, quoted 64-bit integers and well-known type formats
+follow protobuf's JSON mapping. Unknown request fields are discarded.
+
+Both the in-process and dialled bridges use Vanguard's JSON codec with its
+resolver, and target protobuf upstream. A registered upstream gRPC JSON codec
+therefore cannot bypass this Connect JSON profile. Native gRPC JSON on the
+Connect-only direct-dispatch path and REST's separately configured gateway
+retain their own codec behavior; this promise covers Connect JSON.
+
 ## Extending the REST listener
 
 `rest_gen.go` is generated: a sync overwrites it, so an edit to it disappears
