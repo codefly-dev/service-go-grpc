@@ -49,3 +49,10 @@ workspace qualification, build the reviewed service-go source packager through
 its own `agent build --native-only` command into the same isolated installation.
 A manifest version is only an installation key: record the packager's source
 revision and digest, because a local build need not equal that published release.
+
+The stable Core pin is `v0.19.10`, including Linux process-absence inspection.
+Release qualification uses `GOWORK=off` and no local workspace source selection;
+the built binary and SBOM must identify that published module. Keep earlier local
+Core source proofs separate from the stable-pin artifact. A darwin lifecycle run
+does not qualify Linux execution merely because the selected release includes
+the Linux correction.
