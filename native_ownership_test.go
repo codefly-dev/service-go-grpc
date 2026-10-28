@@ -57,10 +57,6 @@ func TestNativeAgentOwnershipLifecycle(t *testing.T) {
 	if a.conn.ProcessInfo().PID == b.conn.ProcessInfo().PID {
 		t.Fatal("sibling must have an independently launched agent owner")
 	}
-	siblingOwner, err := runners.InspectProcess(b.conn.ProcessInfo().PID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	assertNativeOwnership(t, ctx, a.group, a.workspace, true)
 	assertNativeOwnership(t, ctx, b.group, b.workspace, true)
 
@@ -79,11 +75,24 @@ func TestNativeAgentOwnershipLifecycle(t *testing.T) {
 	// Restart through the same Runtime, then kill only its disposable owner
 	// birth so no agent Stop/finalizer can mask recovery of an orphan workload.
 	a.group = startNativeWorkload(t, ctx, a.client, a.workspace)
-	owner, err := runners.InspectProcess(a.conn.ProcessInfo().PID)
-	if err != nil {
-		t.Fatal(err)
+	// A fresh inspection alone could select a replacement at the saved PID.
+	// Exercise the real pre-signal guard against a stale birth: the current
+	// disposable agent and its workload must remain alive and authenticated.
+	if !t.Run("stale_owner_refuses_delivery", func(t *testing.T) {
+		stale := a.owner
+		stale.StartID++
+		if err := signalNativeOwner(ctx, stale); !errors.Is(err, errNativeOwnerChanged) {
+			t.Fatalf("stale owner was not refused before delivery: %v", err)
+		}
+		current, err := runners.InspectProcess(a.owner.PID)
+		if err != nil || current != a.owner {
+			t.Fatalf("stale-owner refusal affected the original agent: %+v, %v", current, err)
+		}
+		assertNativeOwnership(t, ctx, a.group, a.workspace, true)
+	}) {
+		t.FailNow()
 	}
-	if err := runners.SignalProcess(ctx, owner, syscall.SIGKILL); err != nil {
+	if err := signalNativeOwner(ctx, a.owner); err != nil {
 		t.Fatal(err)
 	}
 	waitNativeCondition(t, func() bool {
@@ -101,8 +110,13 @@ func TestNativeAgentOwnershipLifecycle(t *testing.T) {
 		t.Fatalf("preview: %v", err)
 	}
 	expected, err := runners.ParseProcessGroupRecoveryExpectation(preview)
-	if err != nil || expected.Namespace != "authenticated-v2" || expected.PGID != a.group.PGID() || expected.Owner.PID != owner.PID {
+	if err != nil || expected.Namespace != "authenticated-v2" || expected.PGID != a.group.PGID() {
 		t.Fatalf("actual agent did not write the expected v2 registration: %+v, %v", expected, err)
+	}
+	// Recovery receipts represent the recorded owner with PGID zero. Its birth
+	// must still be the authenticated agent captured before any workload RPC.
+	if expected.Owner.PGID != 0 || expected.Owner.PID != a.owner.PID || expected.Owner.BootID != a.owner.BootID || expected.Owner.StartID != a.owner.StartID || expected.Owner.Executable != a.owner.Executable {
+		t.Fatalf("recovery receipt names a different owner: %+v, original %+v", expected.Owner, a.owner)
 	}
 	t.Logf("orphan preview: %s", preview)
 	assertNativeOwnership(t, ctx, a.group, a.workspace, false)
@@ -121,8 +135,8 @@ func TestNativeAgentOwnershipLifecycle(t *testing.T) {
 		t.Fatalf("recovery did not remove the exact registration: %v", err)
 	}
 	assertNativeOwnership(t, ctx, b.group, b.workspace, true)
-	currentSiblingOwner, err := runners.InspectProcess(b.conn.ProcessInfo().PID)
-	if err != nil || currentSiblingOwner != siblingOwner {
+	currentSiblingOwner, err := runners.InspectProcess(b.owner.PID)
+	if err != nil || currentSiblingOwner != b.owner {
 		t.Fatalf("recovery changed the sibling owner birth: %+v, %v", currentSiblingOwner, err)
 	}
 	t.Logf("recovery result: %s; sibling preserved", result)
@@ -138,6 +152,22 @@ type ownedNativeService struct {
 	conn      *manager.AgentConn
 	client    runtimev0.RuntimeClient
 	group     *runners.TrackedProcessGroup
+	owner     runners.ProcessIdentity
+}
+
+var errNativeOwnerChanged = errors.New("native agent owner identity changed before signal")
+
+// This fixture never execs or changes process groups. Require the entire
+// original identity, then let Core bind the current identity to signal delivery.
+func signalNativeOwner(ctx context.Context, original runners.ProcessIdentity) error {
+	current, err := runners.InspectProcess(original.PID)
+	if err != nil {
+		return err
+	}
+	if current != original {
+		return errNativeOwnerChanged
+	}
+	return runners.SignalProcess(ctx, current, syscall.SIGKILL)
 }
 
 func startOwnedNativeService(t *testing.T, ctx context.Context, name string) *ownedNativeService {
@@ -168,6 +198,15 @@ func main() {
 		t.Fatal(err)
 	}
 	t.Cleanup(conn.Close)
+	ownerGroup, err := runners.LookupProcessGroup(conn.ProcessInfo().PID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := ownerGroup.Leader()
+	ownership, err := ownerGroup.InspectOwnership(ctx)
+	if err != nil || !ownership.Authenticated || !ownership.OwnerAlive || owner.PID != conn.ProcessInfo().PID || len(ownership.Members) != 1 || ownership.Members[0] != owner {
+		t.Fatalf("agent launch did not authenticate its original owner identity: %+v, %v", ownership, err)
+	}
 	client := runtimev0.NewRuntimeClient(conn.GRPCConn())
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -203,7 +242,7 @@ func main() {
 	if err != nil || initialized.GetStatus().GetState() != runtimev0.InitStatus_READY {
 		t.Fatalf("init: %v, %v\n%s", initialized, err, conn.StderrTail())
 	}
-	return &ownedNativeService{workspace, conn, client, startNativeWorkload(t, ctx, client, workspace)}
+	return &ownedNativeService{workspace, conn, client, startNativeWorkload(t, ctx, client, workspace), owner}
 }
 
 func startNativeWorkload(t *testing.T, ctx context.Context, client runtimev0.RuntimeClient, workspace string) *runners.TrackedProcessGroup {

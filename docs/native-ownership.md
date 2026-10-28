@@ -23,9 +23,15 @@ agent loading. It records binary, adjacent SBOM and CLI SHA256 digests. Its two
 disposable workspaces launch independently authenticated agent owners through
 Core's manager and invoke ordinary gRPC Load, Init, Start and Stop. Normal Stop
 must remove the workload and registration. The first runtime then restarts; Core's
-identity-bound API kills only that disposable agent owner. The existing CLI
+identity-bound API kills only that disposable agent owner. Before workload RPCs,
+the test authenticates the agent's existing tracked group and retains its leader
+identity. Immediately before signaling, it requires the current full identity to
+equal that original identity; a stale-birth negative must refuse delivery and
+leave the real agent and workload alive. The existing CLI
 previews the surviving orphan and recovers it using the unchanged preview receipt
-as `--expect`. The sibling's exact leader birth and live owner must survive both
+as `--expect`, with its recorded owner birth bound to the retained agent identity
+(the receipt represents the owner's PGID as zero). The sibling's exact leader birth
+and original live owner must survive both
 operations, then stop normally.
 
 This gate bypasses sandbox and principal policy, as in service-go's proof. It
