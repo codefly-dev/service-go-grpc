@@ -97,8 +97,8 @@ starts a live in-process agent and talks to it through the generated client. So:
 `TestBaseGeneratedServiceBuildsFromCleanModuleCache` needs network (it compiles
 `base/code` against an empty module cache); `TestCreateToRun*` and
 `TestGoGrpcLifecycle_Matrix` need Docker; `TestPackagingImage` is the one test
-that builds an image and is opt-in via `CODEFLY_PACKAGING_IMAGE_TEST=1`. Around
-90 s warm with backends present, several minutes cold.
+that builds images, opt-in via `CODEFLY_PACKAGING_IMAGE_TEST=1`; CI runs static
+and native cases on amd64/arm64 and retains archives/inventories. Around 90 s warm.
 
 Tests that create a Runtime container register `cleanupRuntime` before `Init`
 or runner creation. It stops and destroys with fresh cleanup contexts, even
@@ -130,9 +130,9 @@ bug it prevents is possible. The existing tests do; match them.
   adapter — and `base/code/go.mod`'s `core` line must equal this module's. Edit
   `base/code`, then mirror into the `.tmpl`s in the same commit. Dependabot does
   not watch `base/code`; that mirror is manual.
-- **This agent never builds an image.** `Build` renders `templates/builder` into
-  the caller's output directory and returns a `DockerBuildPlan`. A test that
-  shells out to `docker build` means you are solving it in the wrong repo.
+- **Production `Build` emits a recipe, never builds an image.** It renders
+  `templates/builder` and returns a `DockerBuildPlan` for the CLI. The maintained
+  opt-in packaging tests may build that exact recipe to qualify runtime behavior.
 - **Private Go modules are the CLI's credential, never the recipe's.** The
   Dockerfile declares `ARG GOPRIVATE` and mounts the optional BuildKit secret
   `netrc` at `/root/.netrc` on every `go mod download`; the CLI supplies both

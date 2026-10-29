@@ -1,0 +1,84 @@
+package main
+
+import (
+	"bufio"
+	"crypto/sha256"
+	"crypto/x509"
+	"fmt"
+	"os"
+	"os/user"
+	"path/filepath"
+	"strings"
+)
+
+// This program runs inside the final runtime. It needs neither a shell nor
+// utilities, so scratch receives exactly the same evidence checks as Alpine.
+func main() {
+	must := func(err error) {
+		if err != nil {
+			panic(err)
+		}
+	}
+	check := func(ok bool, message string) {
+		if !ok {
+			panic(message)
+		}
+	}
+	check(len(os.Args) == 2 && (os.Args[1] == "scratch" || os.Args[1] == "native"), "expected runtime kind")
+	check(os.Getuid() != 0, "runtime must be non-root")
+	u, err := user.Current()
+	must(err)
+	check(u.Username == "appuser", "user records missing")
+	tmp, err := os.Stat(os.TempDir())
+	must(err)
+	check(tmp.Mode().Perm() == 0o777 && tmp.Mode()&os.ModeSticky != 0, fmt.Sprintf("temp directory must retain sticky world-write permissions; got %s", tmp.Mode()))
+	f, err := os.CreateTemp("", "runtime-proof-")
+	must(err)
+	must(f.Close())
+	must(os.Remove(f.Name()))
+	f, err = os.CreateTemp(u.HomeDir, "runtime-proof-")
+	must(err)
+	must(f.Close())
+	must(os.Remove(f.Name()))
+	roots, err := x509.SystemCertPool()
+	must(err)
+	check(len(roots.Subjects()) > 0, "CA trust roots missing")
+	const evidence = "/usr/share/codefly/build/"
+	for _, name := range []string{"modules.json", "binaries.txt", "sources.sha256", "go.mod"} {
+		b, err := os.ReadFile(evidence + name)
+		must(err)
+		check(len(b) > 0, "empty build evidence: "+name)
+	}
+	_, err = os.Stat(evidence + "go.sum")
+	must(err)
+	manifest, err := os.Open(evidence + "runtime.sha256")
+	must(err)
+	scanner := bufio.NewScanner(manifest)
+	count := 0
+	for scanner.Scan() {
+		fields := strings.SplitN(scanner.Text(), "  ", 2)
+		check(len(fields) == 2, "invalid runtime hash entry")
+		b, err := os.ReadFile(fields[1])
+		must(err)
+		check(fmt.Sprintf("%x", sha256.Sum256(b)) == fields[0], "runtime bytes differ: "+fields[1])
+		count++
+	}
+	must(scanner.Err())
+	must(manifest.Close())
+	check(count >= 3, "runtime inventory must include app, asset and command")
+	// Check both sides of the final-base contract, not just whether it boots.
+	for _, name := range []string{"/bin/sh", "/sbin/apk", "/lib/apk/db/installed", "/etc/os-release"} {
+		_, err := os.Stat(name)
+		if os.Args[1] == "scratch" {
+			check(os.IsNotExist(err), "unexpected OS payload: "+name)
+		} else {
+			must(err)
+		}
+	}
+	libs, err := filepath.Glob("/lib/ld-musl-*")
+	must(err)
+	check((len(libs) == 0) == (os.Args[1] == "scratch"), "native loader does not match runtime kind")
+	metadata, err := os.ReadFile(evidence + "binaries.txt")
+	must(err)
+	fmt.Print("command-present\n", string(metadata))
+}

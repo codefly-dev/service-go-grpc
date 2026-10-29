@@ -97,7 +97,7 @@ RUN --network=none cd {{ .ModuleRoot }} && \
 {{- end }}
 
 # Final stage
-FROM alpine:{{ .AlpineVersion }}@sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359fde849b6703d63
+FROM alpine:{{ .AlpineVersion }}@sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359fde849b6703d63 AS runtimefiles
 
 # Runtime only needs the public CA bundle{{ if .RuntimePackages }} and the packages the service declares in runtime-packages{{ end }}. Keep build tooling out of the image.
 RUN apk add --no-cache ca-certificates{{ range .RuntimePackages }} {{ . }}{{ end }}
@@ -107,11 +107,6 @@ RUN apk add --no-cache ca-certificates{{ range .RuntimePackages }} {{ . }}{{ end
 # service's runtime path — e.g. "../routing/rest", anchored at the source dir —
 # resolve to the same file it does in dev.
 WORKDIR /app/{{ .SourceDir }}
-
-# Set environment variables
-{{ range .Envs}}
-ENV {{.Key}}={{.Value}}
-{{end}}
 
 # Create a non-root user
 RUN adduser -D appuser
@@ -141,7 +136,35 @@ RUN find /app -type f -print0 | sort -z | xargs -0 sha256sum > /usr/share/codefl
     sha256sum /usr/local/bin/{{ .Name }} >> /usr/share/codefly/build/runtime.sha256{{ end }}
 {{- end }}
 
-# Use the non-root user
+{{- if and (not .WithCGO) (not .RuntimePackages) }}
+# Static services need only their declared files, trust roots and user records.
+# Keep assembly tools and the OS in runtimefiles; retain evidence of the same
+# runtime bytes without running a shell in the final image.
+# COPY copies directory contents, not the source directory itself. Carry home
+# and tmp as children so their ownership and sticky permissions survive.
+RUN mkdir -p /runtime-dirs/home && \
+    cp -a /home/appuser /runtime-dirs/home/ && cp -a /tmp /runtime-dirs/
+FROM scratch
+COPY --from=runtimefiles /app /app
+COPY --from=runtimefiles /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=runtimefiles /etc/passwd /etc/passwd
+COPY --from=runtimefiles /etc/group /etc/group
+COPY --from=runtimefiles /runtime-dirs/ /
+{{- if .ModuleRoot }}
+COPY --from=runtimefiles /usr/share/codefly/build /usr/share/codefly/build
+{{- end }}
+{{- range .BuildCommands }}
+COPY --from=runtimefiles /usr/local/bin/{{ .Name }} /usr/local/bin/{{ .Name }}
+{{- end }}
+WORKDIR /app/{{ .SourceDir }}
+{{- end }}
+
+# These settings apply to either final base. FROM scratch resets image config.
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+{{ range .Envs}}
+ENV {{.Key}}={{.Value}}
+{{end}}
+
 USER appuser
 
 # Expose ports

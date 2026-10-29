@@ -16,11 +16,30 @@ import (
 
 // This opt-in integration calls Build over its public RPC, builds that exact
 // recipe, and executes both the main program and a declared command. It never
-// pushes and removes only the image created under this test's unique tag.
+// pushes and removes only its own containers and uniquely tagged image.
 func TestPackagingImage(t *testing.T) {
 	if os.Getenv("CODEFLY_PACKAGING_IMAGE_TEST") != "1" {
 		t.Skip("set CODEFLY_PACKAGING_IMAGE_TEST=1 for a real Docker build")
 	}
+	// CGO_ENABLED alone does not prove native compatibility: the CGO variants
+	// call libc, and the package variants execute the declared OS command.
+	for _, tc := range []struct {
+		name     string
+		cgo      bool
+		packages []string
+	}{
+		{name: "static"},
+		{name: "cgo", cgo: true},
+		{name: "packages", packages: []string{"git"}},
+		{name: "cgo_packages", cgo: true, packages: []string{"git"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testPackagingImage(t, tc.cgo, tc.packages)
+		})
+	}
+}
+
+func testPackagingImage(t *testing.T, cgo bool, packages []string) {
 	identity := goGrpcServiceFixture(t)
 	client, builder := startBuilderAgent(t, identity)
 	root := filepath.Join(identity.GetWorkspacePath(), "mod/svc")
@@ -28,12 +47,20 @@ func TestPackagingImage(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(root, dir), 0o755))
 	}
 	main := "package main\nimport (\"fmt\"; \"os\")\nfunc main() { b,e:=os.ReadFile(\"../routing/routes.json\"); if e!=nil {panic(e)}; fmt.Print(string(b)) }\n"
+	if cgo {
+		main = strings.Replace(main, "import (", "// #include <stdlib.h>\nimport \"C\"\nimport (", 1)
+		main = strings.Replace(main, "func main() {", "func main() { if C.abs(-7) != 7 { panic(\"libc call failed\") };", 1)
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(root, "code/main.go"), []byte(main), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "code/cmd/inspect/main.go"), []byte("package main\nimport \"fmt\"\nfunc main(){fmt.Print(\"command-present\")}\n"), 0o644))
+	inspect, err := os.ReadFile("testdata/packaging/inspect.go.txt")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "code/cmd/inspect/main.go"), inspect, 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "code/go.sum"), nil, 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "routing/routes.json"), []byte("runtime-assets-present"), 0o644))
 	builder.GoGrpc.Settings.BuildCommands = []BuildCommand{{Name: "inspect", Package: "./cmd/inspect"}}
 	builder.GoGrpc.Settings.RuntimeAssets = []string{"routing"}
+	builder.GoGrpc.Settings.WithCGO = cgo
+	builder.GoGrpc.Settings.RuntimePackages = packages
 	plan := buildRecipePlan(context.Background(), t, client, identity)
 	require.Len(t, plan.Recipes, 1)
 	image := fmt.Sprintf("codefly-packaging-test:%d", time.Now().UnixNano())
@@ -46,14 +73,57 @@ func TestPackagingImage(t *testing.T) {
 		require.NoError(t, err, "%s", output)
 		return strings.TrimSpace(string(output))
 	}
-	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", image).Run() })
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		output, err := exec.CommandContext(cleanup, "docker", "image", "rm", image).CombinedOutput()
+		require.NoError(t, err, "%s", output)
+	})
+	run := func(entrypoint string, command ...string) string {
+		t.Helper()
+		args := []string{"create", "--network=none"}
+		if entrypoint != "" {
+			args = append(args, "--entrypoint", entrypoint)
+		}
+		id := docker(append(append(args, image), command...)...)
+		t.Logf("owned packaging container: %s", id)
+		t.Cleanup(func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			output, err := exec.CommandContext(cleanup, "docker", "rm", "--force", id).CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			output, err = exec.CommandContext(cleanup, "docker", "container", "inspect", id).CombinedOutput()
+			require.Error(t, err)
+			require.Contains(t, string(output), "No such container")
+			t.Logf("owned packaging container removed and absent: %s", id)
+		})
+		output := docker("start", "--attach", id)
+		require.Equal(t, "0", docker("inspect", "--format", "{{.State.ExitCode}}", id))
+		return output
+	}
 	arch := docker("version", "--format", "{{.Server.Arch}}")
 	require.Contains(t, []string{"amd64", "arm64"}, arch)
 	docker("build", "--progress=plain", "--platform", "linux/"+arch, "--label", "codefly.packaging-test=true", "--build-arg", "TARGETARCH="+arch, "-t", image, "-f", filepath.Join(root, "builder", plan.Recipes[0].Dockerfile), root)
-	require.Equal(t, "runtime-assets-present", docker("run", "--rm", "--network=none", image))
-	require.Equal(t, "command-present", docker("run", "--rm", "--network=none", "--entrypoint", "inspect", image))
-	docker("run", "--rm", "--network=none", "--entrypoint", "sh", image, "-c", "test -s /usr/share/codefly/build/modules.json && test -s /usr/share/codefly/build/binaries.txt && test -s /usr/share/codefly/build/sources.sha256 && test -f /usr/share/codefly/build/go.sum && test $(id -u) != 0 && sha256sum -c /usr/share/codefly/build/runtime.sha256")
-	metadata := docker("run", "--rm", "--network=none", "--entrypoint", "cat", image, "/usr/share/codefly/build/binaries.txt")
+	// Preserve the built image even when a runtime assertion fails.
+	if evidence := os.Getenv("CODEFLY_PACKAGING_EVIDENCE_DIR"); evidence != "" {
+		dir := filepath.Join(evidence, arch, filepath.Base(t.Name()))
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		docker("image", "save", "--output", filepath.Join(dir, "image.tar"), image)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "image-inspect.json"), []byte(docker("image", "inspect", image)), 0o644))
+	}
+
+	require.Equal(t, "runtime-assets-present", run(""))
+	t.Logf("built image config digest: %s; platform: linux/%s", docker("image", "inspect", "--format", "{{.Id}}", image), arch)
+	mode := "scratch"
+	if cgo || len(packages) > 0 {
+		mode = "native"
+	}
+	metadata := run("inspect", mode)
+	if len(packages) > 0 {
+		require.Contains(t, run("git", "--version"), "git version ")
+	}
+
+	require.Contains(t, metadata, "command-present\n")
 	require.Contains(t, metadata, "example.com/svc/cmd/inspect")
 }
 
@@ -130,7 +200,19 @@ func TestPackagingOwnerCommandImage(t *testing.T) {
 		require.ErrorAs(t, err, &exit)
 		require.Equal(t, 2, exit.ExitCode(), output)
 	}
-	output, err = run("run", "--rm", "--network=none", "--entrypoint", "cat", image, "/usr/share/codefly/build/binaries.txt")
+	output, err = run("create", "--network=none", image)
 	require.NoError(t, err)
-	require.Contains(t, output, strings.TrimPrefix(pkg, "./"))
+	id := strings.TrimSpace(output)
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		output, err := exec.CommandContext(cleanup, "docker", "rm", "--force", id).CombinedOutput()
+		require.NoError(t, err, "%s", output)
+	})
+	metadataPath := filepath.Join(t.TempDir(), "binaries.txt")
+	output, err = run("cp", id+":/usr/share/codefly/build/binaries.txt", metadataPath)
+	require.NoError(t, err, "%s", output)
+	metadata, err := os.ReadFile(metadataPath)
+	require.NoError(t, err)
+	require.Contains(t, string(metadata), strings.TrimPrefix(pkg, "./"))
 }

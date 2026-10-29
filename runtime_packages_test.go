@@ -34,12 +34,8 @@ func renderRuntimeStage(t *testing.T, packages []string) string {
 	return rendered[start:]
 }
 
-// TestDockerfileTemplateInstallsOnlyTheCABundleWhenNoRuntimePackagesDeclared
-// holds the default: a service that declares nothing gets exactly the runtime
-// stage it had before runtime-packages existed. The knob is additive, so an
-// unset list — nil from an absent key, or an explicitly empty one — must not
-// move a byte of the recipe, or every existing service's image changes on
-// upgrade with no setting changed.
+// Absent and explicitly empty runtime-packages must select the same scratch
+// runtime; the assembly stage still obtains the public CA bundle.
 func TestDockerfileTemplateInstallsOnlyTheCABundleWhenNoRuntimePackagesDeclared(t *testing.T) {
 	t.Parallel()
 
