@@ -130,9 +130,9 @@ bug it prevents is possible. The existing tests do; match them.
   adapter — and `base/code/go.mod`'s `core` line must equal this module's. Edit
   `base/code`, then mirror into the `.tmpl`s in the same commit. Dependabot does
   not watch `base/code`; that mirror is manual.
-- **This agent never builds an image.** `Build` renders `templates/builder` into
-  the caller's output directory and returns a `DockerBuildPlan`. A test that
-  shells out to `docker build` means you are solving it in the wrong repo.
+- **Production `Build` emits a recipe, never builds an image.** It renders
+  `templates/builder` and returns a `DockerBuildPlan` for the CLI. The maintained
+  opt-in packaging tests may build that exact recipe to qualify runtime behavior.
 - **Private Go modules are the CLI's credential, never the recipe's.** The
   Dockerfile declares `ARG GOPRIVATE` and mounts the optional BuildKit secret
   `netrc` at `/root/.netrc` on every `go mod download`; the CLI supplies both
