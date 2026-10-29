@@ -112,8 +112,8 @@ The final stage runs `apk add --no-cache ca-certificates git` from the pinned Al
 image; nothing else from the build stage reaches the runtime image. Each entry must
 be a plain Alpine package name (`^[a-z0-9][a-z0-9+._-]{0,63}$`) and appear once:
 version pins, options, whitespace and shell characters are refused when the service
-loads and when the recipe renders, never dropped. With no entries the recipe is
-unchanged.
+loads and when the recipe renders, never dropped. With no entries and
+`with-cgo: false` (the default), the final runtime uses `scratch`.
 
 The recipe verifies the downloaded Go cache and unchanged module locks before
 compiling with networking disabled. The pinned toolchain cannot auto-upgrade.
@@ -123,21 +123,21 @@ Runtime assets must exist as ordinary files without symlinks; they keep their
 source-relative paths in the final image. Build evidence does not establish feed
 approval, a security scan, publication or an installed release.
 
-The runtime base is a pinned Alpine patch release, named by version and resolved
-by immutable digest, and `runtime-packages` installs into that image. Moving onto
-a patched base is a pin change in the agent, released like any other agent change,
-and not something a service configures or can pull forward on its own. A service
-built `with-cgo` links the base's C library at runtime and takes its patch level
-directly; without CGO the binary is statically linked Go and carries none of it.
+Static services with no declared `runtime-packages` run in `scratch`. The pinned
+Alpine assembly stage prepares the same runtime files and their hashes; the final
+image copies only the application, declared commands/assets, build evidence,
+public CA bundle, user/group records, home directory and temporary directory.
+It contains no shell, package manager or libc. Declare required OS tools through
+`runtime-packages`; direct shell commands and undeclared OS tools no longer work
+in the default production image. Working directory, environment, non-root user
+and command entry point are retained.
 
-The pin fixes the base layer's bytes and no more than that. The final stage still
-runs `apk add` for the CA bundle and for any `runtime-packages`, resolving from a
-live Alpine repository at build time, so two builds of one recipe can install
-different package revisions. The recipe never runs `apk upgrade`, which bounds
-that drift rather than removing it. So the pin says which base an image was built
-from — not that the finished image has been inventoried or scanned, and not that
-any released agent carries it. Qualifying a production image means naming that
-image's own digest and scanning it.
+Services using `with-cgo` or declaring `runtime-packages` retain the pinned Alpine
+runtime. Its digest binds the base bytes; installation of CA certificates and
+service packages still resolves a live Alpine repository. The recipe never runs
+`apk upgrade`. Neither a patched Alpine pin nor scratch means zero vulnerabilities:
+Go modules remain in the executable and must be inventoried and scanned. Qualify
+the exact finished image digest, including execution, before adopting a new agent.
 
 The container a service is built and run in under the container runtime context is
 a separate, separately pinned image; moving the runtime base does not move it.

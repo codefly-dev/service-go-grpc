@@ -73,6 +73,58 @@ func TestRuntimeBaseIsThePinnedAlpineDigest(t *testing.T) {
 	require.NotContains(t, runtimeStage, "apk upgrade")
 }
 
+// Checking the last FROM prevents the unrelated gomodproxy scratch stage from
+// disguising an OS-bearing runtime. Native dependencies must never be dropped.
+func TestDockerfileTemplateSelectsScratchOnlyWithoutNativeRequirements(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cgo      bool
+		packages []string
+	}{
+		{name: "static"},
+		{name: "static_explicit_empty", packages: []string{}},
+		{name: "cgo", cgo: true},
+		{name: "packages", packages: []string{"git"}},
+		{name: "cgo_packages", cgo: true, packages: []string{"libstdc++"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
+			require.NoError(t, err)
+			rendered, err := templates.ApplyTemplate(string(source), dockerTemplating{
+				DockerTemplating: golanghelpers.DockerTemplating{
+					GoVersion: GoVersion, AlpineVersion: AlpineVersion,
+					SourceDir: "code/cmd/server", ModuleRoot: "code", BuildTarget: "./cmd/server", WithCGO: tc.cgo,
+					Envs: []golanghelpers.DockerEnv{{Key: "RUNTIME_SETTING", Value: "preserved"}},
+				},
+				RuntimePackages: tc.packages,
+				BuildCommands:   []BuildCommand{{Name: "inspect", Package: "./cmd/inspect"}},
+				RuntimeAssets:   []string{"routing"},
+			})
+			require.NoError(t, err)
+			final := rendered[strings.LastIndex(rendered, "\nFROM ")+1:]
+			if tc.cgo || len(tc.packages) > 0 {
+				require.True(t, strings.HasPrefix(final, "FROM alpine:"+AlpineVersion+"@"+AlpineDigest))
+				wantInstall := "RUN apk add --no-cache ca-certificates"
+				if len(tc.packages) > 0 {
+					wantInstall += " " + strings.Join(tc.packages, " ")
+				}
+				require.Contains(t, final, wantInstall+"\n")
+			} else {
+				require.True(t, strings.HasPrefix(final, "FROM scratch\n"))
+				require.NotContains(t, final, "RUN ")
+				for _, p := range []string{"app", "etc/ssl/certs/ca-certificates.crt", "etc/passwd", "etc/group", "home/appuser", "tmp", "usr/share/codefly/build", "usr/local/bin/inspect"} {
+					require.Contains(t, final, "COPY --from=runtimefiles /"+p+" /"+p+"\n")
+				}
+			}
+			require.Contains(t, final, "WORKDIR /app/code/cmd/server\n")
+			require.Contains(t, final, "USER appuser\n")
+			require.Contains(t, final, "ENV RUNTIME_SETTING=preserved\n")
+			require.Contains(t, final, `CMD ["./app"]`)
+			require.Contains(t, rendered, "COPY --chown=appuser routing /app/routing")
+		})
+	}
+}
+
 func TestDockerfileTemplateCarriesModuleFixturesForWorkspaceBuilds(t *testing.T) {
 	t.Parallel()
 

@@ -16,7 +16,7 @@ import (
 
 // This opt-in integration calls Build over its public RPC, builds that exact
 // recipe, and executes both the main program and a declared command. It never
-// pushes and removes only the image created under this test's unique tag.
+// pushes and removes only its own containers and uniquely tagged image.
 func TestPackagingImage(t *testing.T) {
 	if os.Getenv("CODEFLY_PACKAGING_IMAGE_TEST") != "1" {
 		t.Skip("set CODEFLY_PACKAGING_IMAGE_TEST=1 for a real Docker build")
@@ -29,7 +29,9 @@ func TestPackagingImage(t *testing.T) {
 	}
 	main := "package main\nimport (\"fmt\"; \"os\")\nfunc main() { b,e:=os.ReadFile(\"../routing/routes.json\"); if e!=nil {panic(e)}; fmt.Print(string(b)) }\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "code/main.go"), []byte(main), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "code/cmd/inspect/main.go"), []byte("package main\nimport \"fmt\"\nfunc main(){fmt.Print(\"command-present\")}\n"), 0o644))
+	inspect, err := os.ReadFile("testdata/packaging/inspect.go.txt")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "code/cmd/inspect/main.go"), inspect, 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "code/go.sum"), nil, 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "routing/routes.json"), []byte("runtime-assets-present"), 0o644))
 	builder.GoGrpc.Settings.BuildCommands = []BuildCommand{{Name: "inspect", Package: "./cmd/inspect"}}
@@ -47,13 +49,34 @@ func TestPackagingImage(t *testing.T) {
 		return strings.TrimSpace(string(output))
 	}
 	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", image).Run() })
+	run := func(entrypoint string) string {
+		t.Helper()
+		args := []string{"create", "--network=none"}
+		if entrypoint != "" {
+			args = append(args, "--entrypoint", entrypoint)
+		}
+		id := docker(append(args, image)...)
+		t.Logf("owned packaging container: %s", id)
+		t.Cleanup(func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			output, err := exec.CommandContext(cleanup, "docker", "rm", "--force", id).CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			output, err = exec.CommandContext(cleanup, "docker", "container", "inspect", id).CombinedOutput()
+			require.Error(t, err)
+			require.Contains(t, string(output), "No such container")
+			t.Logf("owned packaging container removed and absent: %s", id)
+		})
+		output := docker("start", "--attach", id)
+		require.Equal(t, "0", docker("inspect", "--format", "{{.State.ExitCode}}", id))
+		return output
+	}
 	arch := docker("version", "--format", "{{.Server.Arch}}")
 	require.Contains(t, []string{"amd64", "arm64"}, arch)
 	docker("build", "--progress=plain", "--platform", "linux/"+arch, "--label", "codefly.packaging-test=true", "--build-arg", "TARGETARCH="+arch, "-t", image, "-f", filepath.Join(root, "builder", plan.Recipes[0].Dockerfile), root)
-	require.Equal(t, "runtime-assets-present", docker("run", "--rm", "--network=none", image))
-	require.Equal(t, "command-present", docker("run", "--rm", "--network=none", "--entrypoint", "inspect", image))
-	docker("run", "--rm", "--network=none", "--entrypoint", "sh", image, "-c", "test -s /usr/share/codefly/build/modules.json && test -s /usr/share/codefly/build/binaries.txt && test -s /usr/share/codefly/build/sources.sha256 && test -f /usr/share/codefly/build/go.sum && test $(id -u) != 0 && sha256sum -c /usr/share/codefly/build/runtime.sha256")
-	metadata := docker("run", "--rm", "--network=none", "--entrypoint", "cat", image, "/usr/share/codefly/build/binaries.txt")
+	require.Equal(t, "runtime-assets-present", run(""))
+	metadata := run("inspect")
+	require.Contains(t, metadata, "command-present\n")
 	require.Contains(t, metadata, "example.com/svc/cmd/inspect")
 }
 
