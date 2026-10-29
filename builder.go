@@ -822,7 +822,7 @@ func goModuleDownloads(templating golanghelpers.DockerTemplating) []services.Rec
 // selection the caller makes is honoured by construction. An agent that executed
 // the build in-process would have to implement the selection to claim this.
 func (s *Builder) BuildCapabilities(context.Context, *builderv0.BuildCapabilitiesRequest) (*builderv0.BuildCapabilitiesResponse, error) {
-	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true, ExecutionContracts: []string{services.BuildImageBindingsContract}, ImageInputs: buildImageInputs(s.GoGrpc.Settings.WithCGO || len(s.GoGrpc.Settings.RuntimePackages) > 0)}, nil
+	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true, ExecutionContracts: []string{services.BuildImageBindingsContract}, ImageInputs: buildImageInputs()}, nil
 }
 
 // emitBuildPlan records the rendered builder/ directory as a reproducible Docker

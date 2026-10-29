@@ -11,19 +11,16 @@ import (
 )
 
 // A cell selection must reach the real template while retaining the native vs
-// scratch decision. Changing the selector alone cannot implement another ABI.
+// scratch decision. One type-wide runtime binding applies to both shapes.
+// Changing the selector alone cannot implement another ABI.
 func TestEnvironmentImageBindingsReachRealRecipe(t *testing.T) {
 	source, err := fs.ReadFile(builderFS, "templates/builder/Dockerfile.tmpl")
 	require.NoError(t, err)
 	for _, native := range []bool{false, true} {
 		data := dockerTemplating{}
 		data.WithCGO = native
-		role := "runtime-support"
-		if native {
-			role = "runtime"
-		}
 		replacement := "registry.example/approved/alpine@sha256:" + strings.Repeat("a", 64)
-		binding := &builderv0.BuildImageInput{Role: role, Reference: replacement, Variant: "alpine3.23-musl"}
+		binding := &builderv0.BuildImageInput{Role: "runtime", Reference: replacement, Variant: "alpine3.23-musl"}
 		require.NoError(t, resolveTemplateImages(&data, []*builderv0.BuildImageInput{binding}))
 		rendered, err := templates.ApplyTemplate(string(source), data)
 		require.NoError(t, err)

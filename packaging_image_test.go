@@ -68,7 +68,7 @@ func testPackagingImage(t *testing.T, cgo bool, packages []string, selected bool
 	builder.GoGrpc.Settings.RuntimePackages = packages
 	plan := buildRecipePlan(context.Background(), t, client, identity)
 	if selected {
-		inputs := buildImageInputs(cgo || len(packages) > 0)
+		inputs := buildImageInputs()
 		for _, input := range inputs {
 			named, err := reference.ParseNormalizedNamed(input.Reference)
 			require.NoError(t, err)
