@@ -678,6 +678,7 @@ func declaredProtoServices(root string) ([]string, error) {
 // the same path under /app. The core struct has no field for them, so Build
 // renders with this superset instead of going through golanghelpers.BuildGoDocker.
 type dockerTemplating struct {
+	ImageBindings []*builderv0.BuildImageInput
 	golanghelpers.DockerTemplating
 	RuntimeAssets   []string
 	RuntimePackages []string
@@ -773,6 +774,10 @@ func prepareGoDocker(
 		opt(&templating.DockerTemplating)
 	}
 
+	if err := resolveTemplateImages(&templating, req.GetBuildContext().GetDockerBuildContext().GetImageBindings()); err != nil {
+		return builder.BuildError(err)
+	}
+
 	outputDir := req.GetOutputDirectory()
 	// The path set this build is about to write is also the set the plan
 	// claims: this agent emits a Dockerfile and its ignore file and nothing
@@ -817,7 +822,7 @@ func goModuleDownloads(templating golanghelpers.DockerTemplating) []services.Rec
 // selection the caller makes is honoured by construction. An agent that executed
 // the build in-process would have to implement the selection to claim this.
 func (s *Builder) BuildCapabilities(context.Context, *builderv0.BuildCapabilitiesRequest) (*builderv0.BuildCapabilitiesResponse, error) {
-	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true}, nil
+	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true, ExecutionContracts: []string{services.BuildImageBindingsContract}, ImageInputs: buildImageInputs(s.GoGrpc.Settings.WithCGO || len(s.GoGrpc.Settings.RuntimePackages) > 0)}, nil
 }
 
 // emitBuildPlan records the rendered builder/ directory as a reproducible Docker

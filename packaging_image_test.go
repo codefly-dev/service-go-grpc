@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codefly-dev/core/agents/services"
 	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	"github.com/distribution/reference"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,19 +29,22 @@ func TestPackagingImage(t *testing.T) {
 		name     string
 		cgo      bool
 		packages []string
+		bindings bool
 	}{
 		{name: "static"},
+		{name: "selected_static", bindings: true},
+		{name: "selected_native", cgo: true, packages: []string{"git"}, bindings: true},
 		{name: "cgo", cgo: true},
 		{name: "packages", packages: []string{"git"}},
 		{name: "cgo_packages", cgo: true, packages: []string{"git"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			testPackagingImage(t, tc.cgo, tc.packages)
+			testPackagingImage(t, tc.cgo, tc.packages, tc.bindings)
 		})
 	}
 }
 
-func testPackagingImage(t *testing.T, cgo bool, packages []string) {
+func testPackagingImage(t *testing.T, cgo bool, packages []string, selected bool) {
 	identity := goGrpcServiceFixture(t)
 	client, builder := startBuilderAgent(t, identity)
 	root := filepath.Join(identity.GetWorkspacePath(), "mod/svc")
@@ -62,6 +67,28 @@ func testPackagingImage(t *testing.T, cgo bool, packages []string) {
 	builder.GoGrpc.Settings.WithCGO = cgo
 	builder.GoGrpc.Settings.RuntimePackages = packages
 	plan := buildRecipePlan(context.Background(), t, client, identity)
+	if selected {
+		inputs := buildImageInputs(cgo || len(packages) > 0)
+		for _, input := range inputs {
+			named, err := reference.ParseNormalizedNamed(input.Reference)
+			require.NoError(t, err)
+			input.Reference = reference.TrimNamed(named).Name() + "@" + named.(reference.Digested).Digest().String()
+		}
+		response, err := client.Build(t.Context(), &builderv0.BuildRequest{
+			OutputDirectory: filepath.Join(root, "builder"),
+			BuildContext:    &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com", ImageBindings: inputs}}},
+		})
+		require.NoError(t, err)
+		require.Equal(t, builderv0.BuildStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
+		plan = response.GetResult().GetDockerBuildPlan()
+		require.NoError(t, services.VerifyDockerBuildPlan(filepath.Join(root, "builder"), plan))
+		recipe, err := os.ReadFile(filepath.Join(root, "builder", "Dockerfile"))
+		require.NoError(t, err)
+		for _, input := range inputs {
+			require.Contains(t, string(recipe), input.Reference)
+		}
+	}
+
 	require.Len(t, plan.Recipes, 1)
 	image := fmt.Sprintf("codefly-packaging-test:%d", time.Now().UnixNano())
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)

@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax={{ .Image "frontend" }}
 # The Go modules the recipe declares it downloads (go_module_downloads), fetched
 # by the caller on its own machine before any image build and supplied here as
 # the build context of this name, in the Go module proxy layout. Without a
@@ -7,7 +7,7 @@
 FROM scratch AS gomodproxy
 
 # Build stage
-FROM golang:{{ .GoVersion }}-alpine3.23@sha256:895e5feab11a4b3774d24ee3c9579028456b82ad37f42a9eb6f82adaf776a201 AS builder
+FROM {{ .Image "builder" }} AS builder
 
 ARG TARGETARCH
 
@@ -97,7 +97,7 @@ RUN --network=none cd {{ .ModuleRoot }} && \
 {{- end }}
 
 # Final stage
-FROM alpine:{{ .AlpineVersion }}@sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359fde849b6703d63 AS runtimefiles
+FROM {{ .Image "runtime" }} AS runtimefiles
 
 # Runtime only needs the public CA bundle{{ if .RuntimePackages }} and the packages the service declares in runtime-packages{{ end }}. Keep build tooling out of the image.
 RUN apk add --no-cache ca-certificates{{ range .RuntimePackages }} {{ . }}{{ end }}
