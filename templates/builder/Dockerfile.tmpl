@@ -145,8 +145,9 @@ COPY --from=runtimefiles /app /app
 COPY --from=runtimefiles /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=runtimefiles /etc/passwd /etc/passwd
 COPY --from=runtimefiles /etc/group /etc/group
-COPY --from=runtimefiles /home/appuser /home/appuser
-COPY --from=runtimefiles /tmp /tmp
+# COPY creates destination directories; set ownership/mode explicitly for writes.
+COPY --from=runtimefiles --chown=appuser:appuser /home/appuser /home/appuser
+COPY --from=runtimefiles --chmod=1777 /tmp /tmp
 {{- if .ModuleRoot }}
 COPY --from=runtimefiles /usr/share/codefly/build /usr/share/codefly/build
 {{- end }}
