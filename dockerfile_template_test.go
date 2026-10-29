@@ -18,14 +18,10 @@ func TestDockerfileTemplateUsesPinnedMinimalImages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Dockerfile template: %v", err)
 	}
-	source := string(template)
-
-	if !strings.Contains(source, "FROM golang:{{ .GoVersion }}-alpine3.23@sha256:") {
-		t.Fatal("builder image must use the exact Go version and an immutable digest")
-	}
-	if !strings.Contains(source, "FROM alpine:{{ .AlpineVersion }}@sha256:") {
-		t.Fatal("runtime image must use the exact Alpine version and an immutable digest")
-	}
+	source, err := templates.ApplyTemplate(string(template), dockerTemplating{})
+	require.NoError(t, err)
+	require.Contains(t, source, "FROM docker.io/library/golang:"+GoVersion+"-alpine3.23@sha256:")
+	require.Contains(t, source, "FROM docker.io/library/alpine:"+AlpineVersion+"@"+AlpineDigest)
 
 	runtimeStart := strings.Index(source, "# Final stage")
 	if runtimeStart < 0 {
@@ -64,7 +60,7 @@ func TestRuntimeBaseIsThePinnedAlpineDigest(t *testing.T) {
 	// check without a network call; it is verified when the pin is moved and
 	// recorded in AlpineDigest's comment.
 	require.Contains(t, runtimeStage, "@"+AlpineDigest)
-	require.Contains(t, runtimeStage, "FROM alpine:"+AlpineVersion+"@")
+	require.Contains(t, runtimeStage, "FROM docker.io/library/alpine:"+AlpineVersion+"@")
 
 	// The base is patched by moving the pin, never by upgrading packages during
 	// the build. An `apk upgrade` resolves against whatever the mirror serves at
@@ -103,7 +99,7 @@ func TestDockerfileTemplateSelectsScratchOnlyWithoutNativeRequirements(t *testin
 			require.NoError(t, err)
 			final := rendered[strings.LastIndex(rendered, "\nFROM ")+1:]
 			if tc.cgo || len(tc.packages) > 0 {
-				require.True(t, strings.HasPrefix(final, "FROM alpine:"+AlpineVersion+"@"+AlpineDigest))
+				require.True(t, strings.HasPrefix(final, "FROM docker.io/library/alpine:"+AlpineVersion+"@"+AlpineDigest))
 				wantInstall := "RUN apk add --no-cache ca-certificates"
 				if len(tc.packages) > 0 {
 					wantInstall += " " + strings.Join(tc.packages, " ")

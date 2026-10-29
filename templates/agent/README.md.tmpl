@@ -199,3 +199,22 @@ not be restarted into a cascade.
 
 Probes are rendered into the standard pod template, so the usual overlay
 customization and secret-free manifests are unaffected.
+
+### Environment-selected build images
+
+A Codefly environment can bind the running agent's declared image roles to
+fully qualified sha256-pinned references. This agent advertises `frontend`
+(`dockerfile-v1`), `builder` (`go1.27.3-alpine3.23`), and `runtime`
+(`alpine3.23-musl`). The runtime input supplies the native final stage when CGO
+or runtime packages are declared, and only assembles files for scratch otherwise.
+One type-wide runtime binding therefore covers both shapes. Static final images
+remain scratch. Select by service type
+`codefly.dev/go-grpc` or an explicit `module/service` using the CLI's
+`environment images` policy command; the explicit service wins per role.
+
+The agent renders these inputs into its recipe. Unknown roles, unpinned images
+and unsupported variants refuse. In particular a Wolfi/glibc base requires a
+supported recipe, not an Alpine reference substitution. The declaration names
+compatibility requirements; qualify the selected image on every target platform
+before deployment. Neither image selection nor scratch guarantees a clean CVE
+scan of the application binary.
