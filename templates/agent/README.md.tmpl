@@ -139,6 +139,14 @@ service packages still resolves a live Alpine repository. The recipe never runs
 Go modules remain in the executable and must be inventoried and scanned. Qualify
 the exact finished image digest, including execution, before adopting a new agent.
 
+The agent's opt-in `TestPackagingImage` qualifies the emitted recipe by executing
+static, CGO (including a libc call), OS-package and combined native cases. CI runs
+it on native linux/amd64 and linux/arm64 hosts. Setting
+`CODEFLY_PACKAGING_EVIDENCE_DIR` retains each tested image archive and its config
+metadata; the packaging CI artifacts also include a CycloneDX inventory from the
+release's Syft tool. These fixture artifacts prove recipe compatibility, not a
+scan of a consumer service's production image.
+
 The container a service is built and run in under the container runtime context is
 a separate, separately pinned image; moving the runtime base does not move it.
 

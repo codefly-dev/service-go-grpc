@@ -24,6 +24,7 @@ func main() {
 			panic(message)
 		}
 	}
+	check(len(os.Args) == 2 && (os.Args[1] == "scratch" || os.Args[1] == "native"), "expected runtime kind")
 	check(os.Getuid() != 0, "runtime must be non-root")
 	u, err := user.Current()
 	must(err)
@@ -62,15 +63,18 @@ func main() {
 	must(scanner.Err())
 	must(manifest.Close())
 	check(count >= 3, "runtime inventory must include app, asset and command")
-	// The fixture is static and has no OS-package declaration. Finding these
-	// files means an OS-bearing final stage leaked through, even if it boots.
+	// Check both sides of the final-base contract, not just whether it boots.
 	for _, name := range []string{"/bin/sh", "/sbin/apk", "/lib/apk/db/installed", "/etc/os-release"} {
 		_, err := os.Stat(name)
-		check(os.IsNotExist(err), "unexpected OS payload: "+name)
+		if os.Args[1] == "scratch" {
+			check(os.IsNotExist(err), "unexpected OS payload: "+name)
+		} else {
+			must(err)
+		}
 	}
 	libs, err := filepath.Glob("/lib/ld-musl-*")
 	must(err)
-	check(len(libs) == 0, "unexpected native loader")
+	check((len(libs) == 0) == (os.Args[1] == "scratch"), "native loader does not match runtime kind")
 	metadata, err := os.ReadFile(evidence + "binaries.txt")
 	must(err)
 	fmt.Print("command-present\n", string(metadata))

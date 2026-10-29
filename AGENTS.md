@@ -97,8 +97,8 @@ starts a live in-process agent and talks to it through the generated client. So:
 `TestBaseGeneratedServiceBuildsFromCleanModuleCache` needs network (it compiles
 `base/code` against an empty module cache); `TestCreateToRun*` and
 `TestGoGrpcLifecycle_Matrix` need Docker; `TestPackagingImage` is the one test
-that builds an image and is opt-in via `CODEFLY_PACKAGING_IMAGE_TEST=1`. Around
-90 s warm with backends present, several minutes cold.
+that builds images, opt-in via `CODEFLY_PACKAGING_IMAGE_TEST=1`; CI runs static
+and native cases on amd64/arm64 and retains archives/inventories. Around 90 s warm.
 
 Tests that create a Runtime container register `cleanupRuntime` before `Init`
 or runner creation. It stops and destroys with fresh cleanup contexts, even

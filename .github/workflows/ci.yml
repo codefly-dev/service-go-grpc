@@ -24,3 +24,52 @@ jobs:
   ci:
     needs: dependency-lock
     uses: codefly-dev/core/.github/workflows/go-service-ci.yml@v0.19.10
+
+  packaging:
+    name: packaging / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Execute static and native runtime contracts
+        shell: bash
+        env:
+          CODEFLY_PACKAGING_IMAGE_TEST: '1'
+          CODEFLY_PACKAGING_EVIDENCE_DIR: ${{ runner.temp }}/packaging
+        run: |
+          mkdir -p "$CODEFLY_PACKAGING_EVIDENCE_DIR"
+          go test ./... -run '^TestPackagingImage$' -count=1 -v -timeout=25m 2>&1 | tee "$CODEFLY_PACKAGING_EVIDENCE_DIR/test.log"
+      - name: Install the release inventory tool
+        id: syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          syft-version: v1.44.0
+      - name: Inventory the exact tested images
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+          EVIDENCE: ${{ runner.temp }}/packaging
+        run: |
+          for archive in "$EVIDENCE"/*/*/image.tar; do
+            "$SYFT" "docker-archive:$archive" -o "cyclonedx-json=${archive%/*}/sbom.cdx.json"
+            sha256sum "$archive" > "${archive%/*}/image.tar.sha256"
+          done
+      - name: Retain image qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: packaging-${{ matrix.arch }}
+          path: ${{ runner.temp }}/packaging
+          retention-days: 7
+          compression-level: 0
