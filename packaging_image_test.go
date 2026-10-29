@@ -104,6 +104,14 @@ func testPackagingImage(t *testing.T, cgo bool, packages []string) {
 	arch := docker("version", "--format", "{{.Server.Arch}}")
 	require.Contains(t, []string{"amd64", "arm64"}, arch)
 	docker("build", "--progress=plain", "--platform", "linux/"+arch, "--label", "codefly.packaging-test=true", "--build-arg", "TARGETARCH="+arch, "-t", image, "-f", filepath.Join(root, "builder", plan.Recipes[0].Dockerfile), root)
+	// Preserve the built image even when a runtime assertion fails.
+	if evidence := os.Getenv("CODEFLY_PACKAGING_EVIDENCE_DIR"); evidence != "" {
+		dir := filepath.Join(evidence, arch, filepath.Base(t.Name()))
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		docker("image", "save", "--output", filepath.Join(dir, "image.tar"), image)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "image-inspect.json"), []byte(docker("image", "inspect", image)), 0o644))
+	}
+
 	require.Equal(t, "runtime-assets-present", run(""))
 	t.Logf("built image config digest: %s; platform: linux/%s", docker("image", "inspect", "--format", "{{.Id}}", image), arch)
 	mode := "scratch"
@@ -113,12 +121,6 @@ func testPackagingImage(t *testing.T, cgo bool, packages []string) {
 	metadata := run("inspect", mode)
 	if len(packages) > 0 {
 		require.Contains(t, run("git", "--version"), "git version ")
-	}
-	if evidence := os.Getenv("CODEFLY_PACKAGING_EVIDENCE_DIR"); evidence != "" {
-		dir := filepath.Join(evidence, arch, filepath.Base(t.Name()))
-		require.NoError(t, os.MkdirAll(dir, 0o755))
-		docker("image", "save", "--output", filepath.Join(dir, "image.tar"), image)
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "image-inspect.json"), []byte(docker("image", "inspect", image)), 0o644))
 	}
 
 	require.Contains(t, metadata, "command-present\n")

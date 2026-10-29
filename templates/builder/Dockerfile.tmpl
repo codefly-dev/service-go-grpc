@@ -140,14 +140,16 @@ RUN find /app -type f -print0 | sort -z | xargs -0 sha256sum > /usr/share/codefl
 # Static services need only their declared files, trust roots and user records.
 # Keep assembly tools and the OS in runtimefiles; retain evidence of the same
 # runtime bytes without running a shell in the final image.
+# COPY copies directory contents, not the source directory itself. Carry home
+# and tmp as children so their ownership and sticky permissions survive.
+RUN mkdir -p /runtime-dirs/home && \
+    cp -a /home/appuser /runtime-dirs/home/ && cp -a /tmp /runtime-dirs/
 FROM scratch
 COPY --from=runtimefiles /app /app
 COPY --from=runtimefiles /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=runtimefiles /etc/passwd /etc/passwd
 COPY --from=runtimefiles /etc/group /etc/group
-# COPY creates destination directories; set ownership/mode explicitly for writes.
-COPY --from=runtimefiles --chown=appuser:appuser /home/appuser /home/appuser
-COPY --from=runtimefiles --chmod=1777 /tmp /tmp
+COPY --from=runtimefiles /runtime-dirs/ /
 {{- if .ModuleRoot }}
 COPY --from=runtimefiles /usr/share/codefly/build /usr/share/codefly/build
 {{- end }}

@@ -112,8 +112,8 @@ func TestDockerfileTemplateSelectsScratchOnlyWithoutNativeRequirements(t *testin
 			} else {
 				require.True(t, strings.HasPrefix(final, "FROM scratch\n"))
 				require.NotContains(t, final, "RUN ")
-				require.Contains(t, final, "COPY --from=runtimefiles --chown=appuser:appuser /home/appuser /home/appuser\n")
-				require.Contains(t, final, "COPY --from=runtimefiles --chmod=1777 /tmp /tmp\n")
+				require.Contains(t, final, "COPY --from=runtimefiles /runtime-dirs/ /\n")
+				require.Contains(t, rendered, "cp -a /home/appuser /runtime-dirs/home/ && cp -a /tmp /runtime-dirs/")
 				for _, p := range []string{"app", "etc/ssl/certs/ca-certificates.crt", "etc/passwd", "etc/group", "usr/share/codefly/build", "usr/local/bin/inspect"} {
 					require.Contains(t, final, "COPY --from=runtimefiles /"+p+" /"+p+"\n")
 				}

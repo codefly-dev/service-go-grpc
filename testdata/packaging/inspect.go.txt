@@ -31,7 +31,7 @@ func main() {
 	check(u.Username == "appuser", "user records missing")
 	tmp, err := os.Stat(os.TempDir())
 	must(err)
-	check(tmp.Mode().Perm() == 0o777 && tmp.Mode()&os.ModeSticky != 0, "temp directory must retain sticky world-write permissions")
+	check(tmp.Mode().Perm() == 0o777 && tmp.Mode()&os.ModeSticky != 0, fmt.Sprintf("temp directory must retain sticky world-write permissions; got %s", tmp.Mode()))
 	f, err := os.CreateTemp("", "runtime-proof-")
 	must(err)
 	must(f.Close())
