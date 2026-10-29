@@ -52,3 +52,9 @@ declaring `http` or declares HTTP/2, and if Connect stops declaring `http2`.
 `TestServicePortsDeclareHTTPFromTheEndpointAPI` checks the named-port
 derivation, including `http2` on a named Connect endpoint. Both render the real templates. They are renderer evidence, not a
 live proxy negotiation test.
+
+The current Core dependency selects grpc-gateway 2.33, whose default matcher no
+longer forwards arbitrary `Grpc-Metadata-*` headers. Applications that carry
+custom request metadata must declare the specific mapping through
+`Configuration.ServeMuxOptions`. The generated gateway keeps that secure default;
+image-role selection does not restore legacy header forwarding.

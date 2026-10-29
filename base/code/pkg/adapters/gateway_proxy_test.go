@@ -16,8 +16,10 @@ import (
 	"codefly-base/pkg/gen/genconnect"
 
 	"connectrpc.com/connect"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
 
 // A wildcard self-dial is eligible for environment proxying, exposing caller
@@ -110,7 +112,14 @@ func runGatewayProxyCase(t *testing.T, mode string) {
 
 	// A nonempty option list selects Connect's network transcoder, without a
 	// custom dialer that would itself bypass gRPC's environment proxy logic.
-	config := &Configuration{GatewayDialOptions: []grpc.DialOption{grpc.WithUserAgent("gateway-proxy-test")}}
+	config := &Configuration{
+		GatewayDialOptions: []grpc.DialOption{grpc.WithUserAgent("gateway-proxy-test")},
+		// grpc-gateway 2.33 refuses arbitrary Grpc-Metadata-* injection. The
+		// proxy test carries only its explicitly configured fixture metadata.
+		ServeMuxOptions: []runtime.ServeMuxOption{runtime.WithMetadata(func(_ context.Context, req *http.Request) metadata.MD {
+			return metadata.Pairs("x-caller", req.Header.Get("X-Caller"))
+		})},
+	}
 	base, httpClient := startConfiguredService(t, config)
 	client := genconnect.NewWebServiceClient(httpClient, base)
 	request := connect.NewRequest(&gen.VersionRequest{})
@@ -122,7 +131,7 @@ func runGatewayProxyCase(t *testing.T, mode string) {
 
 	restBase := fmt.Sprintf("http://127.0.0.1:%d", *config.EndpointHttpPort)
 	waitForHTTP(t, restBase+"/healthz")
-	served := restGet(t, restBase+"/version", http.Header{"Grpc-Metadata-X-Caller": {"proxy-test"}})
+	served := restGet(t, restBase+"/version", http.Header{"X-Caller": {"proxy-test"}})
 	var version gen.VersionResponse
 	if err := json.Unmarshal([]byte(restBody(t, served)), &version); err != nil {
 		t.Fatal(err)
