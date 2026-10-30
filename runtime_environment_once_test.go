@@ -67,13 +67,22 @@ func TestStartedProcessReceivesEachConfigurationVariableOnce(t *testing.T) {
 
 	// What the process inherits beneath that set: a process from the runner
 	// environment, with nothing of its own, reports the environment it was given.
+	// It also inherits this test's own environment, which carries CODEFLY__
+	// variables when codefly runs the suite; only what the runner adds counts.
 	dump := filepath.Join(workspacePath, "environ")
 	proc, err := runtime.RunnerEnvironment.Env().NewProcess("sh", "-c", `env > "$0"`, dump)
 	require.NoError(t, err)
 	require.NoError(t, proc.Run(ctx))
 	inherited, err := os.ReadFile(dump)
 	require.NoError(t, err)
+	own := map[string]bool{}
+	for _, line := range os.Environ() {
+		own[line] = true
+	}
 	for _, line := range strings.Split(string(inherited), "\n") {
+		if own[line] {
+			continue
+		}
 		require.Falsef(t, strings.HasPrefix(line, "CODEFLY__"),
 			"the runner environment carries %q, so the process would receive it twice", line)
 	}
