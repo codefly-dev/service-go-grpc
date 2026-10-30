@@ -219,12 +219,11 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 		}
 	}
 
-	allEnvs, err := s.EnvironmentVariables.All()
-	if err != nil {
-		return s.Wool.Wrapf(err, "cannot get environment variables")
-	}
-	env.WithEnvironmentVariables(ctx, allEnvs...)
-
+	// The service's environment is not put on the runner environment: Start
+	// hands the process the complete set, and a process inherits the runner
+	// environment's entries beneath its own. Adding the set here as well
+	// delivered every configuration variable twice, and a core that counts
+	// each entry (before v0.19.12) refused a service at half the limit.
 	s.bindRunnerEnvironment(env)
 	// Share the underlying RunnerEnvironment with Code / Tooling / commands
 	// so goimports / gofmt / go get / buf generate / go mod tidy all run in
