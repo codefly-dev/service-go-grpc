@@ -13,7 +13,7 @@ import (
 func buildImageInputs() []*builderv0.BuildImageInput {
 	return []*builderv0.BuildImageInput{
 		{Role: "frontend", Reference: "docker.io/docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32", Variant: "dockerfile-v1"},
-		{Role: "builder", Reference: "docker.io/library/golang:" + GoVersion + "-alpine3.23@sha256:8a5046497cda39860b832ffdbe8dd66018a0f05bb01352f533a36e7e2ced66a0", Variant: "go" + GoVersion + "-alpine3.23"},
+		{Role: "builder", Reference: "docker.io/library/golang:" + GoVersion + "-alpine3.23@sha256:146e3b9c7c1e2ec3d3f5348c8a686151a75e1976e50efac9fc022ebe446a9a82", Variant: "go" + GoVersion + "-alpine3.23"},
 		{Role: "runtime", Reference: "docker.io/library/alpine:" + AlpineVersion + "@" + AlpineDigest, Variant: "alpine3.23-musl"},
 	}
 }
