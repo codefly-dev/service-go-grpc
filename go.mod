@@ -1,6 +1,6 @@
 module github.com/codefly-dev/service-go-grpc
 
-go 1.27.3
+go 1.27.4
 
 require (
 	buf.build/go/protovalidate v1.4.0

@@ -489,7 +489,7 @@ func NewService() *Service {
 }
 
 // GoVersion is the exact Go patch release used for container builds.
-const GoVersion = "1.27.3"
+const GoVersion = "1.27.4"
 
 // AlpineVersion is the exact runtime Alpine patch release used for container builds.
 const AlpineVersion = "3.23.7"
@@ -511,8 +511,8 @@ const AlpineDigest = "sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359f
 // both the runtime container and the builder stage.
 var runtimeImage = &configurations.DockerImage{
 	Name:   "ghcr.io/codefly-dev/service-go-runtime",
-	Tag:    "go1.27.3-alpine3.23",
-	Digest: "sha256:fe159add88c1bef054c739b58b1d95176e66e280919e327496613fed1a6cf6ff",
+	Tag:    "go1.27.4-alpine3.23",
+	Digest: "sha256:e1d3481e5221865292d6a165617ddd399091060b2fdaca6098a43939987ebf9f",
 }
 
 func main() {

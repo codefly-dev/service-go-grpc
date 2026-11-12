@@ -204,7 +204,7 @@ customization and secret-free manifests are unaffected.
 
 A Codefly environment can bind the running agent's declared image roles to
 fully qualified sha256-pinned references. This agent advertises `frontend`
-(`dockerfile-v1`), `builder` (`go1.27.3-alpine3.23`), and `runtime`
+(`dockerfile-v1`), `builder` (`go1.27.4-alpine3.23`), and `runtime`
 (`alpine3.23-musl`). The runtime input supplies the native final stage when CGO
 or runtime packages are declared, and only assembles files for scratch otherwise.
 One type-wide runtime binding therefore covers both shapes. Static final images
