@@ -1,0 +1,22 @@
+name: Publish service agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version component to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    uses: codefly-dev/cli/.github/workflows/publish-agent.yml@v0.1.258
+    with:
+      bump: ${{ inputs.bump }}
+      codefly-version: v0.1.258
+    secrets:
+      release-token: ${{ secrets.GH_PAT }}
