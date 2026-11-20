@@ -1112,7 +1112,8 @@ func TestPersistentLoopbackDeployment(t *testing.T) {
 	var claim corev1.PersistentVolumeClaim
 	read("state.yaml", &claim)
 	size := claim.Spec.Resources.Requests[corev1.ResourceStorage]
-	if claim.Spec.StorageClassName == nil || *claim.Spec.StorageClassName != spec.StorageClass || size.String() != spec.Storage ||
+	if !reflect.DeepEqual(claim.Spec.AccessModes, []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOncePod}) ||
+		claim.Spec.StorageClassName == nil || *claim.Spec.StorageClassName != spec.StorageClass || size.String() != spec.Storage ||
 		pod.Volumes[1].PersistentVolumeClaim.ClaimName != claim.Name || container.VolumeMounts[1].MountPath != spec.MountPath {
 		t.Fatalf("state claim does not match the workload: %+v", claim)
 	}

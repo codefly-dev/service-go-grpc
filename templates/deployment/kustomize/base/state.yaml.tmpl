@@ -6,7 +6,7 @@ metadata:
   namespace: {{ $.Namespace }}
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteOncePod
 {{- with .StorageClass }}
   storageClassName: {{ . | quote }}
 {{- end }}

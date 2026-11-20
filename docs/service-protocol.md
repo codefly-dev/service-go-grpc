@@ -78,7 +78,9 @@ persistent-loopback:
 
 The agent renders a private single-replica Deployment with the Recreate
 strategy, a separately managed persistent claim and exec startup, readiness and liveness
-probes. `storage-class` is optional and defaults to the cluster's storage class.
+probes. The claim requests `ReadWriteOncePod` to prevent a second pod from
+mounting the state even on the same node. The selected CSI storage class must
+support that access mode. Omit `storage-class` to use the cluster default.
 The image supplies the readiness command and must bind its own listeners to
 loopback. Declare the mount path that holds all durable application state.
 

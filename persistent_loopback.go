@@ -85,9 +85,6 @@ func (s *Builder) buildPackagedImage(ctx context.Context, req *builderv0.BuildRe
 	if err != nil {
 		return builder.BuildError(err)
 	}
-	if inputs[0].Reference == "scratch" {
-		return builder.BuildError(fmt.Errorf("persistent-loopback requires a packaged application image"))
-	}
 	request, err := builder.DockerBuildRequest(ctx, req)
 	if err != nil {
 		return builder.BuildError(err)
