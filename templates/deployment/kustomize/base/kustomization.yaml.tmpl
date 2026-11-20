@@ -9,4 +9,8 @@ resources:
   - serviceaccount.yaml
 {{- end }}{{- end }}
   - deployment.yaml
+{{- if .Deployment.Parameters.PersistentLoopback }}
+  - state.yaml
+{{- else }}
   - service.yaml
+{{- end }}

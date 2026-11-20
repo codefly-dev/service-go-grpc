@@ -98,6 +98,8 @@ type Settings struct {
 	// leaves pods on the default SA. See ServiceAccountSpec.
 	ServiceAccount *ServiceAccountSpec `yaml:"service-account,omitempty"`
 
+	PersistentLoopback *PersistentLoopbackSpec `yaml:"persistent-loopback,omitempty"`
+
 	// Cors drives the generated REST listener's cross-origin policy. The zero
 	// value (no `cors:` block) denies every cross-origin request — a
 	// same-origin default. See CorsSpec. No omitempty: a struct value is never
@@ -382,6 +384,9 @@ func (s *Settings) Validate() error {
 		return err
 	}
 	if err := validateBuildCommands(s.BuildCommands); err != nil {
+		return err
+	}
+	if err := s.PersistentLoopback.Validate(); err != nil {
 		return err
 	}
 	if err := s.ServiceAccount.Validate(); err != nil {

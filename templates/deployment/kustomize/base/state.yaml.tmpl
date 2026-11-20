@@ -1,0 +1,16 @@
+{{- with .Deployment.Parameters.PersistentLoopback }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $.Service.Name.DNSCase }}-state
+  namespace: {{ $.Namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+{{- with .StorageClass }}
+  storageClassName: {{ . | quote }}
+{{- end }}
+  resources:
+    requests:
+      storage: {{ .Storage | quote }}
+{{- end }}

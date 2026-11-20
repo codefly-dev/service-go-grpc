@@ -58,3 +58,31 @@ longer forwards arbitrary `Grpc-Metadata-*` headers. Applications that carry
 custom request metadata must declare the specific mapping through
 `Configuration.ServeMuxOptions`. The generated gateway keeps that secure default;
 image-role selection does not restore legacy header forwarding.
+
+## Persistent loopback workloads
+
+Set `spec.persistent-loopback` on a service whose image listens on loopback
+and is accessed through Kubernetes exec. This mode deploys a packaged image,
+so the service has no declared network endpoints or source code to generate.
+
+```yaml
+persistent-loopback:
+  image: registry.example/app@sha256:<64-hex-digest>
+  uid: 10001
+  gid: 10001
+  mount-path: /var/lib/example
+  storage: 8Gi
+  readiness: ["/bin/check", "--local"]
+  liveness: ["/bin/check", "--process"]
+```
+
+The agent renders a private single-replica Deployment with the Recreate
+strategy, a separately managed persistent claim and exec startup, readiness and liveness
+probes. `storage-class` is optional and defaults to the cluster's storage class.
+The image supplies the readiness command and must bind its own listeners to
+loopback. Declare the mount path that holds all durable application state.
+
+Codefly publishes the declared packaged image through its existing build and
+deploy pipeline. The source image must provide each target platform. The
+environment can select the `application` image role with recipe variant
+`persistent-loopback-v1`.
