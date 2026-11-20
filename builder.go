@@ -109,6 +109,15 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 		return resp, nil
 	}
 
+	if settings := s.GoGrpc.Settings.PersistentLoopback; settings != nil {
+		if err := settings.Validate(); err != nil {
+			return s.Base.Builder.LoadError(err)
+		}
+		if len(s.Endpoints) != 0 {
+			return s.Base.Builder.LoadError(fmt.Errorf("persistent-loopback services must not declare network endpoints"))
+		}
+		return resp, nil
+	}
 	if err := s.GoGrpc.discoverEndpoints(ctx); err != nil {
 		return s.Base.Builder.LoadError(err)
 	}
@@ -126,6 +135,9 @@ func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*bu
 
 	if err := s.GoGrpc.Settings.Validate(); err != nil {
 		return s.Base.Builder.SyncError(err)
+	}
+	if s.GoGrpc.Settings.PersistentLoopback != nil {
+		return s.Base.Builder.SyncResponse()
 	}
 	transaction, err := newSyncTransaction(s.Location, s.Identity.RelativeToWorkspace)
 	if err != nil {
@@ -708,6 +720,9 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 	if req.GetBuildContext().GetDockerBuildContext() == nil {
 		return s.Base.Builder.BuildError(fmt.Errorf("a docker build context is required to name the image the recipe builds"))
 	}
+	if settings := s.GoGrpc.Settings.PersistentLoopback; settings != nil {
+		return s.buildPackagedImage(ctx, req, settings)
+	}
 	if s.GoGrpc.Settings.WithWorkspace {
 		return s.Base.Builder.BuildError(fmt.Errorf("workspace image recipes require a Core contract supporting workspace build contexts"))
 	}
@@ -822,7 +837,11 @@ func goModuleDownloads(templating golanghelpers.DockerTemplating) []services.Rec
 // selection the caller makes is honoured by construction. An agent that executed
 // the build in-process would have to implement the selection to claim this.
 func (s *Builder) BuildCapabilities(context.Context, *builderv0.BuildCapabilitiesRequest) (*builderv0.BuildCapabilitiesResponse, error) {
-	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true, ExecutionContracts: []string{services.BuildImageBindingsContract}, ImageInputs: buildImageInputs()}, nil
+	inputs := buildImageInputs()
+	if s.GoGrpc != nil && s.GoGrpc.Settings != nil && s.GoGrpc.Settings.PersistentLoopback != nil {
+		inputs = []*builderv0.BuildImageInput{s.GoGrpc.Settings.PersistentLoopback.imageInput()}
+	}
+	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true, ExecutionContracts: []string{services.BuildImageBindingsContract}, ImageInputs: inputs}, nil
 }
 
 // emitBuildPlan records the rendered builder/ directory as a reproducible Docker
@@ -976,8 +995,9 @@ func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*
 // — a grpc-only service must not advertise http, and a connect service must
 // advertise its port.
 type DeploymentParameters struct {
-	ConnectOnly    bool
-	ServiceAccount *ServiceAccountSpec
+	PersistentLoopback *PersistentLoopbackSpec
+	ConnectOnly        bool
+	ServiceAccount     *ServiceAccountSpec
 	// RestPort and ConnectPort are the ports the manifest advertises for the
 	// conventional rest and connect endpoints, 0 when nothing serves them.
 	// They are NOT the `rest-endpoint` / `connect-endpoint` settings: those say
@@ -1130,10 +1150,14 @@ func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) 
 		Templates:            deploymentFS,
 		Inputs:               services.ApplicationDeploymentInputs(),
 		Parameters: DeploymentParameters{
-			ServiceAccount: s.GoGrpc.Settings.ServiceAccount,
-			Health:         s.GoGrpc.Settings.Health.Normalized(),
+			ServiceAccount:     s.GoGrpc.Settings.ServiceAccount,
+			PersistentLoopback: s.GoGrpc.Settings.PersistentLoopback,
+			Health:             s.GoGrpc.Settings.Health.Normalized(),
 		},
 		Prepare: func(ctx context.Context, deployment *services.KustomizeDeploymentContext) error {
+			if s.GoGrpc.Settings.PersistentLoopback != nil {
+				return nil
+			}
 			mappings := deployment.Request.GetNetworkMappings()
 			connectOnly := s.GoGrpc.GrpcEndpoint == nil && s.GoGrpc.ConnectEndpoint != nil
 			namedMappings := mappings

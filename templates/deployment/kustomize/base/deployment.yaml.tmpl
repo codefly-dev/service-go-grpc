@@ -1,5 +1,12 @@
+{{- define "execProbeHandler" }}
+            exec:
+              command: [{{ range $i, $arg := . }}{{ if $i }}, {{ end }}{{ printf "%q" $arg }}{{ end }}]
+{{- end }}
 {{- define "healthProbeHandler" }}
 {{- $mode := .Health.Handler }}
+{{- if .PersistentLoopback }}
+{{- template "execProbeHandler" .PersistentLoopback.Readiness }}
+{{- else }}
 {{- if eq $mode "grpc" }}
             grpc:
               port: {{ .RPCPort }}
@@ -15,14 +22,22 @@
               port: {{ .RPCPortName }}
 {{- end }}
 {{- end }}
+{{- end }}
 {{- $health := .Deployment.Parameters -}}
+{{- $persistent := $health.PersistentLoopback -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Service.Name.DNSCase }}
   namespace: {{ .Namespace }}
 spec:
+{{- if $persistent }}
+  replicas: 1
+  strategy:
+    type: Recreate
+{{- else }}
   replicas: {{ .Replicas }}
+{{- end }}
   selector:
     matchLabels:
       app: {{ .Service.Name.DNSCase }}
@@ -46,9 +61,9 @@ spec:
       # which has uid 65534 for nobody. Use 65534 to match.
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
-        fsGroup: 65534
+        runAsUser: {{ if $persistent }}{{ $persistent.UID }}{{ else }}65534{{ end }}
+        runAsGroup: {{ if $persistent }}{{ $persistent.GID }}{{ else }}65534{{ end }}
+        fsGroup: {{ if $persistent }}{{ $persistent.GID }}{{ else }}65534{{ end }}
         seccompProfile:
           type: RuntimeDefault
       automountServiceAccountToken: false
@@ -60,13 +75,14 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
-            runAsUser: 65534
+            runAsUser: {{ if $persistent }}{{ $persistent.UID }}{{ else }}65534{{ end }}
             capabilities:
               drop:
                 - ALL
             readOnlyRootFilesystem: true
             seccompProfile:
               type: RuntimeDefault
+{{- if not $persistent }}
           ports:
             # Match service.yaml.tmpl. grpc is omitted for Connect-only
             # services. http (grpc-gateway REST facade) and connect are advertised
@@ -91,6 +107,7 @@ spec:
 {{- range .Deployment.Parameters.NamedPorts }}
             # A named endpoint's listener, on the port Codefly resolved for it.
             - containerPort: {{ .Port }}
+{{- end }}
 {{- end }}
           envFrom:
             - configMapRef:
@@ -138,8 +155,12 @@ spec:
           # downstream is unavailable must drop out of load balancing, not be
           # restarted — restarting it cascades an outage across every consumer.
           livenessProbe:
+{{- if $persistent }}
+{{- template "execProbeHandler" $persistent.Liveness }}
+{{- else }}
             tcpSocket:
               port: {{ .Deployment.Parameters.RPCPortName }}
+{{- end }}
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
@@ -149,6 +170,15 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+{{- if $persistent }}
+            - name: state
+              mountPath: {{ $persistent.MountPath | quote }}
+{{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+{{- if $persistent }}
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ .Service.Name.DNSCase }}-state
+{{- end }}
