@@ -1067,3 +1067,57 @@ func TestConventionalPortServesBothWaysAndNeither(t *testing.T) {
 		t.Fatal("a declared conventional endpoint with no in-cluster port must refuse the render")
 	}
 }
+
+// A pod-network probe cannot reach a loopback listener. The persistent mode
+// must also avoid overlapping writers during upgrades and keep its claim.
+func TestPersistentLoopbackDeployment(t *testing.T) {
+	spec := &PersistentLoopbackSpec{
+		Image: "registry.example/test/app@sha256:" + strings.Repeat("a", 64),
+		UID:   10001, GID: 10001, MountPath: "/var/lib/example", Storage: "8Gi",
+		StorageClass: "fixture-storage", Readiness: []string{"/bin/check", "with space"}, Liveness: []string{"/bin/alive"},
+	}
+	if err := spec.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	dir := agenttesting.AssertKustomizeTemplates(t, deploymentFS, DeploymentParameters{PersistentLoopback: spec, Health: undeclaredHealth()})
+	base := filepath.Join(dir, "base")
+	assertManifestsReferenced(t, base)
+	read := func(name string, target any) {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(base, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := k8syaml.Unmarshal(data, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var deployment appsv1.Deployment
+	read("deployment.yaml", &deployment)
+	pod := deployment.Spec.Template.Spec
+	container := pod.Containers[0]
+	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 || deployment.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+		t.Fatalf("deployment may start overlapping writers: %+v", deployment.Spec)
+	}
+	if len(container.Ports) != 0 || container.ReadinessProbe == nil || container.ReadinessProbe.Exec == nil ||
+		!reflect.DeepEqual(container.ReadinessProbe.Exec.Command, spec.Readiness) ||
+		container.LivenessProbe == nil || container.LivenessProbe.Exec == nil ||
+		!reflect.DeepEqual(container.LivenessProbe.Exec.Command, spec.Liveness) {
+		t.Fatalf("expected exec readiness and no container ports: %+v", container)
+	}
+	if pod.SecurityContext == nil || pod.SecurityContext.FSGroup == nil || *pod.SecurityContext.FSGroup != spec.GID ||
+		container.SecurityContext == nil || container.SecurityContext.RunAsUser == nil || *container.SecurityContext.RunAsUser != spec.UID {
+		t.Fatalf("pod and claim permissions do not match the image: %+v", pod)
+	}
+	var claim corev1.PersistentVolumeClaim
+	read("state.yaml", &claim)
+	size := claim.Spec.Resources.Requests[corev1.ResourceStorage]
+	if !reflect.DeepEqual(claim.Spec.AccessModes, []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOncePod}) ||
+		claim.Spec.StorageClassName == nil || *claim.Spec.StorageClassName != spec.StorageClass || size.String() != spec.Storage ||
+		pod.Volumes[1].PersistentVolumeClaim.ClaimName != claim.Name || container.VolumeMounts[1].MountPath != spec.MountPath {
+		t.Fatalf("state claim does not match the workload: %+v", claim)
+	}
+	if _, err := os.Stat(filepath.Join(base, "service.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("loopback workload rendered a Service or failed checking it: %v", err)
+	}
+}

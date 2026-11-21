@@ -212,3 +212,39 @@ func TestBuildRecipeOverGRPC(t *testing.T) {
 		require.Empty(t, resp.GetCacheContractVersion())
 	}
 }
+
+// Packaged services have no API scaffold. The build handshake must advertise
+// the same sole image role that the rendered and verified recipe consumes.
+func TestPersistentLoopbackBuildRecipeOverGRPC(t *testing.T) {
+	ctx := t.Context()
+	identity := goGrpcServiceFixture(t)
+	serviceDir := filepath.Join(identity.GetWorkspacePath(), identity.GetRelativeToWorkspace())
+	pinned := "registry.example.com/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	manifest := "name: svc\nversion: 0.0.0\nspec:\n  persistent-loopback:\n    image: " + pinned +
+		"\n    uid: 10001\n    gid: 10001\n    mount-path: /var/lib/app\n    storage: 8Gi\n    readiness: [/bin/check]\n    liveness: [/bin/alive]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(serviceDir, resources.ServiceConfigurationName), []byte(manifest), 0o644))
+	client, builder := startBuilderAgent(t, identity)
+	loaded, err := builder.Load(ctx, &builderv0.LoadRequest{Identity: identity})
+	require.NoError(t, err)
+	require.Equal(t, builderv0.LoadStatus_READY, loaded.GetState().GetState(), loaded.GetState().GetMessage())
+	capabilities, err := client.BuildCapabilities(ctx, &builderv0.BuildCapabilitiesRequest{})
+	require.NoError(t, err)
+	require.Len(t, capabilities.GetImageInputs(), 1)
+	input := capabilities.GetImageInputs()[0]
+	require.Equal(t, "application", input.GetRole())
+	require.Equal(t, pinned, input.GetReference())
+	input.Reference = "mirror.example.com/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	output := filepath.Join(serviceDir, "builder")
+	built, err := client.Build(ctx, &builderv0.BuildRequest{
+		OutputDirectory: output,
+		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com", ImageBindings: []*builderv0.BuildImageInput{input}},
+		}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, builderv0.BuildStatus_SUCCESS, built.GetState().GetState(), built.GetState().GetMessage())
+	require.NoError(t, services.VerifyDockerBuildPlan(output, built.GetResult().GetDockerBuildPlan()))
+	dockerfile, err := os.ReadFile(filepath.Join(output, "Dockerfile"))
+	require.NoError(t, err)
+	require.Equal(t, "FROM "+input.Reference+"\n", string(dockerfile))
+}
