@@ -5,8 +5,8 @@ go 1.27.4
 require (
 	buf.build/go/protovalidate v1.4.0
 	github.com/bufbuild/protocompile v0.14.1
-	github.com/codefly-dev/core v0.19.33
-	github.com/codefly-dev/service-go v0.0.72
+	github.com/codefly-dev/core v0.19.35
+	github.com/codefly-dev/service-go v0.0.76
 	github.com/distribution/reference v0.6.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/mod v0.42.0
