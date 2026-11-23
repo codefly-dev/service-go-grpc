@@ -23,7 +23,7 @@ jobs:
 
   ci:
     needs: dependency-lock
-    uses: codefly-dev/core/.github/workflows/go-service-ci.yml@v0.19.10
+    uses: codefly-dev/core/.github/workflows/go-service-ci.yml@v0.19.36
 
   packaging:
     name: packaging / ${{ matrix.arch }}
