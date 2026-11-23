@@ -1,7 +1,7 @@
 publisher: codefly.dev
 kind: codefly:service
 name: go-grpc
-version: 0.1.75
+version: 0.1.76
 source:
   directory: .
   agent: codefly.dev/go:0.0.74
