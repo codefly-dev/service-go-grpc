@@ -74,7 +74,7 @@ func NewBuilder(svc *Service) *Builder {
 			FactoryFS:     factoryFS,
 			BuilderFS:     builderFS,
 			DeploymentFS:  deploymentFS,
-			Requirements:  requirements,
+			Requirements:  newRequirements(),
 			GoVersion:     GoVersion,
 			AlpineVersion: AlpineVersion,
 		}),
@@ -746,7 +746,7 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 		return s.Base.Builder.BuildError(err)
 	}
 	return prepareGoDocker(ctx, s.Base.Builder, req,
-		requirements, builderFS, GoVersion, AlpineVersion, assets, s.GoGrpc.Settings.RuntimePackages, s.GoGrpc.Settings.BuildCommands, configure)
+		newRequirements(), builderFS, GoVersion, AlpineVersion, assets, s.GoGrpc.Settings.RuntimePackages, s.GoGrpc.Settings.BuildCommands, configure)
 }
 
 // The local templating superset carries runtime assets and runtime packages

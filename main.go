@@ -37,10 +37,16 @@ import (
 // Agent version.
 var agent = shared.Must(configurations.LoadFromFs[configurations.Agent](shared.Embed(infoFS)))
 
-var requirements = builders.NewDependencies(agent.Name,
-	builders.NewDependency("service.codefly.yaml"),
-	builders.NewDependency("code").WithPathSelect(shared.NewSelect("*.go")),
-)
+// newRequirements is what a go-grpc service's build depends on. Each caller
+// gets its own: a Builder localizes its requirements to its service's
+// directory at Load, so one set shared by every Builder in the process is
+// written by all of them.
+func newRequirements() *builders.Dependencies {
+	return builders.NewDependencies(agent.Name,
+		builders.NewDependency("service.codefly.yaml"),
+		builders.NewDependency("code").WithPathSelect(shared.NewSelect("*.go")),
+	)
+}
 
 // Settings extends the generic Go Settings with go-grpc-specific toggles.
 // yaml:",inline" keeps the YAML shape flat: go-grpc services see all

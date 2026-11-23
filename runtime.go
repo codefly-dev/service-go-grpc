@@ -294,7 +294,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 	if s.Settings.HotReload {
 		s.Wool.Trace("starting hot reload")
 		// Add proto and swagger
-		dependencies := requirements.Clone()
+		dependencies := newRequirements()
 		dependencies.AddDependencies(
 			builders.NewDependency("proto").WithPathSelect(shared.NewSelect("*.proto")),
 		)
