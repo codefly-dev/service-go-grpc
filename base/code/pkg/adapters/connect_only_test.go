@@ -29,9 +29,10 @@ func TestConnectOnlyServesEveryProtocolAndHealth(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			port := uint16(listener.Addr().(*net.TCPAddr).Port)
-			listener.Close()
-			config := &Configuration{EndpointConnectPort: &port, Service: &singleListenerService{}, GRPCServerOptions: []grpc.ServerOption{
+			// The server is handed the listener rather than its port number:
+			// released and bound again, the port is anyone's in between. It
+			// also puts the dialled self-hop on the listener's own address.
+			config := &Configuration{ConnectListener: listener, Service: &singleListenerService{}, GRPCServerOptions: []grpc.ServerOption{
 				grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 					if info.FullMethod == gen.WebService_Version_FullMethodName {
 						md, _ := metadata.FromIncomingContext(ctx)
@@ -62,7 +63,7 @@ func TestConnectOnlyServesEveryProtocolAndHealth(t *testing.T) {
 					t.Error("Connect-only server did not stop")
 				}
 			})
-			target := fmt.Sprintf("127.0.0.1:%d", port)
+			target := listener.Addr().String()
 			client := &http.Client{Timeout: 2 * time.Second}
 			connectClient := genconnect.NewWebServiceClient(client, "http://"+target)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)

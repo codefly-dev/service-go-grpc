@@ -11,6 +11,8 @@ import (
 	"codefly-base/plugins"
 	"context"
 	"fmt"
+	"net"
+	"sync"
 	"time"
 )
 
@@ -18,10 +20,13 @@ type Server struct {
 	grpc    *GrpcServer
 	rest    *RestServer
 	connect *ConnectServer
+	// listening guards the listeners the faces hold: Listen takes them, Stop
+	// closes them, and the address accessors read them.
+	listening sync.Mutex
 }
 
 func NewServer(config *Configuration) (*Server, error) {
-	if config.EndpointGrpcPort == 0 && config.EndpointConnectPort == nil {
+	if !config.servesGrpc() && !config.servesConnect() {
 		return nil, fmt.Errorf("cannot start RPC server: no gRPC or Connect listener configured")
 	}
 
@@ -36,7 +41,7 @@ func NewServer(config *Configuration) (*Server, error) {
 	}
 
 	var rest *RestServer
-	if config.EndpointHttpPort != nil {
+	if config.EndpointHttpPort != nil || config.HttpListener != nil {
 		rest, err = NewRestServer(config)
 		if err != nil {
 			return nil, err
@@ -47,7 +52,7 @@ func NewServer(config *Configuration) (*Server, error) {
 	// server, and routes the services registered on it by now — the scaffolded
 	// service and every plugin above.
 	var conn *ConnectServer
-	if config.EndpointConnectPort != nil {
+	if config.servesConnect() {
 		conn, err = NewConnectServer(config, grpc.gRPC)
 		if err != nil {
 			return nil, err
@@ -61,27 +66,129 @@ func NewServer(config *Configuration) (*Server, error) {
 	}, nil
 }
 
-func (server *Server) Start(ctx context.Context) error {
+// Listen takes every declared listener: the one the Configuration supplies,
+// or a bind of the endpoint's host and port. It holds all of them or none: a
+// bind that fails is returned, and what was already held is closed.
+//
+// Start calls it, so a caller needs it only to learn the outcome of the bind,
+// or the bound addresses, before the server serves. It does nothing once the
+// listeners are held.
+func (server *Server) Listen() error {
+	server.listening.Lock()
+	defer server.listening.Unlock()
+	if server.grpc.configuration.servesGrpc() {
+		if err := server.grpc.Listen(); err != nil {
+			return server.abandon(fmt.Errorf("gRPC listener: %w", err))
+		}
+	}
 	if server.rest != nil {
-		go func() {
-			err := server.rest.Run(ctx)
-			if err != nil {
-				panic(err)
-			}
-		}()
+		if err := server.rest.Listen(); err != nil {
+			return server.abandon(fmt.Errorf("REST listener: %w", err))
+		}
 	}
 	if server.connect != nil {
-		if server.grpc.configuration.EndpointGrpcPort == 0 {
-			return server.connect.Run(ctx)
+		if err := server.connect.Listen(); err != nil {
+			return server.abandon(fmt.Errorf("Connect listener: %w", err))
 		}
-		go func() {
-			err := server.connect.Run(ctx)
-			if err != nil {
-				panic(err)
-			}
-		}()
 	}
-	return server.grpc.Run(ctx)
+	return nil
+}
+
+// abandon closes and forgets every listener held, for a Listen that could not
+// take them all, and returns the reason unchanged.
+func (server *Server) abandon(reason error) error {
+	server.release()
+	server.grpc.listener = nil
+	if server.rest != nil {
+		server.rest.listener = nil
+	}
+	if server.connect != nil {
+		server.connect.listener = nil
+	}
+	return reason
+}
+
+// release closes every listener held, and every listener the Configuration
+// supplied whether or not a face came to take it. A listener a face already
+// served on was closed by that face, and closing it again changes nothing.
+func (server *Server) release() {
+	config := server.grpc.configuration
+	listeners := []net.Listener{server.grpc.listener, config.GrpcListener, config.ConnectListener}
+	listeners = append(listeners, config.HttpListener)
+	if server.rest != nil {
+		listeners = append(listeners, server.rest.listener)
+	}
+	if server.connect != nil {
+		listeners = append(listeners, server.connect.listener)
+	}
+	for _, listener := range listeners {
+		if listener != nil {
+			_ = listener.Close()
+		}
+	}
+}
+
+// GrpcAddr is the address the gRPC listener is bound to: nil before Listen or
+// Start, and for a service with no gRPC listener.
+func (server *Server) GrpcAddr() net.Addr {
+	server.listening.Lock()
+	defer server.listening.Unlock()
+	return server.grpc.Addr()
+}
+
+// HttpAddr is the address the REST listener is bound to: nil before Listen or
+// Start, and for a service with no REST listener.
+func (server *Server) HttpAddr() net.Addr {
+	server.listening.Lock()
+	defer server.listening.Unlock()
+	if server.rest == nil {
+		return nil
+	}
+	return server.rest.Addr()
+}
+
+// ConnectAddr is the address the Connect listener is bound to: nil before
+// Listen or Start, and for a service with no Connect listener.
+func (server *Server) ConnectAddr() net.Addr {
+	server.listening.Lock()
+	defer server.listening.Unlock()
+	if server.connect == nil {
+		return nil
+	}
+	return server.connect.Addr()
+}
+
+// Start listens on every declared face, then serves them until the server
+// stops. It returns nil after Stop, and otherwise the first failure: a bind
+// that failed, before anything served, or a face that stopped serving, after
+// which the other faces are stopped too. No failure is raised anywhere else,
+// so the caller that started the server is the one that learns of it.
+func (server *Server) Start(ctx context.Context) error {
+	if err := server.Listen(); err != nil {
+		return err
+	}
+	var faces []func(context.Context) error
+	if server.rest != nil {
+		faces = append(faces, server.rest.Run)
+	}
+	if server.connect != nil {
+		faces = append(faces, server.connect.Run)
+	}
+	if server.grpc.configuration.servesGrpc() {
+		faces = append(faces, server.grpc.Run)
+	}
+	stopped := make(chan error, len(faces))
+	for _, run := range faces {
+		go func() { stopped <- run(ctx) }()
+	}
+	var failure error
+	for range faces {
+		if err := <-stopped; err != nil && failure == nil {
+			failure = err
+			server.Stop()
+		}
+	}
+	return failure
 }
 
 func (server *Server) Stop() {
@@ -102,4 +209,9 @@ func (server *Server) Stop() {
 	}
 	server.grpc.health.Shutdown()
 	server.grpc.gRPC.GracefulStop()
+	// A listener no face came to serve on is still held: bound by Listen, or
+	// supplied, on a server stopped before it started.
+	server.listening.Lock()
+	defer server.listening.Unlock()
+	server.release()
 }

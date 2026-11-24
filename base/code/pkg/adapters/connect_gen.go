@@ -51,9 +51,10 @@ import (
 // Connect error. A service never writes a second, Connect-shaped copy of its
 // API, and no transport policy applies to one listener alone.
 type ConnectServer struct {
-	config  *Configuration
-	server  *http.Server
-	handler http.Handler
+	config   *Configuration
+	server   *http.Server
+	handler  http.Handler
+	listener net.Listener
 }
 
 // NewConnectServer builds the transcoding listener over grpcServer. It must be
@@ -74,7 +75,7 @@ func NewConnectServer(c *Configuration, grpcServer *grpc.Server) (*ConnectServer
 	}
 	// A dialled Connect-only hop returns to this listener. Dispatch native gRPC
 	// directly to the registered server so it cannot re-enter the transcoder.
-	if c.EndpointGrpcPort == 0 && len(c.GatewayDialOptions) > 0 {
+	if !c.servesGrpc() && len(c.GatewayDialOptions) > 0 {
 		next := transcoder
 		transcoder = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc-web") {
@@ -103,7 +104,6 @@ func NewConnectServer(c *Configuration, grpcServer *grpc.Server) (*ConnectServer
 		// deadline per request instead, to the methods whose caller sends one
 		// message.
 		server: &http.Server{
-			Addr:              net.JoinHostPort(c.EndpointConnectHost, fmt.Sprint(*c.EndpointConnectPort)),
 			ReadHeaderTimeout: connectTimeout(c.ConnectReadHeaderTimeout, defaultConnectReadHeaderTimeout),
 			IdleTimeout:       idle,
 		},
@@ -182,16 +182,42 @@ func boundBodyRead(next http.Handler, timeout time.Duration, streamed map[string
 	})
 }
 
-func (s *ConnectServer) Run(ctx context.Context) error {
-	if s.config.EndpointConnectPort == nil {
+// Listen takes Configuration.ConnectListener, or binds the Connect endpoint's
+// host and port. It does nothing once the server holds a listener, or when no
+// Connect listener is declared.
+func (s *ConnectServer) Listen() error {
+	if s.listener != nil || !s.config.servesConnect() {
 		return nil
 	}
-	port := *s.config.EndpointConnectPort
-	fmt.Println("Starting Connect server at", port)
+	listener, err := listenOn(s.config.ConnectListener, s.config.EndpointConnectHost, s.config.connectPort())
+	if err != nil {
+		return fmt.Errorf("failed to listen: %w", err)
+	}
+	s.listener = listener
+	return nil
+}
+
+// Addr is the address the Connect listener is bound to, nil before Listen.
+func (s *ConnectServer) Addr() net.Addr {
+	if s.listener == nil {
+		return nil
+	}
+	return s.listener.Addr()
+}
+
+// Run listens, then serves until the server shuts down.
+func (s *ConnectServer) Run(ctx context.Context) error {
+	if !s.config.servesConnect() {
+		return nil
+	}
+	if err := s.Listen(); err != nil {
+		return err
+	}
+	fmt.Println("Starting Connect server at", s.listener.Addr())
 
 	s.server.Handler = s.handler
-	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return err
+	if err := s.server.Serve(s.listener); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("failed to serve: %w", err)
 	}
 	return nil
 }

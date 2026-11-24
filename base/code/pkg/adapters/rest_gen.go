@@ -27,14 +27,15 @@ import (
 )
 
 type RestServer struct {
-	config *Configuration
-	server *http.Server
+	config   *Configuration
+	server   *http.Server
+	listener net.Listener
 }
 
 func NewRestServer(c *Configuration) (*RestServer, error) {
 	server := &RestServer{
 		config: c,
-		server: &http.Server{Addr: net.JoinHostPort(c.EndpointHttpHost, fmt.Sprint(*c.EndpointHttpPort))},
+		server: &http.Server{},
 	}
 	// Start Rest server (and proxy calls to gRPC server endpoint)
 	return server, nil
@@ -72,9 +73,47 @@ func gatewayMuxOptions(extra ...runtime.ServeMuxOption) []runtime.ServeMuxOption
 	return append(options, extra...)
 }
 
-func (s *RestServer) Run(ctx context.Context) error {
-	fmt.Println("Starting Rest server at", *s.config.EndpointHttpPort)
+// Listen takes Configuration.HttpListener, or binds the REST endpoint's host
+// and port. It does nothing once the server holds a listener.
+func (s *RestServer) Listen() error {
+	if s.listener != nil {
+		return nil
+	}
+	var port uint16
+	if s.config.EndpointHttpPort != nil {
+		port = *s.config.EndpointHttpPort
+	}
+	listener, err := listenOn(s.config.HttpListener, s.config.EndpointHttpHost, port)
+	if err != nil {
+		return fmt.Errorf("failed to listen: %w", err)
+	}
+	s.listener = listener
+	return nil
+}
 
+// Addr is the address the REST listener is bound to, nil before Listen.
+func (s *RestServer) Addr() net.Addr {
+	if s.listener == nil {
+		return nil
+	}
+	return s.listener.Addr()
+}
+
+// Run listens, then serves until the server shuts down. A gateway that cannot
+// be assembled releases the listener it would have served on.
+func (s *RestServer) Run(ctx context.Context) error {
+	if err := s.Listen(); err != nil {
+		return err
+	}
+	fmt.Println("Starting Rest server at", s.listener.Addr())
+	if err := s.serve(ctx); err != nil && err != http.ErrServerClosed {
+		_ = s.listener.Close()
+		return err
+	}
+	return nil
+}
+
+func (s *RestServer) serve(ctx context.Context) error {
 	// Create a CORS handler
 	c := Cors()
 
@@ -119,10 +158,7 @@ func (s *RestServer) Run(ctx context.Context) error {
 	// service's own middleware, its routes, then the gateway.
 	handler := WithMiddleware(s.config.Middleware, WithRoutes(s.config.Routes, gwMux))
 	s.server.Handler = logRequestOutcome(c.Handler(handler))
-	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return err
-	}
-	return nil
+	return s.server.Serve(s.listener)
 }
 
 func (s *RestServer) Shutdown(ctx context.Context) error {

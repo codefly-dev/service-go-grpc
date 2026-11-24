@@ -48,6 +48,49 @@ gRPC listener or gRPC address is required. Existing services declaring both
 endpoints keep both listeners. REST gateway hops and `GatewayDialOptions` use
 the listener that serves gRPC, including the Connect port in this shape.
 
+### Starting the server yourself: listeners, addresses and failures
+
+`GrpcListener`, `HttpListener` (when the service has a REST endpoint) and
+`ConnectListener` hand a face a listener you already bound. The face serves on
+it instead of binding its endpoint's host and port, and the hops between faces
+dial that listener's own address. Generated `main.go` never sets them: a
+running service binds what codefly resolved. They are for a test that starts a
+real server, which must not choose a free port, release it and pass the number
+on, because whatever binds in between takes it:
+
+```go
+listen := func() net.Listener {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return listener
+}
+config := &adapters.Configuration{GrpcListener: listen(), ConnectListener: listen()}
+server, err := adapters.NewServer(config)
+if err != nil {
+	t.Fatal(err)
+}
+started := make(chan error, 1)
+go func() { started <- server.Start(ctx) }()
+t.Cleanup(server.Stop)
+address := config.ConnectListener.Addr().String() // dial this
+```
+
+No readiness poll is needed to avoid a refused connection: the port is bound
+before `Start`, so an early connection waits to be accepted.
+
+- `Start` listens on every declared face, then serves. It returns `nil` after
+  `Stop`, and otherwise the first failure: a bind that failed, before anything
+  served, or a face that stopped serving, after which the others are stopped.
+  No failure is a panic in a goroutine.
+- `Listen` does the binding alone, all faces or none, for a caller that wants
+  the outcome or the addresses before serving. `Start` calls it.
+- `GrpcAddr`, `HttpAddr` and `ConnectAddr` are the bound addresses, `nil` until
+  the server listens.
+- The server owns a supplied listener: `Stop`, or a failed start, closes it. A
+  listener serves once, so a `Configuration` carrying one builds one server.
+
 One implementation and one policy chain serve the declared listeners:
 
 - **gRPC** (`grpc_gen.go`) serves `Service` directly, with `GRPCServerOptions`

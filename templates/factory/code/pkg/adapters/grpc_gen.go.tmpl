@@ -86,6 +86,24 @@ type Configuration struct {
 	EndpointGrpcHost string
 	EndpointHttpHost string
 	EndpointConnectHost string
+	// GrpcListener{{ if .Settings.RestEndpoint }}, HttpListener{{ end }} and ConnectListener are listeners the caller
+	// has already bound. A face given one serves on it instead of binding its
+	// endpoint's host and port, which it then ignores, and the hops between
+	// faces dial the listener's own address. A nil one keeps the bind by port.
+	//
+	// They exist for a test that starts a real server. Choosing a free port and
+	// handing over its number leaves a window in which another process takes
+	// it; a listener bound on 127.0.0.1:0 is held from the moment the kernel
+	// picks the port, and its Addr is where the server answers.
+	//
+	// The server owns a listener from Start: Stop, or a failed start, closes
+	// it. A listener serves once, so a Configuration that carries one builds
+	// one server.
+	GrpcListener net.Listener
+{{- if .Settings.RestEndpoint }}
+	HttpListener net.Listener
+{{- end }}
+	ConnectListener net.Listener
 	// GRPCServerOptions installs transport policy such as authentication,
 	// authorization, telemetry, and rate limiting before the listener starts.
 	GRPCServerOptions []grpc.ServerOption
@@ -187,29 +205,59 @@ type Configuration struct {
 {{- end }}
 }
 
-// rpcPort is the listener serving native gRPC, including health and REST hops.
-func (c *Configuration) rpcPort() uint16 {
-	if c.EndpointGrpcPort != 0 {
-		return c.EndpointGrpcPort
-	}
+// servesGrpc reports whether a native gRPC listener is declared, by port or by
+// listener. Without one the Connect listener is the only RPC face.
+func (c *Configuration) servesGrpc() bool {
+	return c.EndpointGrpcPort != 0 || c.GrpcListener != nil
+}
+
+// servesConnect reports whether a Connect listener is declared, by port or by
+// listener.
+func (c *Configuration) servesConnect() bool {
+	return c.EndpointConnectPort != nil || c.ConnectListener != nil
+}
+
+// connectPort is the declared Connect port, zero when a listener stands in.
+func (c *Configuration) connectPort() uint16 {
 	if c.EndpointConnectPort != nil {
 		return *c.EndpointConnectPort
 	}
 	return 0
 }
 
-// rpcAddress follows the actual gRPC listener, including Connect-only mode.
+// rpcAddress follows the actual gRPC listener, including Connect-only mode,
+// and a listener the caller bound rather than the port it stands in for.
 // Wildcard listeners are reached through loopback; gatewayDialOptions still
 // checks the connected peer and refuses any off-host plaintext hop.
 func (c *Configuration) rpcAddress() string {
-	host := c.EndpointGrpcHost
-	if c.EndpointGrpcPort == 0 {
-		host = c.EndpointConnectHost
+	listener, host, port := c.GrpcListener, c.EndpointGrpcHost, c.EndpointGrpcPort
+	if !c.servesGrpc() {
+		listener, host, port = c.ConnectListener, c.EndpointConnectHost, c.connectPort()
+	}
+	if listener != nil {
+		bound, ok := listener.Addr().(*net.TCPAddr)
+		if !ok {
+			return listener.Addr().String()
+		}
+		host, port = "", uint16(bound.Port)
+		if bound.IP != nil {
+			host = bound.IP.String()
+		}
 	}
 	if host == "" || net.ParseIP(host).IsUnspecified() {
 		host = "127.0.0.1"
 	}
-	return net.JoinHostPort(host, fmt.Sprint(c.rpcPort()))
+	return net.JoinHostPort(host, fmt.Sprint(port))
+}
+
+// listenOn is the one place a face gets its listener: the one the caller
+// bound, or a bind of the endpoint's host and port. Every face starts from a
+// listener, so a bind that fails is an error its caller receives.
+func listenOn(supplied net.Listener, host string, port uint16) (net.Listener, error) {
+	if supplied != nil {
+		return supplied, nil
+	}
+	return net.Listen("tcp", net.JoinHostPort(host, fmt.Sprint(port)))
 }
 
 // defaultMaxMessageBytes is gRPC's own server receive bound, which every face
@@ -241,6 +289,7 @@ type GrpcServer struct {
 	gRPC          *grpc.Server
 	health        *health.Server
 	validator     protovalidate.Validator
+	listener      net.Listener
 }
 
 func NewGrpServer(c *Configuration) (*GrpcServer, error) {
@@ -272,15 +321,36 @@ func NewGrpServer(c *Configuration) (*GrpcServer, error) {
 	return &s, nil
 }
 
-func (s *GrpcServer) Run(ctx context.Context) error {
-	fmt.Println("Starting gRPC server at", s.configuration.EndpointGrpcPort)
-	lis, err := net.Listen("tcp", net.JoinHostPort(s.configuration.EndpointGrpcHost, fmt.Sprint(s.configuration.EndpointGrpcPort)))
-	if err != nil {
-		return fmt.Errorf("failed to listen: %v", err)
+// Listen takes Configuration.GrpcListener, or binds the gRPC endpoint's host
+// and port. It does nothing once the server holds a listener.
+func (s *GrpcServer) Listen() error {
+	if s.listener != nil {
+		return nil
 	}
+	listener, err := listenOn(s.configuration.GrpcListener, s.configuration.EndpointGrpcHost, s.configuration.EndpointGrpcPort)
+	if err != nil {
+		return fmt.Errorf("failed to listen: %w", err)
+	}
+	s.listener = listener
+	return nil
+}
 
-	if err := s.gRPC.Serve(lis); err != nil {
-		return fmt.Errorf("failed to serve: %s", err)
+// Addr is the address the gRPC listener is bound to, nil before Listen.
+func (s *GrpcServer) Addr() net.Addr {
+	if s.listener == nil {
+		return nil
+	}
+	return s.listener.Addr()
+}
+
+// Run listens, then serves until the server stops.
+func (s *GrpcServer) Run(ctx context.Context) error {
+	if err := s.Listen(); err != nil {
+		return err
+	}
+	fmt.Println("Starting gRPC server at", s.listener.Addr())
+	if err := s.gRPC.Serve(s.listener); err != nil {
+		return fmt.Errorf("failed to serve: %w", err)
 	}
 	return nil
 }
