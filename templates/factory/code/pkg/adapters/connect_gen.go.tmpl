@@ -6,6 +6,8 @@ package adapters
 
 ----------------------------------------------------------------- */
 
+{{- if .Settings.ConnectEndpoint }}
+
 import (
 	"context"
 	"errors"
@@ -393,3 +395,4 @@ func (frameCodec) Unmarshal(data []byte, v any) error {
 	}
 	return proto.Unmarshal(data, m)
 }
+{{- end }}
