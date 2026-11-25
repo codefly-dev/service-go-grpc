@@ -11,7 +11,9 @@ import (
 	"{{ .GoModule }}/plugins"
 	"context"
 	"fmt"
+	{{- if or .Settings.RestEndpoint .Settings.ConnectEndpoint }}
 	"time"
+	{{- end }}
 )
 
 type Server struct {
@@ -19,13 +21,24 @@ type Server struct {
 	{{- if .Settings.RestEndpoint }}
 	rest    *RestServer
 	{{- end }}
+	{{- if .Settings.ConnectEndpoint }}
 	connect *ConnectServer
+	{{- end }}
 }
 
 func NewServer(config *Configuration) (*Server, error) {
+	{{- if .Settings.ConnectEndpoint }}
 	if config.EndpointGrpcPort == 0 && config.EndpointConnectPort == nil {
 		return nil, fmt.Errorf("cannot start RPC server: no gRPC or Connect listener configured")
 	}
+	{{- else }}
+	if config.EndpointConnectPort != nil {
+		return nil, fmt.Errorf("cannot start Connect listener: connect-endpoint is disabled")
+	}
+	if config.EndpointGrpcPort == 0 {
+		return nil, fmt.Errorf("cannot start RPC server: no gRPC listener configured")
+	}
+	{{- end }}
 
 	grpc, err := NewGrpServer(config)
 	if err != nil {
@@ -48,6 +61,8 @@ func NewServer(config *Configuration) (*Server, error) {
 	}
 	{{- end }}
 
+	{{- if .Settings.ConnectEndpoint }}
+
 	// Built last on purpose: the Connect listener transcodes to this same gRPC
 	// server, and routes the services registered on it by now — the scaffolded
 	// service and every plugin above.
@@ -59,12 +74,16 @@ func NewServer(config *Configuration) (*Server, error) {
 		}
 	}
 
+	{{- end }}
+
 	return &Server{
 		grpc:    grpc,
 		{{- if .Settings.RestEndpoint }}
 		rest:    rest,
 		{{- end }}
+		{{- if .Settings.ConnectEndpoint }}
 		connect: conn,
+		{{- end }}
 	}, nil
 }
 
@@ -79,6 +98,7 @@ func (server *Server) Start(ctx context.Context) error {
 		}()
 	}
 	{{- end }}
+	{{- if .Settings.ConnectEndpoint }}
 	if server.connect != nil {
 		if server.grpc.configuration.EndpointGrpcPort == 0 {
 			return server.connect.Run(ctx)
@@ -90,6 +110,7 @@ func (server *Server) Start(ctx context.Context) error {
 			}
 		}()
 	}
+	{{- end }}
 	return server.grpc.Run(ctx)
 }
 
@@ -104,6 +125,7 @@ func (server *Server) Stop() {
 		cancel()
 	}
 	{{- end }}
+	{{- if .Settings.ConnectEndpoint }}
 	if server.connect != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := server.connect.Shutdown(ctx); err != nil {
@@ -111,6 +133,7 @@ func (server *Server) Stop() {
 		}
 		cancel()
 	}
+	{{- end }}
 	server.grpc.health.Shutdown()
 	server.grpc.gRPC.GracefulStop()
 }

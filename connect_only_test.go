@@ -76,6 +76,23 @@ func TestConnectOnlyFactoryServesEveryProtocol(t *testing.T) {
 	require.NoError(t, err, "%s", output)
 }
 
+// A gRPC-only service has no HTTP gateway configuration. Compile the complete
+// generated service so a reference between separately rendered adapters cannot
+// silently survive after one side was disabled.
+func TestGRPCOnlyFactoryBuildsWithoutHTTPGateways(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.CopyFS(root, os.DirFS("base/code")))
+	for _, name := range []string{"main.go", "pkg/adapters/server_gen.go", "pkg/adapters/grpc_gen.go", "pkg/adapters/connect_gen.go", "pkg/adapters/rest_gen.go", "pkg/adapters/cors_gen.go"} {
+		rendered := renderFactoryGo(t, "templates/factory/code/"+name+".tmpl", &Settings{})
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), rendered, 0644))
+	}
+	command := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "./...")
+	command.Dir = root
+	command.Env = append(os.Environ(), "GOWORK=off")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+}
+
 // TestConnectOnlyDeployment advertises just the declared listener and puts all
 // three Kubernetes probes on it; a successful build with dead probes is unusable.
 func TestConnectOnlyDeployment(t *testing.T) {

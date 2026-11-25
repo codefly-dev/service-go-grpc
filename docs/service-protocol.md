@@ -14,6 +14,9 @@ not fail at render time. It shows up as calls the hop downgraded or refused.
 | Connect port | Connect endpoint declared or scaffolded | `connect-port` | `appProtocol: http2` | `h2c.NewHandler`: gRPC, Connect and gRPC-Web over cleartext HTTP/2, plus HTTP/1.1 |
 | named endpoint | per declared named endpoint | the endpoint's name | from the endpoint API, below | the service's own |
 
+A gRPC-only service generates its gRPC listener without the Connect adapter or
+HTTP gateway dial options.
+
 **REST is `http`, never HTTP/2.** The generated REST listener refuses
 prior-knowledge HTTP/2, which is what an upstream declared `http2` or
 `kubernetes.io/h2c` sends, so every REST call through such a hop would fail. A
