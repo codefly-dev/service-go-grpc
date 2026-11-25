@@ -6,7 +6,7 @@ require (
 	buf.build/go/protovalidate v1.4.0
 	connectrpc.com/connect v1.21.1
 	connectrpc.com/vanguard v0.4.0
-	github.com/codefly-dev/core v0.19.35
+	github.com/codefly-dev/core v0.19.36
 	github.com/codefly-dev/sdk-go v0.4.4
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.33.0
 	github.com/rs/cors v1.11.1
