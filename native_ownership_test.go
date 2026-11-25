@@ -37,6 +37,7 @@ func TestNativeAgentOwnershipLifecycle(t *testing.T) {
 	}
 	t.Setenv("HOME", t.TempDir()) // Core's process registry is OS-home scoped.
 	t.Setenv(resources.CodeflyHomeEnv, agentHome)
+	t.Setenv(manager.AgentSourceEnv, "local")
 	t.Setenv("GOWORK", "off")
 	installed, err := agent.Path(t.Context())
 	if err != nil {
@@ -110,8 +111,8 @@ func TestNativeAgentOwnershipLifecycle(t *testing.T) {
 		t.Fatalf("preview: %v", err)
 	}
 	expected, err := runners.ParseProcessGroupRecoveryExpectation(preview)
-	if err != nil || expected.Namespace != "authenticated-v2" || expected.PGID != a.group.PGID() {
-		t.Fatalf("actual agent did not write the expected v2 registration: %+v, %v", expected, err)
+	if err != nil || expected.Namespace != "workspace-authenticated-v1" || expected.PGID != a.group.PGID() {
+		t.Fatalf("actual agent did not write the expected v1 workspace registration: %+v, %v", expected, err)
 	}
 	// Recovery receipts represent the recorded owner with PGID zero. Its birth
 	// must still be the authenticated agent captured before any workload RPC.
