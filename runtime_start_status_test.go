@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/languages"
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/stretchr/testify/require"
@@ -109,7 +109,7 @@ func newStartTestRuntime(t *testing.T, source string, hotReload bool) (*Runtime,
 	runtime.bindRunnerEnvironment(env)
 	runtime.GoGrpc.Settings.HotReload = hotReload
 	t.Cleanup(func() {
-		_, _ = runtime.Stop(ctx, &runtimev0.StopRequest{})
+		_, _ = runtime.Stop(ctx, &runtimev1.StopRequest{})
 	})
 	return runtime, sourceDir
 }
@@ -117,19 +117,19 @@ func newStartTestRuntime(t *testing.T, source string, hotReload bool) (*Runtime,
 // observedStatus reads StartStatus the way the Information RPC does — through
 // the RuntimeWrapper's lock, so it is safe to sample while a supervise
 // goroutine may be writing.
-func observedStatus(s *Runtime) (runtimev0.StartStatus_Status, string) {
+func observedStatus(s *Runtime) (runtimev1.StartStatus_Status, string) {
 	s.Base.Runtime.RLock()
 	defer s.Base.Runtime.RUnlock()
 	if s.Base.Runtime.StartStatus == nil {
-		return runtimev0.StartStatus_UNKNOWN, ""
+		return runtimev1.StartStatus_UNKNOWN, ""
 	}
 	return s.Base.Runtime.StartStatus.State, s.Base.Runtime.StartStatus.Message
 }
 
-func requireEventualStatus(t *testing.T, s *Runtime, want runtimev0.StartStatus_Status) string {
+func requireEventualStatus(t *testing.T, s *Runtime, want runtimev1.StartStatus_Status) string {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
-	var state runtimev0.StartStatus_Status
+	var state runtimev1.StartStatus_Status
 	var message string
 	for time.Now().Before(deadline) {
 		state, message = observedStatus(s)
@@ -145,7 +145,7 @@ func requireEventualStatus(t *testing.T, s *Runtime, want runtimev0.StartStatus_
 // requireStableStatus asserts the status still says want after every goroutine
 // a start attempt spawned has had time to run — this is where a late exit
 // report would show up.
-func requireStableStatus(t *testing.T, s *Runtime, want runtimev0.StartStatus_Status) {
+func requireStableStatus(t *testing.T, s *Runtime, want runtimev1.StartStatus_Status) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -165,17 +165,17 @@ func TestStartCompileFailureIsNeverStarted(t *testing.T) {
 			ctx := context.Background()
 			runtime, _ := newStartTestRuntime(t, brokenSource, hotReload)
 
-			resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+			resp, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 			require.NoError(t, err)
-			require.Equal(t, runtimev0.StartStatus_ERROR, resp.GetStatus().GetState())
+			require.Equal(t, runtimev1.StartStatus_ERROR, resp.GetStatus().GetState())
 			require.Contains(t, resp.GetStatus().GetMessage(), "compilation failed")
 			require.Contains(t, resp.GetStatus().GetMessage(), "syntax error",
 				"the compiler's diagnostics must survive into the status message")
 			require.Nil(t, runtime.runner, "a failed compile must not leave a runner behind")
 
-			info, err := runtime.Information(ctx, &runtimev0.InformationRequest{})
+			info, err := runtime.Information(ctx, &runtimev1.InformationRequest{})
 			require.NoError(t, err)
-			require.Equal(t, runtimev0.StartStatus_ERROR, info.GetStartStatus().GetState(),
+			require.Equal(t, runtimev1.StartStatus_ERROR, info.GetStartStatus().GetState(),
 				"the polled status must agree with the Start response")
 			require.Contains(t, info.GetStartStatus().GetMessage(), "syntax error")
 		})
@@ -189,23 +189,23 @@ func TestHotReloadRebuildsAfterSourceFix(t *testing.T) {
 	ctx := context.Background()
 	runtime, sourceDir := newStartTestRuntime(t, brokenSource, true)
 
-	resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	resp, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_ERROR, resp.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_ERROR, resp.GetStatus().GetState())
 
 	writeServiceSource(t, sourceDir, longRunningSource)
-	resp, err = runtime.Start(ctx, &runtimev0.StartRequest{})
+	resp, err = runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_STARTED, resp.GetStatus().GetState())
-	requireStableStatus(t, runtime, runtimev0.StartStatus_STARTED)
+	require.Equal(t, runtimev1.StartStatus_STARTED, resp.GetStatus().GetState())
+	requireStableStatus(t, runtime, runtimev1.StartStatus_STARTED)
 
 	// An error introduced after a successful run stops the binary that was
 	// serving and produces no replacement: readiness must not survive that.
 	writeServiceSource(t, sourceDir, brokenSource)
-	resp, err = runtime.Start(ctx, &runtimev0.StartRequest{})
+	resp, err = runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_ERROR, resp.GetStatus().GetState())
-	requireStableStatus(t, runtime, runtimev0.StartStatus_ERROR)
+	require.Equal(t, runtimev1.StartStatus_ERROR, resp.GetStatus().GetState())
+	requireStableStatus(t, runtime, runtimev1.StartStatus_ERROR)
 }
 
 // TestStartMarksImmediateBinaryExitFailed exercises the ordering fix with real
@@ -223,12 +223,12 @@ func TestStartMarksImmediateBinaryExitFailed(t *testing.T) {
 			ctx := context.Background()
 			runtime, _ := newStartTestRuntime(t, source, false)
 
-			resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+			resp, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 			require.NoError(t, err)
-			require.Equal(t, runtimev0.StartStatus_STARTED, resp.GetStatus().GetState())
+			require.Equal(t, runtimev1.StartStatus_STARTED, resp.GetStatus().GetState())
 
-			requireEventualStatus(t, runtime, runtimev0.StartStatus_ERROR)
-			requireStableStatus(t, runtime, runtimev0.StartStatus_ERROR)
+			requireEventualStatus(t, runtime, runtimev1.StartStatus_ERROR)
+			requireStableStatus(t, runtime, runtimev1.StartStatus_ERROR)
 		})
 	}
 }
@@ -240,16 +240,16 @@ func TestRapidRebuildKeepsReplacementReady(t *testing.T) {
 	ctx := context.Background()
 	runtime, sourceDir := newStartTestRuntime(t, longRunningSource, true)
 
-	resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	resp, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_STARTED, resp.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_STARTED, resp.GetStatus().GetState())
 
 	writeServiceSource(t, sourceDir, longRunningSourceV2)
-	resp, err = runtime.Start(ctx, &runtimev0.StartRequest{})
+	resp, err = runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_STARTED, resp.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_STARTED, resp.GetStatus().GetState())
 
-	requireStableStatus(t, runtime, runtimev0.StartStatus_STARTED)
+	requireStableStatus(t, runtime, runtimev1.StartStatus_STARTED)
 }
 
 // TestSupersededRunnerExitCannotFailNewerGeneration pins the generation guard
@@ -270,7 +270,7 @@ func TestSupersededRunnerExitCannotFailNewerGeneration(t *testing.T) {
 	runtime.reportRunnerExit(superseded, errors.New("old binary exited late"))
 
 	state, message := observedStatus(runtime)
-	require.Equalf(t, runtimev0.StartStatus_STARTED, state,
+	require.Equalf(t, runtimev1.StartStatus_STARTED, state,
 		"a superseded runner's exit must not fail the replacement: %s", message)
 }
 
@@ -285,7 +285,7 @@ func TestCurrentRunnerExitFailsTheService(t *testing.T) {
 	runtime.reportRunnerExit(gen, nil)
 
 	state, message := observedStatus(runtime)
-	require.Equal(t, runtimev0.StartStatus_ERROR, state)
+	require.Equal(t, runtimev1.StartStatus_ERROR, state)
 	require.Equal(t, "runner exited", message)
 }
 
@@ -302,7 +302,7 @@ func TestReplacementRevokesReadiness(t *testing.T) {
 	runtime.revokeReadiness("rebuilding")
 
 	state, message := observedStatus(runtime)
-	require.NotEqual(t, runtimev0.StartStatus_STARTED, state)
+	require.NotEqual(t, runtimev1.StartStatus_STARTED, state)
 	require.Equal(t, "rebuilding", message)
 }
 
@@ -390,9 +390,9 @@ func TestConcurrentStartLeavesNoOrphanProcess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+			resp, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 			require.NoError(t, err)
-			require.Equal(t, runtimev0.StartStatus_STARTED, resp.GetStatus().GetState())
+			require.Equal(t, runtimev1.StartStatus_STARTED, resp.GetStatus().GetState())
 		}()
 	}
 	wg.Wait()
@@ -403,7 +403,7 @@ func TestConcurrentStartLeavesNoOrphanProcess(t *testing.T) {
 	// stops, so it always lives long enough to record itself.
 	waitForPids(t, pidFile)
 
-	_, err := runtime.Stop(ctx, &runtimev0.StopRequest{})
+	_, err := runtime.Stop(ctx, &runtimev1.StopRequest{})
 	require.NoError(t, err)
 
 	pids := recordedPids(t, pidFile)
@@ -444,12 +444,12 @@ func TestBuildDiagnosticsIsolatedFromConcurrentToolchainOutput(t *testing.T) {
 		}
 	}()
 
-	resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	resp, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	close(stop)
 	<-done
 
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_ERROR, resp.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_ERROR, resp.GetStatus().GetState())
 	require.Contains(t, resp.GetStatus().GetMessage(), "syntax error")
 	require.NotContains(t, resp.GetStatus().GetMessage(), "go: downloading")
 
@@ -485,15 +485,15 @@ func TestStopRevokesReadiness(t *testing.T) {
 	ctx := context.Background()
 	runtime, _ := newStartTestRuntime(t, longRunningSource, false)
 
-	resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	resp, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_STARTED, resp.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_STARTED, resp.GetStatus().GetState())
 
-	_, err = runtime.Stop(ctx, &runtimev0.StopRequest{})
+	_, err = runtime.Stop(ctx, &runtimev1.StopRequest{})
 	require.NoError(t, err)
 
 	state, message := observedStatus(runtime)
-	require.NotEqual(t, runtimev0.StartStatus_STARTED, state,
+	require.NotEqual(t, runtimev1.StartStatus_STARTED, state,
 		"a stopped service must not still report a running binary")
 	require.Contains(t, message, "stopped")
 }

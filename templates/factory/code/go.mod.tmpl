@@ -6,8 +6,8 @@ require (
 	buf.build/go/protovalidate v1.4.1
 	connectrpc.com/connect v1.21.1
 	connectrpc.com/vanguard v0.4.0
-	github.com/codefly-dev/core v0.19.36
-	github.com/codefly-dev/sdk-go v0.4.4
+	github.com/codefly-dev/core v0.19.38-0.20261125185931-18555ee1d782
+	github.com/codefly-dev/sdk-go v0.4.5-0.20261125191637-e78571827fe5
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.34.0
 	github.com/rs/cors v1.11.1
 	golang.org/x/net v0.63.0
@@ -31,7 +31,7 @@ require (
 	github.com/go-openapi/errors v0.22.9 // indirect
 	github.com/go-openapi/jsonpointer v1.0.2 // indirect
 	github.com/go-openapi/jsonreference v1.0.3 // indirect
-	github.com/go-openapi/loads v0.25.3 // indirect
+	github.com/go-openapi/loads v0.25.4 // indirect
 	github.com/go-openapi/spec v1.0.1 // indirect
 	github.com/go-openapi/strfmt v0.27.4 // indirect
 	github.com/go-openapi/swag/conv v0.29.2 // indirect
@@ -59,12 +59,12 @@ require (
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
-	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	go.opentelemetry.io/proto/otlp v1.11.1 // indirect
+	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/exp v0.0.0-20261113113407-e3970619a1a4 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/term v0.48.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261123191846-1e707ab9fbc2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

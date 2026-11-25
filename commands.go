@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 )
@@ -15,14 +15,14 @@ import (
 // NOTE: test and lint are standard Runtime RPCs — don't duplicate here.
 // Only register commands that are unique to this agent type.
 func (s *Runtime) registerCommands() {
-	s.RegisterCommand(&agentv0.CommandDefinition{
+	s.RegisterCommand(&agentv1.CommandDefinition{
 		Name:        "proto",
 		Description: "Regenerate protobuf Go code from .proto files via buf",
 		Tags:        []string{"codegen", "proto"},
 		Aliases:     []string{"generate", "buf"},
 	}, s.cmdProto)
 
-	s.RegisterCommand(&agentv0.CommandDefinition{
+	s.RegisterCommand(&agentv1.CommandDefinition{
 		Name:        "health",
 		Description: "Check if the gRPC service is responding",
 		Tags:        []string{"health", "diagnostic"},
@@ -34,14 +34,14 @@ func (s *Runtime) registerCommands() {
 	// flags via `grpcurl` and override. Mode-consistent: runs in the
 	// plugin's active backend so the grpcurl binary's ability to reach
 	// the service matches the execution environment.
-	s.RegisterCommand(&agentv0.CommandDefinition{
+	s.RegisterCommand(&agentv1.CommandDefinition{
 		Name:        "grpcurl-list",
 		Description: "List gRPC services exposed by the running server (requires reflection).",
 		Tags:        []string{"grpc", "introspect"},
 		Aliases:     []string{"grpc-list", "list-services"},
 	}, s.cmdGrpcurlList)
 
-	s.RegisterCommand(&agentv0.CommandDefinition{
+	s.RegisterCommand(&agentv1.CommandDefinition{
 		Name:        "grpcurl-describe",
 		Description: "Describe a gRPC service or method. Pass the fully-qualified name as the first arg (e.g. `package.Service` or `package.Service.Method`). Without args, describes all services.",
 		Usage:       `grpcurl-describe my.package.MyService`,
@@ -49,7 +49,7 @@ func (s *Runtime) registerCommands() {
 		Aliases:     []string{"grpc-describe"},
 	}, s.cmdGrpcurlDescribe)
 
-	s.RegisterCommand(&agentv0.CommandDefinition{
+	s.RegisterCommand(&agentv1.CommandDefinition{
 		Name:        "grpcurl",
 		Description: "Invoke a gRPC method on the running server. Args: <method> [json-payload]. Plaintext + reflection; for custom flags edit the command or pipe directly.",
 		Usage:       `grpcurl my.package.MyService.MyMethod '{"field":"value"}'`,

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
 	"gopkg.in/yaml.v3"
 
 	goservice "github.com/codefly-dev/service-go/pkg/service"
@@ -80,7 +80,7 @@ protocol-output-dirs:
 }
 
 func TestGoGrpcDoesNotAdvertiseEffectiveInputs(t *testing.T) {
-	information, err := NewService().GetAgentInformation(context.Background(), &agentv0.AgentInformationRequest{})
+	information, err := NewService().GetAgentInformation(context.Background(), &agentv1.AgentInformationRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestGoGrpcDoesNotAdvertiseEffectiveInputs(t *testing.T) {
 }
 
 func TestGoGrpcAdvertisesAuthoritativeSync(t *testing.T) {
-	information, err := NewService().GetAgentInformation(context.Background(), &agentv0.AgentInformationRequest{})
+	information, err := NewService().GetAgentInformation(context.Background(), &agentv1.AgentInformationRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}

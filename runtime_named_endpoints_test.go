@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/network"
 	"github.com/codefly-dev/core/resources"
@@ -26,13 +26,13 @@ const namedEndpointName = "authority"
 // and a named grpc endpoint, and proposes network mappings for every endpoint
 // Load reported — exactly as the CLI's runner does (GenerateNetworkMappings over
 // LoadResponse.Endpoints).
-func loadNamedEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContext) (*Runtime, []*basev0.NetworkMapping, string) {
+func loadNamedEndpointRuntime(t *testing.T, runtimeContext *basev1.RuntimeContext) (*Runtime, []*basev1.NetworkMapping, string) {
 	return loadEndpointRuntime(t, runtimeContext, true)
 }
 
 // loadEndpointRuntime is loadNamedEndpointRuntime with the REST scaffold on or
 // off: off, the service declares rest and serves it itself.
-func loadEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContext, restScaffold bool) (*Runtime, []*basev0.NetworkMapping, string) {
+func loadEndpointRuntime(t *testing.T, runtimeContext *basev1.RuntimeContext, restScaffold bool) (*Runtime, []*basev1.NetworkMapping, string) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -66,7 +66,7 @@ func loadEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContext, re
 	require.NoError(t, (&resources.Module{Name: "mod"}).SaveToDir(ctx, filepath.Join(workspacePath, "mod")))
 
 	workspace := &resources.Workspace{Name: "test"}
-	identity := &basev0.ServiceIdentity{
+	identity := &basev1.ServiceIdentity{
 		Name:                service.Name,
 		Version:             service.Version,
 		Module:              "mod",
@@ -77,13 +77,13 @@ func loadEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContext, re
 	env := resources.LocalEnvironment()
 
 	runtime := NewRuntime(NewService())
-	load, err := runtime.Load(ctx, &runtimev0.LoadRequest{
+	load, err := runtime.Load(ctx, &runtimev1.LoadRequest{
 		Identity:     identity,
 		Environment:  shared.Must(env.Proto()),
 		DisableCatch: true,
 	})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.LoadStatus_READY, load.GetStatus().GetState(), load.GetStatus().GetMessage())
+	require.Equal(t, runtimev1.LoadStatus_READY, load.GetStatus().GetState(), load.GetStatus().GetMessage())
 	require.Len(t, load.GetEndpoints(), 3, "Load must report the named endpoint, or the CLI never proposes a mapping for it")
 
 	manager, err := network.NewRuntimeManager(ctx, nil)
@@ -96,7 +96,7 @@ func loadEndpointRuntime(t *testing.T, runtimeContext *basev0.RuntimeContext, re
 	return runtime, mappings, workspacePath
 }
 
-func namedEndpoint(t *testing.T, runtime *Runtime) *basev0.Endpoint {
+func namedEndpoint(t *testing.T, runtime *Runtime) *basev1.Endpoint {
 	t.Helper()
 	for _, endpoint := range runtime.Endpoints {
 		if endpoint.Name == namedEndpointName {
@@ -118,7 +118,7 @@ func TestInitExportsNamedEndpoints(t *testing.T) {
 	if !languages.HasGoRuntime(nil) {
 		t.Skip("native go toolchain not available")
 	}
-	for name, runtimeContext := range map[string]*basev0.RuntimeContext{
+	for name, runtimeContext := range map[string]*basev1.RuntimeContext{
 		"native":    resources.NewRuntimeContextNative(),
 		"container": resources.NewRuntimeContextContainer(),
 	} {
@@ -134,12 +134,12 @@ func TestInitExportsNamedEndpoints(t *testing.T) {
 			runner.WithLocalCacheDir(filepath.Join(workspacePath, ".cache"))
 			runtime.bindRunnerEnvironment(runner)
 
-			init, err := runtime.Init(ctx, &runtimev0.InitRequest{
+			init, err := runtime.Init(ctx, &runtimev1.InitRequest{
 				RuntimeContext:          runtimeContext,
 				ProposedNetworkMappings: mappings,
 			})
 			require.NoError(t, err)
-			require.Equal(t, runtimev0.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus().GetMessage())
+			require.Equal(t, runtimev1.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus().GetMessage())
 
 			named := namedEndpoint(t, runtime)
 			want, err := resources.FindNetworkInstanceInNetworkMappings(ctx, mappings, named, resources.NewNativeNetworkAccess())
@@ -186,11 +186,11 @@ func TestInitExportsADeclaredRestEndpointTheServiceServesItself(t *testing.T) {
 	runner.WithLocalCacheDir(filepath.Join(workspacePath, ".cache"))
 	runtime.bindRunnerEnvironment(runner)
 
-	init, err := runtime.Init(ctx, &runtimev0.InitRequest{RuntimeContext: runtimeContext, ProposedNetworkMappings: mappings})
+	init, err := runtime.Init(ctx, &runtimev1.InitRequest{RuntimeContext: runtimeContext, ProposedNetworkMappings: mappings})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus().GetMessage())
+	require.Equal(t, runtimev1.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus().GetMessage())
 
-	var rest *basev0.Endpoint
+	var rest *basev1.Endpoint
 	for _, endpoint := range runtime.Endpoints {
 		if endpoint.Name == standards.REST {
 			rest = endpoint
@@ -223,7 +223,7 @@ func TestInitRefusesADeclaredEndpointWithoutAMapping(t *testing.T) {
 	require.NoError(t, err)
 	runtime.bindRunnerEnvironment(runner)
 
-	var withoutNamed []*basev0.NetworkMapping
+	var withoutNamed []*basev1.NetworkMapping
 	for _, mapping := range mappings {
 		if mapping.GetEndpoint().GetName() != namedEndpointName {
 			withoutNamed = append(withoutNamed, mapping)
@@ -231,12 +231,12 @@ func TestInitRefusesADeclaredEndpointWithoutAMapping(t *testing.T) {
 	}
 	require.Len(t, withoutNamed, 2)
 
-	init, err := runtime.Init(ctx, &runtimev0.InitRequest{
+	init, err := runtime.Init(ctx, &runtimev1.InitRequest{
 		RuntimeContext:          runtimeContext,
 		ProposedNetworkMappings: withoutNamed,
 	})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.InitStatus_ERROR, init.GetStatus().GetState())
+	require.Equal(t, runtimev1.InitStatus_ERROR, init.GetStatus().GetState())
 	require.Contains(t, init.GetStatus().GetMessage(), namedEndpointName)
 }
 

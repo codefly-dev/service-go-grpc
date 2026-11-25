@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/codefly-dev/core/agents/services"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,17 +62,17 @@ func TestBuildRecipePackagesDeclaredCommandsOverGRPC(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644))
 	}
 	builder.GoGrpc.Settings.BuildCommands = commands
-	request := &builderv0.BuildRequest{
+	request := &builderv1.BuildRequest{
 		OutputDirectory: filepath.Join(root, "builder"),
-		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
-			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
+		BuildContext: &builderv1.BuildContext{Kind: &builderv1.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv1.DockerBuildContext{DockerRepository: "registry.example.com"},
 		}},
 	}
 	for _, cgo := range []bool{false, true} {
 		builder.GoGrpc.Settings.WithCGO = cgo
 		response, err := client.Build(context.Background(), request)
 		require.NoError(t, err)
-		require.Equal(t, builderv0.BuildStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
+		require.Equal(t, builderv1.BuildStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
 		require.NoError(t, services.VerifyDockerBuildPlan(request.OutputDirectory, response.GetResult().GetDockerBuildPlan()))
 		content, err := os.ReadFile(filepath.Join(request.OutputDirectory, "Dockerfile"))
 		require.NoError(t, err)
@@ -93,6 +93,6 @@ func TestBuildRecipePackagesDeclaredCommandsOverGRPC(t *testing.T) {
 	builder.GoGrpc.Settings.BuildCommands = []BuildCommand{{Name: "missing", Package: "./cmd/missing"}}
 	response, err := client.Build(context.Background(), request)
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_ERROR, response.GetState().GetState())
+	require.Equal(t, builderv1.BuildStatus_ERROR, response.GetState().GetState())
 	require.Nil(t, response.GetResult().GetDockerBuildPlan())
 }

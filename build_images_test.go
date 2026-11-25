@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/templates"
 	"github.com/stretchr/testify/require"
 )
@@ -20,8 +20,8 @@ func TestEnvironmentImageBindingsReachRealRecipe(t *testing.T) {
 		data := dockerTemplating{}
 		data.WithCGO = native
 		replacement := "registry.example/approved/alpine@sha256:" + strings.Repeat("a", 64)
-		binding := &builderv0.BuildImageInput{Role: "runtime", Reference: replacement, Variant: "alpine3.23-musl"}
-		require.NoError(t, resolveTemplateImages(&data, []*builderv0.BuildImageInput{binding}))
+		binding := &builderv1.BuildImageInput{Role: "runtime", Reference: replacement, Variant: "alpine3.23-musl"}
+		require.NoError(t, resolveTemplateImages(&data, []*builderv1.BuildImageInput{binding}))
 		rendered, err := templates.ApplyTemplate(string(source), data)
 		require.NoError(t, err)
 		require.Contains(t, rendered, "FROM "+replacement+" AS runtimefiles")
@@ -33,6 +33,6 @@ func TestEnvironmentImageBindingsReachRealRecipe(t *testing.T) {
 			require.True(t, strings.HasPrefix(final, "FROM scratch\n"))
 		}
 		binding.Variant = "wolfi-glibc"
-		require.ErrorContains(t, resolveTemplateImages(&data, []*builderv0.BuildImageInput{binding}), "unsupported recipe variant")
+		require.ErrorContains(t, resolveTemplateImages(&data, []*builderv1.BuildImageInput{binding}), "unsupported recipe variant")
 	}
 }

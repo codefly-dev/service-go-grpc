@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/codefly-dev/core/agents/services"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/distribution/reference"
 	"github.com/stretchr/testify/require"
 )
@@ -74,12 +74,12 @@ func testPackagingImage(t *testing.T, cgo bool, packages []string, selected bool
 			require.NoError(t, err)
 			input.Reference = reference.TrimNamed(named).Name() + "@" + named.(reference.Digested).Digest().String()
 		}
-		response, err := client.Build(t.Context(), &builderv0.BuildRequest{
+		response, err := client.Build(t.Context(), &builderv1.BuildRequest{
 			OutputDirectory: filepath.Join(root, "builder"),
-			BuildContext:    &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com", ImageBindings: inputs}}},
+			BuildContext:    &builderv1.BuildContext{Kind: &builderv1.BuildContext_DockerBuildContext{DockerBuildContext: &builderv1.DockerBuildContext{DockerRepository: "registry.example.com", ImageBindings: inputs}}},
 		})
 		require.NoError(t, err)
-		require.Equal(t, builderv0.BuildStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
+		require.Equal(t, builderv1.BuildStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
 		plan = response.GetResult().GetDockerBuildPlan()
 		require.NoError(t, services.VerifyDockerBuildPlan(filepath.Join(root, "builder"), plan))
 		recipe, err := os.ReadFile(filepath.Join(root, "builder", "Dockerfile"))
@@ -169,15 +169,15 @@ func TestRuntimeAssetsBuildRefusalOverGRPC(t *testing.T) {
 	client, builder := startBuilderAgent(t, identity)
 	builder.GoGrpc.Settings.RuntimeAssets = []string{"routing"}
 	root := filepath.Join(identity.GetWorkspacePath(), "mod/svc")
-	request := &builderv0.BuildRequest{
+	request := &builderv1.BuildRequest{
 		OutputDirectory: filepath.Join(root, "builder"),
-		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
-			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
+		BuildContext: &builderv1.BuildContext{Kind: &builderv1.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv1.DockerBuildContext{DockerRepository: "registry.example.com"},
 		}},
 	}
 	response, err := client.Build(context.Background(), request)
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_ERROR, response.GetState().GetState())
+	require.Equal(t, builderv1.BuildStatus_ERROR, response.GetState().GetState())
 	require.Contains(t, response.GetState().GetMessage(), "runtime asset")
 	require.Nil(t, response.GetResult().GetDockerBuildPlan())
 	require.NoDirExists(t, request.OutputDirectory)

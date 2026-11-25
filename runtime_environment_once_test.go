@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/resources"
 	"github.com/stretchr/testify/require"
@@ -29,25 +29,25 @@ func TestStartedProcessReceivesEachConfigurationVariableOnce(t *testing.T) {
 	runtimeContext := resources.NewRuntimeContextNative()
 	runtime, mappings, workspacePath := loadNamedEndpointRuntime(t, runtimeContext)
 	t.Cleanup(func() {
-		_, _ = runtime.Stop(ctx, &runtimev0.StopRequest{})
+		_, _ = runtime.Stop(ctx, &runtimev1.StopRequest{})
 	})
 
-	workspaceConfiguration := &basev0.Configuration{
+	workspaceConfiguration := &basev1.Configuration{
 		Origin:         resources.ConfigurationWorkspace,
 		RuntimeContext: runtimeContext,
-		Infos: []*basev0.ConfigurationInformation{{
+		Infos: []*basev1.ConfigurationInformation{{
 			Name:                "robin",
-			ConfigurationValues: []*basev0.ConfigurationValue{{Key: "chat", Value: "bound"}},
+			ConfigurationValues: []*basev1.ConfigurationValue{{Key: "chat", Value: "bound"}},
 		}},
 	}
 	// No runner is bound beforehand, so Init creates it exactly as in production.
-	init, err := runtime.Init(ctx, &runtimev0.InitRequest{
+	init, err := runtime.Init(ctx, &runtimev1.InitRequest{
 		RuntimeContext:          runtimeContext,
 		ProposedNetworkMappings: mappings,
-		WorkspaceConfigurations: []*basev0.Configuration{workspaceConfiguration},
+		WorkspaceConfigurations: []*basev1.Configuration{workspaceConfiguration},
 	})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus().GetMessage())
+	require.Equal(t, runtimev1.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus().GetMessage())
 
 	// What Start hands the process: the configuration, each key once.
 	started, err := runtime.EnvironmentVariables.All()

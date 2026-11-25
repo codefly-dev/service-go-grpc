@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/codefly-dev/core/agents/manager"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/network"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
@@ -61,8 +61,8 @@ func TestNativeAgentOwnershipLifecycle(t *testing.T) {
 	assertNativeOwnership(t, ctx, b.group, b.workspace, true)
 
 	// Ordinary Runtime.Stop must retire A without affecting B's exact birth.
-	stopped, err := a.client.Stop(ctx, &runtimev0.StopRequest{})
-	if err != nil || stopped.GetStatus().GetState() != runtimev0.StopStatus_SUCCESS {
+	stopped, err := a.client.Stop(ctx, &runtimev1.StopRequest{})
+	if err != nil || stopped.GetStatus().GetState() != runtimev1.StopStatus_SUCCESS {
 		t.Fatalf("ordinary stop: %v, %v", stopped, err)
 	}
 	waitNativeCondition(t, func() bool { return !a.group.Alive() })
@@ -140,8 +140,8 @@ func TestNativeAgentOwnershipLifecycle(t *testing.T) {
 		t.Fatalf("recovery changed the sibling owner birth: %+v, %v", currentSiblingOwner, err)
 	}
 	t.Logf("recovery result: %s; sibling preserved", result)
-	stopped, err = b.client.Stop(ctx, &runtimev0.StopRequest{})
-	if err != nil || stopped.GetStatus().GetState() != runtimev0.StopStatus_SUCCESS {
+	stopped, err = b.client.Stop(ctx, &runtimev1.StopRequest{})
+	if err != nil || stopped.GetStatus().GetState() != runtimev1.StopStatus_SUCCESS {
 		t.Fatalf("sibling ordinary stop: %v, %v", stopped, err)
 	}
 	waitNativeCondition(t, func() bool { return !b.group.Alive() })
@@ -150,7 +150,7 @@ func TestNativeAgentOwnershipLifecycle(t *testing.T) {
 type ownedNativeService struct {
 	workspace string
 	conn      *manager.AgentConn
-	client    runtimev0.RuntimeClient
+	client    runtimev1.RuntimeClient
 	group     *runners.TrackedProcessGroup
 	owner     runners.ProcessIdentity
 }
@@ -207,22 +207,22 @@ func main() {
 	if err != nil || !ownership.Authenticated || !ownership.OwnerAlive || owner.PID != conn.ProcessInfo().PID || len(ownership.Members) != 1 || ownership.Members[0] != owner {
 		t.Fatalf("agent launch did not authenticate its original owner identity: %+v, %v", ownership, err)
 	}
-	client := runtimev0.NewRuntimeClient(conn.GRPCConn())
+	client := runtimev1.NewRuntimeClient(conn.GRPCConn())
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_, _ = client.Stop(cleanup, &runtimev0.StopRequest{})
+		_, _ = client.Stop(cleanup, &runtimev1.StopRequest{})
 	})
 	environment, err := resources.LocalEnvironment().Proto()
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := &basev0.ServiceIdentity{Name: name, Module: "mymodule", Version: "0.0.1", WorkspacePath: workspace, RelativeToWorkspace: "."}
-	loaded, err := client.Load(ctx, &runtimev0.LoadRequest{
+	identity := &basev1.ServiceIdentity{Name: name, Module: "mymodule", Version: "0.0.1", WorkspacePath: workspace, RelativeToWorkspace: "."}
+	loaded, err := client.Load(ctx, &runtimev1.LoadRequest{
 		Identity:    identity,
 		Environment: environment, DisableCatch: true,
 	})
-	if err != nil || loaded.GetStatus().GetState() != runtimev0.LoadStatus_READY {
+	if err != nil || loaded.GetStatus().GetState() != runtimev1.LoadStatus_READY {
 		t.Fatalf("load: %v, %v\n%s", loaded, err, conn.StderrTail())
 	}
 	// Use the same endpoint allocator as the CLI; no fixture port or address
@@ -238,21 +238,21 @@ func main() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	initialized, err := client.Init(ctx, &runtimev0.InitRequest{RuntimeContext: resources.NewRuntimeContextNative(), ProposedNetworkMappings: mappings})
-	if err != nil || initialized.GetStatus().GetState() != runtimev0.InitStatus_READY {
+	initialized, err := client.Init(ctx, &runtimev1.InitRequest{RuntimeContext: resources.NewRuntimeContextNative(), ProposedNetworkMappings: mappings})
+	if err != nil || initialized.GetStatus().GetState() != runtimev1.InitStatus_READY {
 		t.Fatalf("init: %v, %v\n%s", initialized, err, conn.StderrTail())
 	}
 	return &ownedNativeService{workspace, conn, client, startNativeWorkload(t, ctx, client, workspace), owner}
 }
 
-func startNativeWorkload(t *testing.T, ctx context.Context, client runtimev0.RuntimeClient, workspace string) *runners.TrackedProcessGroup {
+func startNativeWorkload(t *testing.T, ctx context.Context, client runtimev1.RuntimeClient, workspace string) *runners.TrackedProcessGroup {
 	t.Helper()
 	pidFile := filepath.Join(workspace, "code", "workload.pid")
 	if err := os.Remove(pidFile); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
-	started, err := client.Start(ctx, &runtimev0.StartRequest{})
-	if err != nil || started.GetStatus().GetState() != runtimev0.StartStatus_STARTED {
+	started, err := client.Start(ctx, &runtimev1.StartRequest{})
+	if err != nil || started.GetStatus().GetState() != runtimev1.StartStatus_STARTED {
 		t.Fatalf("start: %v, %v", started, err)
 	}
 	executable := started.GetStatus().GetStartedArtifact().GetExecutable()

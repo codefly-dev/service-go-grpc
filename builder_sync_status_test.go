@@ -3,36 +3,36 @@ package main
 import (
 	"testing"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 )
 
 func TestSyncResponseError(t *testing.T) {
 	tests := []struct {
 		name     string
-		response *builderv0.SyncResponse
+		response *builderv1.SyncResponse
 		want     string
 	}{
 		{name: "missing response", want: "sync returned no status"},
-		{name: "missing status", response: &builderv0.SyncResponse{}, want: "sync returned no status"},
+		{name: "missing status", response: &builderv1.SyncResponse{}, want: "sync returned no status"},
 		{
 			name: "encoded failure",
-			response: &builderv0.SyncResponse{State: &builderv0.SyncStatus{
-				State:   builderv0.SyncStatus_ERROR,
+			response: &builderv1.SyncResponse{State: &builderv1.SyncStatus{
+				State:   builderv1.SyncStatus_ERROR,
 				Message: "buf generation failed",
 			}},
 			want: "buf generation failed",
 		},
 		{
 			name: "status fallback",
-			response: &builderv0.SyncResponse{State: &builderv0.SyncStatus{
-				State: builderv0.SyncStatus_UNSUPPORTED,
+			response: &builderv1.SyncResponse{State: &builderv1.SyncStatus{
+				State: builderv1.SyncStatus_UNSUPPORTED,
 			}},
 			want: "UNSUPPORTED",
 		},
 		{
 			name: "success",
-			response: &builderv0.SyncResponse{State: &builderv0.SyncStatus{
-				State: builderv0.SyncStatus_SUCCESS,
+			response: &builderv1.SyncResponse{State: &builderv1.SyncStatus{
+				State: builderv1.SyncStatus_SUCCESS,
 			}},
 		},
 	}

@@ -15,8 +15,8 @@ import (
 	"github.com/codefly-dev/core/agents/contract"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/builders"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
 	"github.com/codefly-dev/core/languages"
 	configurations "github.com/codefly-dev/core/resources"
 	runnersbase "github.com/codefly-dev/core/runners/base"
@@ -439,14 +439,14 @@ type Service struct {
 	// field — callers reaching s.Settings get this richer struct).
 	Settings *Settings
 
-	GrpcEndpoint    *basev0.Endpoint
-	RestEndpoint    *basev0.Endpoint
-	ConnectEndpoint *basev0.Endpoint
+	GrpcEndpoint    *basev1.Endpoint
+	RestEndpoint    *basev1.Endpoint
+	ConnectEndpoint *basev1.Endpoint
 }
 
 // GetAgentInformation overrides generic to add HTTP/GRPC protocols and
 // goGrpcTechniques. Specializations pattern across the ecosystem.
-func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInformationRequest) (*agentv0.AgentInformation, error) {
+func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv1.AgentInformationRequest) (*agentv1.AgentInformation, error) {
 	defer s.Wool.Catch()
 
 	info := s.Information
@@ -467,9 +467,9 @@ func (s *Service) GetAgentInformation(ctx context.Context, _ *agentv0.AgentInfor
 			Nix:    true,
 			Docker: true,
 		},
-		Toolchains: []agentv0.Toolchain_Type{agentv0.Toolchain_GO},
-		Languages:  []agentv0.Language_Type{agentv0.Language_GO},
-		Protocols:  []agentv0.Protocol_Type{agentv0.Protocol_HTTP, agentv0.Protocol_GRPC},
+		Toolchains: []agentv1.Toolchain_Type{agentv1.Toolchain_GO},
+		Languages:  []agentv1.Language_Type{agentv1.Language_GO},
+		Protocols:  []agentv1.Protocol_Type{agentv1.Protocol_HTTP, agentv1.Protocol_GRPC},
 		ReadMe:     readme,
 		Techniques: goGrpcTechniques(),
 		Validation: validation,

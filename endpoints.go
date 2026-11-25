@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
 	"github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/core/standards"
 )
@@ -40,7 +40,7 @@ func (s *Service) discoverEndpoints(ctx context.Context) error {
 }
 
 // rpcEndpoint is the declared listener grpcurl and health calls can reach.
-func (s *Service) rpcEndpoint() *basev0.Endpoint {
+func (s *Service) rpcEndpoint() *basev1.Endpoint {
 	if s.GrpcEndpoint != nil {
 		return s.GrpcEndpoint
 	}

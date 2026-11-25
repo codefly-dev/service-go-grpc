@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/network"
 	"github.com/codefly-dev/core/shared"
 	"google.golang.org/grpc"
@@ -117,9 +117,9 @@ func TestConnectOnlyLoadsAndExportsOneEndpoint(t *testing.T) {
 			service.Spec = map[string]any{"connect-endpoint": true, "rest-endpoint": false, "hot-reload": false}
 			require.NoError(t, service.SaveAtDir(ctx, dir))
 			builderClient, builder := startBuilderAgent(t, identity)
-			loaded, err := builderClient.Load(ctx, &builderv0.LoadRequest{Identity: identity})
+			loaded, err := builderClient.Load(ctx, &builderv1.LoadRequest{Identity: identity})
 			require.NoError(t, err)
-			require.NotEqual(t, builderv0.LoadStatus_ERROR, loaded.GetState().GetState(), loaded)
+			require.NotEqual(t, builderv1.LoadStatus_ERROR, loaded.GetState().GetState(), loaded)
 			require.NotNil(t, builder.GoGrpc.ConnectEndpoint)
 			require.Equal(t, withGRPC, builder.GoGrpc.GrpcEndpoint != nil)
 
@@ -127,27 +127,27 @@ func TestConnectOnlyLoadsAndExportsOneEndpoint(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(t, err)
 			server := grpc.NewServer()
-			runtimev0.RegisterRuntimeServer(server, runtime)
+			runtimev1.RegisterRuntimeServer(server, runtime)
 			go func() { _ = server.Serve(listener) }()
 			t.Cleanup(server.Stop)
 			conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = conn.Close() })
-			client := runtimev0.NewRuntimeClient(conn)
+			client := runtimev1.NewRuntimeClient(conn)
 			env := resources.LocalEnvironment()
-			load, err := client.Load(ctx, &runtimev0.LoadRequest{Identity: identity, Environment: shared.Must(env.Proto()), DisableCatch: true})
+			load, err := client.Load(ctx, &runtimev1.LoadRequest{Identity: identity, Environment: shared.Must(env.Proto()), DisableCatch: true})
 			require.NoError(t, err)
-			require.Equal(t, runtimev0.LoadStatus_READY, load.GetStatus().GetState(), load.GetStatus())
+			require.Equal(t, runtimev1.LoadStatus_READY, load.GetStatus().GetState(), load.GetStatus())
 			require.Len(t, load.Endpoints, len(service.Endpoints))
 			manager, err := network.NewRuntimeManager(ctx, nil)
 			require.NoError(t, err)
 			manager.WithTemporaryPorts()
 			mappings, err := manager.GenerateNetworkMappings(ctx, env, &resources.Workspace{Name: "test"}, runtime.Identity, load.Endpoints, resources.NewRuntimeContextNative())
 			require.NoError(t, err)
-			t.Cleanup(func() { _, _ = client.Destroy(context.Background(), &runtimev0.DestroyRequest{}) })
-			init, err := client.Init(ctx, &runtimev0.InitRequest{RuntimeContext: resources.NewRuntimeContextNative(), ProposedNetworkMappings: mappings})
+			t.Cleanup(func() { _, _ = client.Destroy(context.Background(), &runtimev1.DestroyRequest{}) })
+			init, err := client.Init(ctx, &runtimev1.InitRequest{RuntimeContext: resources.NewRuntimeContextNative(), ProposedNetworkMappings: mappings})
 			require.NoError(t, err)
-			require.Equal(t, runtimev0.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus())
+			require.Equal(t, runtimev1.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus())
 			require.Len(t, runtime.EnvironmentVariables.Endpoints(), len(service.Endpoints))
 			if !withGRPC {
 				require.Equal(t, "connect", runtime.GoGrpc.rpcEndpoint().Api)
@@ -161,9 +161,9 @@ func TestConnectOnlyLoadsAndExportsOneEndpoint(t *testing.T) {
 func TestMissingRPCListenerNamesTheReason(t *testing.T) {
 	identity := goGrpcServiceFixture(t)
 	client, _ := startBuilderAgent(t, identity)
-	response, err := client.Load(t.Context(), &builderv0.LoadRequest{Identity: identity})
+	response, err := client.Load(t.Context(), &builderv1.LoadRequest{Identity: identity})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.LoadStatus_ERROR, response.GetState().GetState())
+	require.Equal(t, builderv1.LoadStatus_ERROR, response.GetState().GetState())
 	require.Contains(t, response.GetState().GetMessage(), "no RPC listener")
 }
 
@@ -233,10 +233,10 @@ service TaskService {}
 			adapter := "package adapters\n\nfunc (s *Server) Start() error {\n\tif s.config." + tc.port + " == nil {\n\t\treturn s.server.Serve(s.listener)\n\t}\n\treturn s.serveHTTP()\n}\n"
 			writeTestFile(t, filepath.Join(dir, "code/pkg/adapters/server.go"), adapter)
 			client, builder := startBuilderAgent(t, identity)
-			loaded, err := client.Load(ctx, &builderv0.LoadRequest{Identity: identity})
+			loaded, err := client.Load(ctx, &builderv1.LoadRequest{Identity: identity})
 			require.NoError(t, err)
-			require.NotEqual(t, builderv0.LoadStatus_ERROR, loaded.GetState().GetState(), loaded)
-			response, err := client.Sync(ctx, &builderv0.SyncRequest{})
+			require.NotEqual(t, builderv1.LoadStatus_ERROR, loaded.GetState().GetState(), loaded)
+			response, err := client.Sync(ctx, &builderv1.SyncRequest{})
 			require.NoError(t, err)
 			require.NoError(t, syncResponseError(response))
 			main, err := os.ReadFile(filepath.Join(dir, "code/main.go"))
@@ -253,7 +253,7 @@ service TaskService {}
 			require.NoFileExists(t, filepath.Join(dir, "code/pkg/adapters/server_gen.go"))
 			require.False(t, builder.GoGrpc.Settings.RestEndpoint, "rendering must not enable scaffold ownership")
 			require.Equal(t, tc.connect, builder.GoGrpc.Settings.ConnectEndpoint)
-			response, err = client.Sync(ctx, &builderv0.SyncRequest{DryRun: true})
+			response, err = client.Sync(ctx, &builderv1.SyncRequest{DryRun: true})
 			require.NoError(t, err)
 			require.NoError(t, syncResponseError(response))
 			require.Empty(t, response.GetChangedFiles())
@@ -317,9 +317,9 @@ func TestConnectOnlyEntrypointStartsOnAListenerNotNamedConnect(t *testing.T) {
 	service.Spec = map[string]any{"connect-endpoint": true, "rest-endpoint": false, "hot-reload": false}
 	require.NoError(t, service.SaveAtDir(ctx, dir))
 	builderClient, builder := startBuilderAgent(t, identity)
-	loaded, err := builderClient.Load(ctx, &builderv0.LoadRequest{Identity: identity})
+	loaded, err := builderClient.Load(ctx, &builderv1.LoadRequest{Identity: identity})
 	require.NoError(t, err)
-	require.NotEqual(t, builderv0.LoadStatus_ERROR, loaded.GetState().GetState(), loaded)
+	require.NotEqual(t, builderv1.LoadStatus_ERROR, loaded.GetState().GetState(), loaded)
 	require.Nil(t, builder.GoGrpc.GrpcEndpoint)
 
 	// The generated module: base/code with the factory rendered as Sync
@@ -350,26 +350,26 @@ func TestConnectOnlyEntrypointStartsOnAListenerNotNamedConnect(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := grpc.NewServer()
-	runtimev0.RegisterRuntimeServer(server, runtime)
+	runtimev1.RegisterRuntimeServer(server, runtime)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
-	client := runtimev0.NewRuntimeClient(conn)
+	client := runtimev1.NewRuntimeClient(conn)
 	env := resources.LocalEnvironment()
-	load, err := client.Load(ctx, &runtimev0.LoadRequest{Identity: identity, Environment: shared.Must(env.Proto()), DisableCatch: true})
+	load, err := client.Load(ctx, &runtimev1.LoadRequest{Identity: identity, Environment: shared.Must(env.Proto()), DisableCatch: true})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.LoadStatus_READY, load.GetStatus().GetState(), load.GetStatus())
+	require.Equal(t, runtimev1.LoadStatus_READY, load.GetStatus().GetState(), load.GetStatus())
 	manager, err := network.NewRuntimeManager(ctx, nil)
 	require.NoError(t, err)
 	manager.WithTemporaryPorts()
 	mappings, err := manager.GenerateNetworkMappings(ctx, env, &resources.Workspace{Name: "test"}, runtime.Identity, load.Endpoints, resources.NewRuntimeContextNative())
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = client.Destroy(context.Background(), &runtimev0.DestroyRequest{}) })
-	init, err := client.Init(ctx, &runtimev0.InitRequest{RuntimeContext: resources.NewRuntimeContextNative(), ProposedNetworkMappings: mappings})
+	t.Cleanup(func() { _, _ = client.Destroy(context.Background(), &runtimev1.DestroyRequest{}) })
+	init, err := client.Init(ctx, &runtimev1.InitRequest{RuntimeContext: resources.NewRuntimeContextNative(), ProposedNetworkMappings: mappings})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus())
+	require.Equal(t, runtimev1.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus())
 	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, mappings, runtime.GoGrpc.rpcEndpoint(), resources.NewNativeNetworkAccess())
 	require.NoError(t, err)
 	injected, err := runtime.EnvironmentVariables.All()

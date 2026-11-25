@@ -12,8 +12,8 @@ import (
 
 	"github.com/codefly-dev/core/agents/services"
 	agenttesting "github.com/codefly-dev/core/agents/testing"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/core/wool"
 	"gopkg.in/yaml.v3"
@@ -753,16 +753,16 @@ func renderOverlayWithConfigMap(t *testing.T, configMap services.EnvironmentMap)
 	base.Builder = builder
 
 	destination := t.TempDir()
-	deployment := &builderv0.KubernetesDeployment{
+	deployment := &builderv1.KubernetesDeployment{
 		Namespace:   "codefly-test",
 		Destination: destination,
-		Profile:     builderv0.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1,
+		Profile:     builderv1.KubernetesOutputProfile_KUBERNETES_OUTPUT_PROFILE_EPHEMERAL_LOCAL_APPLY_V1,
 	}
 	params := services.DeploymentParameters{
 		ConfigMap:  configMap,
 		Parameters: DeploymentParameters{Health: undeclaredHealth()},
 	}
-	if err := builder.KustomizeDeploy(ctx, &basev0.Environment{Name: "test"}, deployment, deploymentFS, params); err != nil {
+	if err := builder.KustomizeDeploy(ctx, &basev1.Environment{Name: "test"}, deployment, deploymentFS, params); err != nil {
 		t.Fatalf("render kustomize templates: %v", err)
 	}
 	return destination
@@ -882,17 +882,17 @@ func TestNamedEndpointPortsAreAdvertised(t *testing.T) {
 
 func TestNamedPortsComeFromTheServicesOwnMappings(t *testing.T) {
 	ctx := context.Background()
-	mapping := func(name, api string, port uint32) *basev0.NetworkMapping {
-		return &basev0.NetworkMapping{
-			Endpoint: &basev0.Endpoint{Name: name, Api: api, Service: "accounts", Module: "host"},
-			Instances: []*basev0.NetworkInstance{{
+	mapping := func(name, api string, port uint32) *basev1.NetworkMapping {
+		return &basev1.NetworkMapping{
+			Endpoint: &basev1.Endpoint{Name: name, Api: api, Service: "accounts", Module: "host"},
+			Instances: []*basev1.NetworkInstance{{
 				Hostname: "accounts.host.svc.cluster.local",
 				Port:     port,
 				Access:   resources.NewContainerNetworkAccess(),
 			}},
 		}
 	}
-	ports, err := namedPorts(ctx, []*basev0.NetworkMapping{
+	ports, err := namedPorts(ctx, []*basev1.NetworkMapping{
 		mapping("grpc", "grpc", 9090),
 		mapping("rest", "rest", 8080),
 		mapping("connect", "connect", 8081),
@@ -905,10 +905,10 @@ func TestNamedPortsComeFromTheServicesOwnMappings(t *testing.T) {
 		t.Fatalf("named ports = %+v, want %+v", ports, want)
 	}
 
-	if _, err := namedPorts(ctx, []*basev0.NetworkMapping{{Endpoint: &basev0.Endpoint{Name: "authority", Api: "grpc"}}}); err == nil {
+	if _, err := namedPorts(ctx, []*basev1.NetworkMapping{{Endpoint: &basev1.Endpoint{Name: "authority", Api: "grpc"}}}); err == nil {
 		t.Fatal("a named endpoint with no in-cluster port must refuse the render")
 	}
-	if _, err := namedPorts(ctx, []*basev0.NetworkMapping{mapping("a", "grpc", 9100), mapping("b", "grpc", 9100)}); err == nil {
+	if _, err := namedPorts(ctx, []*basev1.NetworkMapping{mapping("a", "grpc", 9100), mapping("b", "grpc", 9100)}); err == nil {
 		t.Fatal("two named endpoints on one port must refuse the render")
 	}
 }
@@ -920,11 +920,11 @@ func TestNamedPortsComeFromTheServicesOwnMappings(t *testing.T) {
 // API, since the agent does not generate its listener. Names never classify an
 // API.
 func TestServicePortsDeclareHTTPFromTheEndpointAPI(t *testing.T) {
-	var mappings []*basev0.NetworkMapping
+	var mappings []*basev1.NetworkMapping
 	for i, api := range []string{"http", "rest", "connect", "mcp", "grpc", "tcp"} {
-		mappings = append(mappings, &basev0.NetworkMapping{
-			Endpoint:  &basev0.Endpoint{Name: "extra-" + api, Api: api, Service: "api", Module: "host"},
-			Instances: []*basev0.NetworkInstance{{Hostname: "api.host.svc.cluster.local", Port: uint32(11000 + i), Access: resources.NewContainerNetworkAccess()}},
+		mappings = append(mappings, &basev1.NetworkMapping{
+			Endpoint:  &basev1.Endpoint{Name: "extra-" + api, Api: api, Service: "api", Module: "host"},
+			Instances: []*basev1.NetworkInstance{{Hostname: "api.host.svc.cluster.local", Port: uint32(11000 + i), Access: resources.NewContainerNetworkAccess()}},
 		})
 	}
 	ports, err := namedPorts(context.Background(), mappings)
@@ -973,17 +973,17 @@ func TestServicePortsDeclareHTTPFromTheEndpointAPI(t *testing.T) {
 // it — only a real request shows the failure.
 func TestDeclaredRestEndpointIsAdvertisedWithoutTheScaffold(t *testing.T) {
 	ctx := context.Background()
-	mapping := func(name, api string, port uint32) *basev0.NetworkMapping {
-		return &basev0.NetworkMapping{
-			Endpoint: &basev0.Endpoint{Name: name, Api: api, Service: "tasks", Module: "runtime"},
-			Instances: []*basev0.NetworkInstance{{
+	mapping := func(name, api string, port uint32) *basev1.NetworkMapping {
+		return &basev1.NetworkMapping{
+			Endpoint: &basev1.Endpoint{Name: name, Api: api, Service: "tasks", Module: "runtime"},
+			Instances: []*basev1.NetworkInstance{{
 				Hostname: "tasks.runtime.svc.cluster.local",
 				Port:     port,
 				Access:   resources.NewContainerNetworkAccess(),
 			}},
 		}
 	}
-	mappings := []*basev0.NetworkMapping{mapping("grpc", "grpc", 9090), mapping("rest", "rest", 8080)}
+	mappings := []*basev1.NetworkMapping{mapping("grpc", "grpc", 9090), mapping("rest", "rest", 8080)}
 
 	// The service owns the listener: the scaffold is off, the endpoint declared.
 	port, err := conventionalPort(ctx, mappings, "rest", false, restContainerPort)
@@ -1033,15 +1033,15 @@ func TestDeclaredRestEndpointIsAdvertisedWithoutTheScaffold(t *testing.T) {
 // serves the endpoint no way at all advertises nothing rather than a dead port.
 func TestConventionalPortServesBothWaysAndNeither(t *testing.T) {
 	ctx := context.Background()
-	declared := func(port uint32) []*basev0.NetworkMapping {
-		return []*basev0.NetworkMapping{{
-			Endpoint:  &basev0.Endpoint{Name: "connect", Api: "connect", Service: "s", Module: "m"},
-			Instances: []*basev0.NetworkInstance{{Hostname: "s.m", Port: port, Access: resources.NewContainerNetworkAccess()}},
+	declared := func(port uint32) []*basev1.NetworkMapping {
+		return []*basev1.NetworkMapping{{
+			Endpoint:  &basev1.Endpoint{Name: "connect", Api: "connect", Service: "s", Module: "m"},
+			Instances: []*basev1.NetworkInstance{{Hostname: "s.m", Port: port, Access: resources.NewContainerNetworkAccess()}},
 		}}
 	}
 	for _, tc := range []struct {
 		name       string
-		mappings   []*basev0.NetworkMapping
+		mappings   []*basev1.NetworkMapping
 		scaffolded bool
 		want       uint32
 	}{
@@ -1062,7 +1062,7 @@ func TestConventionalPortServesBothWaysAndNeither(t *testing.T) {
 
 	// A declared endpoint with no in-cluster port is a render error, not a
 	// silent 0: the process binds something the manifest would never advertise.
-	orphan := []*basev0.NetworkMapping{{Endpoint: &basev0.Endpoint{Name: "connect", Api: "connect"}}}
+	orphan := []*basev1.NetworkMapping{{Endpoint: &basev1.Endpoint{Name: "connect", Api: "connect"}}}
 	if _, err := conventionalPort(ctx, orphan, "connect", false, connectContainerPort); err == nil {
 		t.Fatal("a declared conventional endpoint with no in-cluster port must refuse the render")
 	}

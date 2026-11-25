@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/codefly-dev/core/agents/contract"
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
 )
 
 // TestAdvertisementAdoptsItsOperationContracts: a host requires the live
@@ -25,7 +25,7 @@ import (
 //
 // The base contract this extends must survive both.
 func TestAdvertisementAdoptsItsOperationContracts(t *testing.T) {
-	info, err := NewService().GetAgentInformation(context.Background(), &agentv0.AgentInformationRequest{})
+	info, err := NewService().GetAgentInformation(context.Background(), &agentv1.AgentInformationRequest{})
 	if err != nil {
 		t.Fatalf("GetAgentInformation: %v", err)
 	}

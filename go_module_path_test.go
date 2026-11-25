@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/codefly-dev/core/agents/services"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/core/shared"
 	"github.com/codefly-dev/core/templates"
@@ -97,22 +97,22 @@ func TestCreateAndSyncKeepTheServicesGoModulePath(t *testing.T) {
 				writeTestFile(t, filepath.Join(serviceDir, "code", "go.mod"), "module "+tc.existing+"\n\ngo 1.27\n")
 			}
 			builder := NewBuilder(NewService())
-			_, err := builder.Load(ctx, &builderv0.LoadRequest{
-				Identity: &basev0.ServiceIdentity{
+			_, err := builder.Load(ctx, &builderv1.LoadRequest{
+				Identity: &basev1.ServiceIdentity{
 					Name: "svc", Version: "0.0.0", Module: "mod", Workspace: "test",
 					WorkspacePath: root, RelativeToWorkspace: "mod/svc",
 				},
-				CreationMode: &builderv0.CreationMode{},
+				CreationMode: &builderv1.CreationMode{},
 			})
 			require.NoError(t, err)
-			created, err := builder.Create(ctx, &builderv0.CreateRequest{})
+			created, err := builder.Create(ctx, &builderv1.CreateRequest{})
 			require.NoError(t, err)
-			require.Equal(t, builderv0.CreateStatus_CREATED, created.GetState().GetState(), created.GetState().GetMessage())
+			require.Equal(t, builderv1.CreateStatus_CREATED, created.GetState().GetState(), created.GetState().GetMessage())
 			requireImportsRootedAt(t, serviceDir, tc.want)
 
-			response, err := builder.Sync(ctx, &builderv0.SyncRequest{})
+			response, err := builder.Sync(ctx, &builderv1.SyncRequest{})
 			require.NoError(t, err)
-			require.Equal(t, builderv0.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
+			require.Equal(t, builderv1.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
 			requireImportsRootedAt(t, serviceDir, tc.want)
 			if tc.existing != "" {
 				return
@@ -125,9 +125,9 @@ func TestCreateAndSyncKeepTheServicesGoModulePath(t *testing.T) {
 			goMod := filepath.Join(serviceDir, "code", "go.mod")
 			replaceInFile(t, goMod, "module svc\n", "module "+moved+"\n")
 			replaceInFile(t, filepath.Join(serviceDir, "proto", "api.proto"), `"svc/pkg/gen;gen"`, `"`+moved+`/pkg/gen;gen"`)
-			response, err = builder.Sync(ctx, &builderv0.SyncRequest{})
+			response, err = builder.Sync(ctx, &builderv1.SyncRequest{})
 			require.NoError(t, err)
-			require.Equal(t, builderv0.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
+			require.Equal(t, builderv1.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
 			requireImportsRootedAt(t, serviceDir, moved)
 		})
 	}

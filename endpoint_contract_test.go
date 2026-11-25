@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"buf.build/go/protovalidate"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,8 +17,8 @@ func TestRuntimeContractAcceptsInternalEndpoints(t *testing.T) {
 	validator, err := protovalidate.New()
 	require.NoError(t, err)
 
-	err = validator.Validate(&runtimev0.LoadResponse{
-		Endpoints: []*basev0.Endpoint{{
+	err = validator.Validate(&runtimev1.LoadResponse{
+		Endpoints: []*basev1.Endpoint{{
 			Name:       "grpc",
 			Service:    "work-coordinator",
 			Module:     "coordination",

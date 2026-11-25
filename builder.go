@@ -29,9 +29,9 @@ import (
 	"github.com/codefly-dev/core/agents/services/upgrade"
 	"github.com/codefly-dev/core/builders"
 	"github.com/codefly-dev/core/companions/proto"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/resources"
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
@@ -63,7 +63,7 @@ type Builder struct {
 
 	GoGrpc *Service
 
-	answers map[string]*agentv0.Answer
+	answers map[string]*agentv1.Answer
 }
 
 // NewBuilder composes a go-grpc Builder by constructing a generic
@@ -85,7 +85,7 @@ func NewBuilder(svc *Service) *Builder {
 // Load delegates to the generic Builder.Load (handles SourceLocation,
 // CreationMode → GettingStarted, endpoint loading) and then adds
 // go-grpc-specific gRPC/REST endpoint discovery.
-func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builderv0.LoadResponse, error) {
+func (s *Builder) Load(ctx context.Context, req *builderv1.LoadRequest) (*builderv1.LoadResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
@@ -129,7 +129,7 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 // Sync stages every generator-owned artifact, then either reports or applies
 // the exact deterministic file set. Buf remains the only protocol generator;
 // Go, Rust, and TypeScript outputs are declared together in buf.gen.yaml.
-func (s *Builder) Sync(ctx context.Context, request *builderv0.SyncRequest) (*builderv0.SyncResponse, error) {
+func (s *Builder) Sync(ctx context.Context, request *builderv1.SyncRequest) (*builderv1.SyncResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
@@ -690,7 +690,7 @@ func declaredProtoServices(root string) ([]string, error) {
 // the same path under /app. The core struct has no field for them, so Build
 // renders with this superset instead of going through golanghelpers.BuildGoDocker.
 type dockerTemplating struct {
-	ImageBindings []*builderv0.BuildImageInput
+	ImageBindings []*builderv1.BuildImageInput
 	golanghelpers.DockerTemplating
 	RuntimeAssets   []string
 	RuntimePackages []string
@@ -701,7 +701,7 @@ type dockerTemplating struct {
 // hook to split the Go source directory into module root + build target —
 // go-grpc services may nest their main package under cmd/server rather than at
 // the module root — and to copy declared runtime assets into the final stage.
-func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*builderv0.BuildResponse, error) {
+func (s *Builder) Build(ctx context.Context, req *builderv1.BuildRequest) (*builderv1.BuildResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
@@ -754,7 +754,7 @@ func (s *Builder) Build(ctx context.Context, req *builderv0.BuildRequest) (*buil
 func prepareGoDocker(
 	ctx context.Context,
 	builder *services.BuilderWrapper,
-	req *builderv0.BuildRequest,
+	req *builderv1.BuildRequest,
 	requirements *builders.Dependencies,
 	builderFS embed.FS,
 	goVersion, alpineVersion string,
@@ -762,7 +762,7 @@ func prepareGoDocker(
 	packages []string,
 	commands []BuildCommand,
 	opts ...func(*golanghelpers.DockerTemplating),
-) (*builderv0.BuildResponse, error) {
+) (*builderv1.BuildResponse, error) {
 	w := wool.Get(ctx).In("go-grpc.prepareGoDocker")
 
 	dockerRequest, err := builder.DockerBuildRequest(ctx, req)
@@ -823,7 +823,7 @@ func goModuleDownloads(templating golanghelpers.DockerTemplating) []services.Rec
 	if templating.Workspace || templating.ModuleRoot == "" {
 		return nil
 	}
-	return []services.RecipeOption{services.WithGoModuleDownloads(&builderv0.GoModuleDownload{
+	return []services.RecipeOption{services.WithGoModuleDownloads(&builderv1.GoModuleDownload{
 		ModuleRoot:   templating.ModuleRoot,
 		ProxyContext: goModuleProxyContext,
 	})}
@@ -836,18 +836,18 @@ func goModuleDownloads(templating golanghelpers.DockerTemplating) []services.Rec
 // imports/exports, and the buildx invocation are the CLI's to choose, so any
 // selection the caller makes is honoured by construction. An agent that executed
 // the build in-process would have to implement the selection to claim this.
-func (s *Builder) BuildCapabilities(context.Context, *builderv0.BuildCapabilitiesRequest) (*builderv0.BuildCapabilitiesResponse, error) {
+func (s *Builder) BuildCapabilities(context.Context, *builderv1.BuildCapabilitiesRequest) (*builderv1.BuildCapabilitiesResponse, error) {
 	inputs := buildImageInputs()
 	if s.GoGrpc != nil && s.GoGrpc.Settings != nil && s.GoGrpc.Settings.PersistentLoopback != nil {
-		inputs = []*builderv0.BuildImageInput{s.GoGrpc.Settings.PersistentLoopback.imageInput()}
+		inputs = []*builderv1.BuildImageInput{s.GoGrpc.Settings.PersistentLoopback.imageInput()}
 	}
-	return &builderv0.BuildCapabilitiesResponse{BuildxSelection: true, ExecutionContracts: []string{services.BuildImageBindingsContract}, ImageInputs: inputs}, nil
+	return &builderv1.BuildCapabilitiesResponse{BuildxSelection: true, ExecutionContracts: []string{services.BuildImageBindingsContract}, ImageInputs: inputs}, nil
 }
 
 // emitBuildPlan records the rendered builder/ directory as a reproducible Docker
 // build recipe instead of building an image in-process. The caller (the CLI)
 // owns running docker buildx from the emitted plan.
-func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *resources.DockerImage, emitted []string, options ...services.RecipeOption) (*builderv0.BuildResponse, error) {
+func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *resources.DockerImage, emitted []string, options ...services.RecipeOption) (*builderv1.BuildResponse, error) {
 	plan, err := recipeBuildPlan(outputDir, image, emitted, options...)
 	if err != nil {
 		return builder.BuildError(err)
@@ -873,7 +873,7 @@ func emitBuildPlan(builder *services.BuilderWrapper, outputDir string, image *re
 // Core owns the platform policy the CLI executor enforces (it refuses to push a
 // recipe that omits the deployment architecture), so the platform list is read
 // from there rather than restated here.
-func recipeBuildPlan(outputDir string, image *resources.DockerImage, emitted []string, options ...services.RecipeOption) (*builderv0.DockerBuildPlan, error) {
+func recipeBuildPlan(outputDir string, image *resources.DockerImage, emitted []string, options ...services.RecipeOption) (*builderv1.DockerBuildPlan, error) {
 	return services.SingleImageBuildPlan(outputDir, image.FullName(), services.RecipeBuildPlatforms(), emitted, options...)
 }
 
@@ -971,7 +971,7 @@ func goDockerTemplating(
 
 // Upgrade bumps Go module dependencies (go get -u=patch by default,
 // go get -u with --major, then go mod tidy). Runs at the Go source root.
-func (s *Builder) Upgrade(ctx context.Context, req *builderv0.UpgradeRequest) (*builderv0.UpgradeResponse, error) {
+func (s *Builder) Upgrade(ctx context.Context, req *builderv1.UpgradeRequest) (*builderv1.UpgradeResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	dir := s.Local("%s", s.GoGrpc.Settings.GoSourceDir())
@@ -1068,7 +1068,7 @@ const (
 // out — and no port behind it, so the call was refused at the mesh rather than
 // answered. A declared endpoint is advertised on the port Codefly resolved for
 // it, which is the port the process binds.
-func conventionalPort(ctx context.Context, mappings []*basev0.NetworkMapping, name string, scaffolded bool, scaffoldPort uint32) (uint32, error) {
+func conventionalPort(ctx context.Context, mappings []*basev1.NetworkMapping, name string, scaffolded bool, scaffoldPort uint32) (uint32, error) {
 	for _, mapping := range mappings {
 		endpoint := mapping.GetEndpoint()
 		if endpoint == nil || endpoint.GetName() != name {
@@ -1092,7 +1092,7 @@ func conventionalPort(ctx context.Context, mappings []*basev0.NetworkMapping, na
 // mappings: the in-cluster (container) address of every non-conventional
 // endpoint. An endpoint that resolved no in-cluster port is a render error —
 // the process would bind a port the manifest never advertises.
-func namedPorts(ctx context.Context, mappings []*basev0.NetworkMapping) ([]NamedPort, error) {
+func namedPorts(ctx context.Context, mappings []*basev1.NetworkMapping) ([]NamedPort, error) {
 	var out []NamedPort
 	seen := make(map[uint32]string)
 	for _, mapping := range mappings {
@@ -1137,7 +1137,7 @@ func namedPorts(ctx context.Context, mappings []*basev0.NetworkMapping) ([]Named
 // templates so pods can run under an annotated, workload-identity SA rather
 // than the namespace default, the manifest advertises exactly the ports the
 // service serves, and the probes speak the health contract the service serves.
-func (s *Builder) Deploy(ctx context.Context, req *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
+func (s *Builder) Deploy(ctx context.Context, req *builderv1.DeploymentRequest) (*builderv1.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
@@ -1225,7 +1225,7 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 
 	if s.GoGrpc.Settings.ConnectEndpoint {
 		endpoint = s.Base.BaseEndpoint(standards.CONNECT)
-		s.GoGrpc.ConnectEndpoint, err = resources.NewAPI(ctx, endpoint, resources.ToHTTPAPI(&basev0.HttpAPI{}))
+		s.GoGrpc.ConnectEndpoint, err = resources.NewAPI(ctx, endpoint, resources.ToHTTPAPI(&basev1.HttpAPI{}))
 		if err != nil {
 			return s.Wool.Wrapf(err, "cannot create connect api")
 		}
@@ -1237,13 +1237,13 @@ func (s *Builder) CreateEndpoints(ctx context.Context) error {
 }
 
 // Options returns the five-question set shown during `codefly add service`.
-func (s *Builder) Options() []*agentv0.Question {
-	return []*agentv0.Question{
-		communicate.NewConfirm(&agentv0.Message{Name: HotReload, Message: "Code hot-reload (Recommended)?", Description: "codefly can restart your service when code changes are detected 🔎"}, true),
-		communicate.NewConfirm(&agentv0.Message{Name: DebugSymbols, Message: "Start with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, false),
-		communicate.NewConfirm(&agentv0.Message{Name: RaceConditionDetectionRun, Message: "Start with race condition detection?", Description: "Build the go binary with race condition detection"}, false),
-		communicate.NewConfirm(&agentv0.Message{Name: RestEndpointSetting, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC definition -- the easiest way to do REST"}, true),
-		communicate.NewConfirm(&agentv0.Message{Name: ConnectEndpointSetting, Message: "Connect endpoint (browser-native RPC)?", Description: "Expose a ConnectRPC endpoint for type-safe browser clients — serves Connect, gRPC, and gRPC-Web on a single port"}, false),
+func (s *Builder) Options() []*agentv1.Question {
+	return []*agentv1.Question{
+		communicate.NewConfirm(&agentv1.Message{Name: HotReload, Message: "Code hot-reload (Recommended)?", Description: "codefly can restart your service when code changes are detected 🔎"}, true),
+		communicate.NewConfirm(&agentv1.Message{Name: DebugSymbols, Message: "Start with debug symbols?", Description: "Build the go binary with debug symbol to use stack debugging"}, false),
+		communicate.NewConfirm(&agentv1.Message{Name: RaceConditionDetectionRun, Message: "Start with race condition detection?", Description: "Build the go binary with race condition detection"}, false),
+		communicate.NewConfirm(&agentv1.Message{Name: RestEndpointSetting, Message: "Automatic REST generation (Recommended)?", Description: "codefly can generate a REST server that stays magically 🪄 synced to your gRPC definition -- the easiest way to do REST"}, true),
+		communicate.NewConfirm(&agentv1.Message{Name: ConnectEndpointSetting, Message: "Connect endpoint (browser-native RPC)?", Description: "Expose a ConnectRPC endpoint for type-safe browser clients — serves Connect, gRPC, and gRPC-Web on a single port"}, false),
 	}
 }
 
@@ -1281,10 +1281,10 @@ type CreateConfiguration struct {
 // declared as `grpc` was looked up as `connect`: no carrier, and the service
 // panicked at start. Core's conventional finders select the endpoint here, as
 // discoverEndpoints does, and main names it whenever the two differ.
-func (c *CreateConfiguration) nameDeclaredListeners(ctx context.Context, endpoints []*basev0.Endpoint) error {
+func (c *CreateConfiguration) nameDeclaredListeners(ctx context.Context, endpoints []*basev1.Endpoint) error {
 	for _, listener := range []struct {
 		api  string
-		find func(context.Context, []*basev0.Endpoint) (*basev0.Endpoint, error)
+		find func(context.Context, []*basev1.Endpoint) (*basev1.Endpoint, error)
 		name *string
 	}{
 		{standards.GRPC, resources.FindGRPCEndpoint, &c.GrpcEndpointName},
@@ -1373,7 +1373,7 @@ func (s *Builder) declareHealthCapability() {
 // Create applies factory templates and creates the gRPC endpoint resources.
 // Overrides generic Create: go-grpc scaffolding needs .proto preservation
 // and endpoint creation after template application.
-func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*builderv0.CreateResponse, error) {
+func (s *Builder) Create(ctx context.Context, _ *builderv1.CreateRequest) (*builderv1.CreateResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
@@ -1408,7 +1408,7 @@ func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 	// scaffold transaction own the authoritative protocol output. Running that
 	// transaction before returning prevents a newly added service from failing
 	// the very first sync-drift gate.
-	syncResponse, err := s.Sync(ctx, &builderv0.SyncRequest{})
+	syncResponse, err := s.Sync(ctx, &builderv1.SyncRequest{})
 	if err != nil {
 		return s.Base.Builder.CreateError(s.Wool.Wrapf(err, "synchronize generated service"))
 	}
@@ -1428,12 +1428,12 @@ func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 // encode domain failures in their response and return a nil transport error;
 // checking only the second return value would let Create report success after
 // generation failed.
-func syncResponseError(response *builderv0.SyncResponse) error {
+func syncResponseError(response *builderv1.SyncResponse) error {
 	if response == nil || response.GetState() == nil {
 		return fmt.Errorf("sync returned no status")
 	}
 	state := response.GetState()
-	if state.GetState() == builderv0.SyncStatus_SUCCESS {
+	if state.GetState() == builderv1.SyncStatus_SUCCESS {
 		return nil
 	}
 	message := strings.TrimSpace(state.GetMessage())
@@ -1485,7 +1485,7 @@ func (s *Builder) populateSettingsFromDefaults() error {
 }
 
 // Communicate collects answers for the five Options questions.
-func (s *Builder) Communicate(stream builderv0.Builder_CommunicateServer) error {
+func (s *Builder) Communicate(stream builderv1.Builder_CommunicateServer) error {
 	asker := communicate.NewQuestionAsker(stream)
 	answers, err := asker.RunSequence(s.Options())
 	if err != nil {

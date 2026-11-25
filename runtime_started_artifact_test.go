@@ -12,9 +12,9 @@ import (
 
 	"github.com/codefly-dev/core/agents/contract"
 	"github.com/codefly-dev/core/agents/services"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/resources"
 	"github.com/stretchr/testify/require"
 )
@@ -118,7 +118,7 @@ func digestOf(t *testing.T, path string) string {
 // reportedArtifact reads the artifact off a StartResponse the way a consumer
 // does, through core's reader, which separates "the agent reported one" from
 // "the agent reports none".
-func reportedArtifact(t *testing.T, resp *runtimev0.StartResponse) (*runtimev0.StartedArtifact, bool) {
+func reportedArtifact(t *testing.T, resp *runtimev1.StartResponse) (*runtimev1.StartedArtifact, bool) {
 	t.Helper()
 	return services.StartedArtifact(resp.GetStatus())
 }
@@ -132,9 +132,9 @@ func TestNativeStartReportsTheBinaryItRan(t *testing.T) {
 	ctx := context.Background()
 	runtime, sourceDir := newStartTestRuntime(t, selfReportingSource, false)
 
-	resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	resp, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_STARTED, resp.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_STARTED, resp.GetStatus().GetState())
 
 	artifact, reported := reportedArtifact(t, resp)
 	require.True(t, reported, "a native start must report the artifact it ran")
@@ -156,7 +156,7 @@ func TestNativeStartReportsTheBinaryItRan(t *testing.T) {
 
 	// Information answers for the process that is running, so it carries the
 	// same artifact: the CLI reads it there on every poll, not just at Start.
-	information, err := runtime.Information(ctx, &runtimev0.InformationRequest{})
+	information, err := runtime.Information(ctx, &runtimev1.InformationRequest{})
 	require.NoError(t, err)
 	require.Equal(t, exe, information.GetStartStatus().GetStartedArtifact().GetExecutable())
 
@@ -164,7 +164,7 @@ func TestNativeStartReportsTheBinaryItRan(t *testing.T) {
 	// a capabilities check of its own passes just as well when nothing reports,
 	// and an agent that advertises the contract while reporting nothing is the
 	// false promise a consumer trusts.
-	advertised, err := NewService().GetAgentInformation(ctx, &agentv0.AgentInformationRequest{})
+	advertised, err := NewService().GetAgentInformation(ctx, &agentv1.AgentInformationRequest{})
 	require.NoError(t, err)
 	require.Contains(t, advertised.GetContract().GetCapabilities(), contract.RuntimeStartedArtifact,
 		"this Start reports an artifact, so the advertisement must say so")
@@ -185,9 +185,9 @@ func TestEveryNativeStartReportsItsOwnBinary(t *testing.T) {
 	ctx := context.Background()
 	runtime, sourceDir := newStartTestRuntime(t, selfReportingSource, true)
 
-	first, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	first, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_STARTED, first.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_STARTED, first.GetStatus().GetState())
 	firstArtifact, reported := reportedArtifact(t, first)
 	require.True(t, reported, "the first start must report its artifact")
 	require.Equal(t, ranAs(t, sourceDir), mustEvalSymlinks(t, firstArtifact.GetExecutable()))
@@ -198,9 +198,9 @@ func TestEveryNativeStartReportsItsOwnBinary(t *testing.T) {
 	// below can only be answered by the process this start launches.
 	forgetRanAs(t, sourceDir)
 	writeServiceSource(t, sourceDir, selfReportingSourceV2)
-	second, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	second, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_STARTED, second.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_STARTED, second.GetStatus().GetState())
 	secondArtifact, reported := reportedArtifact(t, second)
 	require.True(t, reported, "a restart that reports nothing has the previous build approved for it")
 
@@ -217,25 +217,25 @@ func TestFailedStartReportsNoArtifact(t *testing.T) {
 	ctx := context.Background()
 	runtime, sourceDir := newStartTestRuntime(t, brokenSource, false)
 
-	resp, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	resp, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_ERROR, resp.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_ERROR, resp.GetStatus().GetState())
 	_, reported := reportedArtifact(t, resp)
 	require.False(t, reported, "a failed start must report no artifact")
 
 	// The same runtime after a success: the success reports, and a later
 	// failure takes its report away rather than inheriting the one before it.
 	writeServiceSource(t, sourceDir, longRunningSource)
-	started, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	started, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_STARTED, started.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_STARTED, started.GetStatus().GetState())
 	_, reported = reportedArtifact(t, started)
 	require.True(t, reported)
 
 	writeServiceSource(t, sourceDir, brokenSource)
-	failed, err := runtime.Start(ctx, &runtimev0.StartRequest{})
+	failed, err := runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.StartStatus_ERROR, failed.GetStatus().GetState())
+	require.Equal(t, runtimev1.StartStatus_ERROR, failed.GetStatus().GetState())
 	_, reported = reportedArtifact(t, failed)
 	require.False(t, reported,
 		"a failed rebuild must not leave the stopped binary reported as what is running")
@@ -264,11 +264,11 @@ func mustEvalSymlinks(t *testing.T, path string) string {
 func TestTeardownWaitsForAStartAttempt(t *testing.T) {
 	for name, teardown := range map[string]func(*Runtime) error{
 		"stop": func(s *Runtime) error {
-			_, err := s.Stop(context.Background(), &runtimev0.StopRequest{})
+			_, err := s.Stop(context.Background(), &runtimev1.StopRequest{})
 			return err
 		},
 		"destroy": func(s *Runtime) error {
-			_, err := s.Destroy(context.Background(), &runtimev0.DestroyRequest{})
+			_, err := s.Destroy(context.Background(), &runtimev1.DestroyRequest{})
 			return err
 		},
 	} {
@@ -281,7 +281,7 @@ func TestTeardownWaitsForAStartAttempt(t *testing.T) {
 			// Wool.Catch and this test would assert against a recovered panic
 			// instead of against the teardown.
 			require.NoError(t, runtime.SetRuntimeContext(context.Background(), resources.NewRuntimeContextNative()))
-			runtime.Base.Runtime.SetEnvironment(&basev0.Environment{Name: "local"})
+			runtime.Base.Runtime.SetEnvironment(&basev1.Environment{Name: "local"})
 			runtime.Base.Identity = &resources.ServiceIdentity{
 				Name: "svc", Module: "mod", Workspace: "ws",
 				WorkspacePath: t.TempDir(), RelativeToWorkspace: "svc",

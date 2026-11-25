@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 	"github.com/stretchr/testify/require"
 )
@@ -25,17 +25,17 @@ func TestSyncNeverAcceptsDiscardedOrTamperedGeneratedOutput(t *testing.T) {
 	require.NoError(t, service.SaveAtDir(ctx, serviceDir))
 	require.NoError(t, (&resources.Module{Name: "mod"}).SaveToDir(ctx, filepath.Join(root, "mod")))
 	builder := NewBuilder(NewService())
-	_, err := builder.Load(ctx, &builderv0.LoadRequest{
-		Identity: &basev0.ServiceIdentity{
+	_, err := builder.Load(ctx, &builderv1.LoadRequest{
+		Identity: &basev1.ServiceIdentity{
 			Name: "svc", Version: "0.0.0", Module: "mod", Workspace: "test",
 			WorkspacePath: root, RelativeToWorkspace: "mod/svc",
 		},
-		CreationMode: &builderv0.CreationMode{},
+		CreationMode: &builderv1.CreationMode{},
 	})
 	require.NoError(t, err)
-	created, err := builder.Create(ctx, &builderv0.CreateRequest{})
+	created, err := builder.Create(ctx, &builderv1.CreateRequest{})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.CreateStatus_CREATED, created.GetState().GetState(), created.GetState().GetMessage())
+	require.Equal(t, builderv1.CreateStatus_CREATED, created.GetState().GetState(), created.GetState().GetMessage())
 	var generated string
 	require.NoError(t, filepath.WalkDir(filepath.Join(serviceDir, "code", "pkg", "gen"), func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -54,28 +54,28 @@ func TestSyncNeverAcceptsDiscardedOrTamperedGeneratedOutput(t *testing.T) {
 	relative, err := filepath.Rel(root, generated)
 	require.NoError(t, err)
 	for range 2 {
-		response, err := builder.Sync(ctx, &builderv0.SyncRequest{DryRun: true})
+		response, err := builder.Sync(ctx, &builderv1.SyncRequest{DryRun: true})
 		require.NoError(t, err)
-		require.Equal(t, builderv0.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
+		require.Equal(t, builderv1.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
 		require.Contains(t, response.GetChangedFiles(), filepath.ToSlash(relative))
 		unchanged, err := os.ReadFile(generated)
 		require.NoError(t, err)
 		require.Equal(t, corrupted, unchanged, "dry-run must not repair the checkout")
 	}
-	response, err := builder.Sync(ctx, &builderv0.SyncRequest{})
+	response, err := builder.Sync(ctx, &builderv1.SyncRequest{})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
+	require.Equal(t, builderv1.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
 	repaired, err := os.ReadFile(generated)
 	require.NoError(t, err)
 	require.Equal(t, original, repaired)
-	response, err = builder.Sync(ctx, &builderv0.SyncRequest{DryRun: true})
+	response, err = builder.Sync(ctx, &builderv1.SyncRequest{DryRun: true})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
+	require.Equal(t, builderv1.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
 	require.Empty(t, response.GetChangedFiles())
 	require.NoError(t, os.Remove(generated))
-	response, err = builder.Sync(ctx, &builderv0.SyncRequest{DryRun: true})
+	response, err = builder.Sync(ctx, &builderv1.SyncRequest{DryRun: true})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
+	require.Equal(t, builderv1.SyncStatus_SUCCESS, response.GetState().GetState(), response.GetState().GetMessage())
 	require.Contains(t, response.GetChangedFiles(), filepath.ToSlash(relative), "missing output must invalidate any prior generation success")
 	require.NoFileExists(t, generated)
 }

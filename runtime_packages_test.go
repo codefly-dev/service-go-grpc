@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/codefly-dev/core/templates"
 	"github.com/stretchr/testify/require"
@@ -125,15 +125,15 @@ func TestRuntimePackagesBuildRefusalOverGRPC(t *testing.T) {
 	identity := goGrpcServiceFixture(t)
 	client, builder := startBuilderAgent(t, identity)
 	builder.GoGrpc.Settings.RuntimePackages = []string{"git; id"}
-	request := &builderv0.BuildRequest{
+	request := &builderv1.BuildRequest{
 		OutputDirectory: filepath.Join(identity.GetWorkspacePath(), identity.GetRelativeToWorkspace(), "builder"),
-		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
-			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
+		BuildContext: &builderv1.BuildContext{Kind: &builderv1.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv1.DockerBuildContext{DockerRepository: "registry.example.com"},
 		}},
 	}
 	response, err := client.Build(context.Background(), request)
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_ERROR, response.GetState().GetState())
+	require.Equal(t, builderv1.BuildStatus_ERROR, response.GetState().GetState())
 	require.Contains(t, response.GetState().GetMessage(), `runtime-packages: "git; id"`)
 	require.Nil(t, response.GetResult().GetDockerBuildPlan())
 	require.NoDirExists(t, request.OutputDirectory)

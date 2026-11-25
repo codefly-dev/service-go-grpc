@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/codefly-dev/core/agents/services"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/codefly-dev/core/templates"
@@ -72,12 +72,12 @@ func TestRecipeBuildPlanEmitsVerifiableSingleImageRecipe(t *testing.T) {
 	// this build assembled the whole destination, and a caller honouring that
 	// would build the recipe directory — where none of the sources the
 	// Dockerfile copies exist.
-	require.Equal(t, builderv0.RecipeInventoryScope_RECIPE_INVENTORY_SCOPE_EMITTED, plan.GetScope())
+	require.Equal(t, builderv1.RecipeInventoryScope_RECIPE_INVENTORY_SCOPE_EMITTED, plan.GetScope())
 	require.Equal(t, []string{"Dockerfile", "dockerignore"}, planFiles(plan))
 }
 
 // planFiles lists the inventory paths a plan claims, in plan order.
-func planFiles(plan *builderv0.DockerBuildPlan) []string {
+func planFiles(plan *builderv1.DockerBuildPlan) []string {
 	var names []string
 	for _, file := range plan.GetFiles() {
 		names = append(names, file.GetPath())
@@ -122,24 +122,24 @@ func TestBuildRecipeOverGRPC(t *testing.T) {
 
 	// Core's client probes this before dispatching a build that names an explicit
 	// Buildx builder, and refuses the build outright when the answer is false.
-	capabilities, err := client.BuildCapabilities(ctx, &builderv0.BuildCapabilitiesRequest{})
+	capabilities, err := client.BuildCapabilities(ctx, &builderv1.BuildCapabilitiesRequest{})
 	require.NoError(t, err)
 	require.True(t, capabilities.GetBuildxSelection())
 
 	outputDir := filepath.Join(tmpDir, "mod/svc", "builder")
 	for _, directory := range []string{"", "relative"} {
-		resp, err := client.Build(ctx, &builderv0.BuildRequest{OutputDirectory: directory})
+		resp, err := client.Build(ctx, &builderv1.BuildRequest{OutputDirectory: directory})
 		require.NoError(t, err)
-		require.Equal(t, builderv0.BuildStatus_ERROR, resp.GetState().GetState())
+		require.Equal(t, builderv1.BuildStatus_ERROR, resp.GetState().GetState())
 		require.Contains(t, resp.GetState().GetMessage(), "output_directory")
 		require.NoDirExists(t, outputDir)
 	}
 	// A request that carries no Docker build context has no image name for the
 	// recipe. It must fail as an error before rendering anything, not as the
 	// UNKNOWN state a caught nil dereference would produce.
-	resp, err := client.Build(ctx, &builderv0.BuildRequest{OutputDirectory: outputDir})
+	resp, err := client.Build(ctx, &builderv1.BuildRequest{OutputDirectory: outputDir})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_ERROR, resp.GetState().GetState())
+	require.Equal(t, builderv1.BuildStatus_ERROR, resp.GetState().GetState())
 	require.Contains(t, resp.GetState().GetMessage(), "docker build context")
 	require.NoDirExists(t, outputDir)
 
@@ -147,25 +147,25 @@ func TestBuildRecipeOverGRPC(t *testing.T) {
 	// recipe contract cannot express a build context above the service directory,
 	// and there is no agent executor left to fall back to.
 	builder.GoGrpc.Settings.WithWorkspace = true
-	resp, err = client.Build(ctx, &builderv0.BuildRequest{
-		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
-			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
+	resp, err = client.Build(ctx, &builderv1.BuildRequest{
+		BuildContext: &builderv1.BuildContext{Kind: &builderv1.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv1.DockerBuildContext{DockerRepository: "registry.example.com"},
 		}},
 		OutputDirectory: outputDir,
 	})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_ERROR, resp.GetState().GetState())
+	require.Equal(t, builderv1.BuildStatus_ERROR, resp.GetState().GetState())
 	require.Contains(t, resp.GetState().GetMessage(), "workspace")
 	require.NoDirExists(t, outputDir)
 	builder.GoGrpc.Settings.WithWorkspace = false
-	resp, err = client.Build(ctx, &builderv0.BuildRequest{
-		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
-			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
+	resp, err = client.Build(ctx, &builderv1.BuildRequest{
+		BuildContext: &builderv1.BuildContext{Kind: &builderv1.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv1.DockerBuildContext{DockerRepository: "registry.example.com"},
 		}},
 		OutputDirectory: outputDir,
 	})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
+	require.Equal(t, builderv1.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
 
 	plan := resp.GetResult().GetDockerBuildPlan()
 	require.NotNil(t, plan, "Build with output_directory must emit a DockerBuildPlan, not an in-process image")
@@ -183,9 +183,9 @@ func TestBuildRecipeOverGRPC(t *testing.T) {
 	// and rebuild: a stale Dockerfile would leave the plan referencing content the
 	// current render never produced, so the emitted tree must not keep the sentinel.
 	require.NoError(t, os.WriteFile(filepath.Join(outputDir, "Dockerfile"), []byte("FROM stale:sentinel\n"), 0o644))
-	resp, err = client.Build(ctx, &builderv0.BuildRequest{
-		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
-			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
+	resp, err = client.Build(ctx, &builderv1.BuildRequest{
+		BuildContext: &builderv1.BuildContext{Kind: &builderv1.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv1.DockerBuildContext{DockerRepository: "registry.example.com"},
 		}},
 		OutputDirectory: outputDir,
 	})
@@ -195,16 +195,16 @@ func TestBuildRecipeOverGRPC(t *testing.T) {
 	rebuilt, err := os.ReadFile(filepath.Join(outputDir, "Dockerfile"))
 	require.NoError(t, err)
 	require.NotContains(t, string(rebuilt), "stale:sentinel")
-	for _, dockerContext := range []*builderv0.DockerBuildContext{
+	for _, dockerContext := range []*builderv1.DockerBuildContext{
 		{DockerRepository: "registry.example.com", BuildxBuilder: "explicit-builder"},
-		{DockerRepository: "registry.example.com", BuildxBuilder: "cache-builder", Cache: &builderv0.BuildCacheOptions{Backend: "registry", Scope: "service", Imports: []string{"registry.example.com/cache"}, Exports: []string{"registry.example.com/cache"}}},
+		{DockerRepository: "registry.example.com", BuildxBuilder: "cache-builder", Cache: &builderv1.BuildCacheOptions{Backend: "registry", Scope: "service", Imports: []string{"registry.example.com/cache"}, Exports: []string{"registry.example.com/cache"}}},
 	} {
-		resp, err := client.Build(ctx, &builderv0.BuildRequest{
+		resp, err := client.Build(ctx, &builderv1.BuildRequest{
 			OutputDirectory: outputDir,
-			BuildContext:    &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{DockerBuildContext: dockerContext}},
+			BuildContext:    &builderv1.BuildContext{Kind: &builderv1.BuildContext_DockerBuildContext{DockerBuildContext: dockerContext}},
 		})
 		require.NoError(t, err)
-		require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
+		require.Equal(t, builderv1.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
 		require.NoError(t, services.VerifyDockerBuildPlan(outputDir, resp.GetResult().GetDockerBuildPlan()))
 		require.Equal(t, plan.GetDigest(), resp.GetResult().GetDockerBuildPlan().GetDigest())
 		require.Nil(t, resp.GetResult().GetDockerBuildResult())
@@ -224,10 +224,10 @@ func TestPersistentLoopbackBuildRecipeOverGRPC(t *testing.T) {
 		"\n    uid: 10001\n    gid: 10001\n    mount-path: /var/lib/app\n    storage: 8Gi\n    readiness: [/bin/check]\n    liveness: [/bin/alive]\n"
 	require.NoError(t, os.WriteFile(filepath.Join(serviceDir, resources.ServiceConfigurationName), []byte(manifest), 0o644))
 	client, builder := startBuilderAgent(t, identity)
-	loaded, err := builder.Load(ctx, &builderv0.LoadRequest{Identity: identity})
+	loaded, err := builder.Load(ctx, &builderv1.LoadRequest{Identity: identity})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.LoadStatus_READY, loaded.GetState().GetState(), loaded.GetState().GetMessage())
-	capabilities, err := client.BuildCapabilities(ctx, &builderv0.BuildCapabilitiesRequest{})
+	require.Equal(t, builderv1.LoadStatus_READY, loaded.GetState().GetState(), loaded.GetState().GetMessage())
+	capabilities, err := client.BuildCapabilities(ctx, &builderv1.BuildCapabilitiesRequest{})
 	require.NoError(t, err)
 	require.Len(t, capabilities.GetImageInputs(), 1)
 	input := capabilities.GetImageInputs()[0]
@@ -235,14 +235,14 @@ func TestPersistentLoopbackBuildRecipeOverGRPC(t *testing.T) {
 	require.Equal(t, pinned, input.GetReference())
 	input.Reference = "mirror.example.com/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	output := filepath.Join(serviceDir, "builder")
-	built, err := client.Build(ctx, &builderv0.BuildRequest{
+	built, err := client.Build(ctx, &builderv1.BuildRequest{
 		OutputDirectory: output,
-		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
-			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com", ImageBindings: []*builderv0.BuildImageInput{input}},
+		BuildContext: &builderv1.BuildContext{Kind: &builderv1.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv1.DockerBuildContext{DockerRepository: "registry.example.com", ImageBindings: []*builderv1.BuildImageInput{input}},
 		}},
 	})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_SUCCESS, built.GetState().GetState(), built.GetState().GetMessage())
+	require.Equal(t, builderv1.BuildStatus_SUCCESS, built.GetState().GetState(), built.GetState().GetMessage())
 	require.NoError(t, services.VerifyDockerBuildPlan(output, built.GetResult().GetDockerBuildPlan()))
 	dockerfile, err := os.ReadFile(filepath.Join(output, "Dockerfile"))
 	require.NoError(t, err)

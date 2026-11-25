@@ -4,14 +4,14 @@ import (
 	"fmt"
 
 	"github.com/codefly-dev/core/agents/services"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 )
 
 // The template owns these requirements. Native services retain musl and apk;
 // static services use the same runtime input only to assemble files copied into
 // scratch. A stable role lets one type-wide selection cover both service shapes.
-func buildImageInputs() []*builderv0.BuildImageInput {
-	return []*builderv0.BuildImageInput{
+func buildImageInputs() []*builderv1.BuildImageInput {
+	return []*builderv1.BuildImageInput{
 		{Role: "frontend", Reference: "docker.io/docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32", Variant: "dockerfile-v1"},
 		{Role: "builder", Reference: "docker.io/library/golang:" + GoVersion + "-alpine3.23@sha256:146e3b9c7c1e2ec3d3f5348c8a686151a75e1976e50efac9fc022ebe446a9a82", Variant: "go" + GoVersion + "-alpine3.23"},
 		{Role: "runtime", Reference: "docker.io/library/alpine:" + AlpineVersion + "@" + AlpineDigest, Variant: "alpine3.23-musl"},
@@ -33,7 +33,7 @@ func (d dockerTemplating) Image(role string) (string, error) {
 	return "", fmt.Errorf("unknown image role %q", role)
 }
 
-func resolveTemplateImages(d *dockerTemplating, bindings []*builderv0.BuildImageInput) error {
+func resolveTemplateImages(d *dockerTemplating, bindings []*builderv1.BuildImageInput) error {
 	inputs, err := services.ResolveBuildImages(buildImageInputs(), bindings)
 	if err != nil {
 		return err

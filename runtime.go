@@ -12,8 +12,8 @@ import (
 	"github.com/codefly-dev/core/agents/helpers/code"
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/builders"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/llmout"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
@@ -121,7 +121,7 @@ func NewRuntime(svc *Service) *Runtime {
 	}
 }
 
-func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtimev0.LoadResponse, error) {
+func (s *Runtime) Load(ctx context.Context, req *runtimev1.LoadRequest) (*runtimev1.LoadResponse, error) {
 
 	// Pass the go-grpc Settings (which inline-embeds goservice.Settings,
 	// so the generic fields are populated via pointer-sharing in NewService)
@@ -173,7 +173,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	return s.Base.Runtime.LoadResponse()
 }
 
-func (s *Runtime) SetRuntimeContext(_ context.Context, runtimeContext *basev0.RuntimeContext) error {
+func (s *Runtime) SetRuntimeContext(_ context.Context, runtimeContext *basev1.RuntimeContext) error {
 	s.Base.Runtime.RuntimeContext = golanghelpers.SetGoRuntimeContext(runtimeContext)
 	return nil
 }
@@ -232,7 +232,7 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 	return nil
 }
 
-func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtimev0.InitResponse, error) {
+func (s *Runtime) Init(ctx context.Context, req *runtimev1.InitRequest) (*runtimev1.InitResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
@@ -278,7 +278,7 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		if err != nil {
 			return s.Base.Runtime.InitError(s.Wool.Wrapf(err, "endpoint %q (%s) is declared but no network mapping was proposed for it", endpoint.Name, endpoint.Api))
 		}
-		if err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev0.NetworkMapping{nm}, resources.NewNativeNetworkAccess()); err != nil {
+		if err = s.EnvironmentVariables.AddEndpoints(ctx, []*basev1.NetworkMapping{nm}, resources.NewNativeNetworkAccess()); err != nil {
 			return s.Base.Runtime.InitError(err)
 		}
 		net, err := resources.FindNetworkInstanceInNetworkMappings(ctx, s.NetworkMappings, endpoint, resources.NewNativeNetworkAccess())
@@ -358,7 +358,7 @@ func (s *Runtime) revokeReadiness(message string) {
 	defer s.lifecycle.Unlock()
 	s.Base.Runtime.Lock()
 	defer s.Base.Runtime.Unlock()
-	s.Base.Runtime.StartStatus = &runtimev0.StartStatus{State: runtimev0.StartStatus_UNKNOWN, Message: message}
+	s.Base.Runtime.StartStatus = &runtimev1.StartStatus{State: runtimev1.StartStatus_UNKNOWN, Message: message}
 }
 
 // reportStartedBinary names the executable this start attempt launched, for
@@ -388,14 +388,14 @@ func (s *Runtime) reportStartedBinary() {
 			wool.Field("runtime-context", s.Base.Runtime.RuntimeContext.GetKind()))
 		return
 	}
-	s.Base.Runtime.ReportStartedArtifact(&runtimev0.StartedArtifact{Executable: exe})
+	s.Base.Runtime.ReportStartedArtifact(&runtimev1.StartedArtifact{Executable: exe})
 }
 
 // commitStarted publishes STARTED for the start attempt in flight. It takes
 // the same lock as reportRunnerExit, so committing before supervision is armed
 // guarantees an immediate child exit lands strictly after — and therefore wins
 // over — this response instead of being clobbered by it.
-func (s *Runtime) commitStarted() (*runtimev0.StartResponse, error) {
+func (s *Runtime) commitStarted() (*runtimev1.StartResponse, error) {
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
 	return s.Base.Runtime.StartResponse()
@@ -472,7 +472,7 @@ func compileDiagnostics(output string) string {
 	return compressed
 }
 
-func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runtimev0.StartResponse, error) {
+func (s *Runtime) Start(ctx context.Context, req *runtimev1.StartRequest) (*runtimev1.StartResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
@@ -602,7 +602,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 // / go vet with the same RunnerEnvironment and SourceLocation this layer
 // sets up.
 
-func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtimev0.StopResponse, error) {
+func (s *Runtime) Stop(ctx context.Context, req *runtimev1.StopRequest) (*runtimev1.StopResponse, error) {
 	defer s.Wool.Catch()
 
 	ctx = s.Wool.Inject(ctx)
@@ -648,7 +648,7 @@ func (s *Runtime) Stop(ctx context.Context, req *runtimev0.StopRequest) (*runtim
 	return s.Base.Runtime.StopResponse()
 }
 
-func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*runtimev0.DestroyResponse, error) {
+func (s *Runtime) Destroy(ctx context.Context, req *runtimev1.DestroyRequest) (*runtimev1.DestroyResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 

@@ -14,7 +14,7 @@ import (
 // TestServiceRecipeDeclaresItsGoModuleDownload pins the declaration the CLI
 // fetches from: a service built from its own directory declares its module root
 // (relative to that directory, the recipe's context) and the gomodproxy
-// context, so the plan carries the v5 contract and still verifies.
+// context, which the v1 contract includes in the verified plan.
 func TestServiceRecipeDeclaresItsGoModuleDownload(t *testing.T) {
 	t.Parallel()
 	outputDir := t.TempDir()
@@ -24,7 +24,7 @@ func TestServiceRecipeDeclaresItsGoModuleDownload(t *testing.T) {
 	plan, err := recipeBuildPlan(outputDir, &resources.DockerImage{Name: "mod/svc", Tag: "0.0.0"}, []string{"Dockerfile", "dockerignore"}, options...)
 	require.NoError(t, err)
 	require.NoError(t, services.VerifyDockerBuildPlan(outputDir, plan))
-	require.Equal(t, services.DockerBuildRecipeGoModulesContractVersion, plan.GetContractVersion())
+	require.Equal(t, services.DockerBuildRecipeContractVersion, plan.GetContractVersion())
 	downloads := plan.GetRecipes()[0].GetGoModuleDownloads()
 	require.Len(t, downloads, 1)
 	require.Equal(t, "code", downloads[0].GetModuleRoot())

@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/languages"
 	"github.com/codefly-dev/core/network"
 	runners "github.com/codefly-dev/core/runners/base"
@@ -23,11 +23,11 @@ import (
 	"testing"
 	"time"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 
 	"github.com/codefly-dev/core/resources"
 
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
 )
 
 func TestSetRuntimeContextNixHintUsesLocalFirst(t *testing.T) {
@@ -78,20 +78,20 @@ func cleanupRuntime(t *testing.T, runtime *Runtime) {
 	t.Helper()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		stop, err := runtime.Stop(ctx, &runtimev0.StopRequest{})
+		stop, err := runtime.Stop(ctx, &runtimev1.StopRequest{})
 		cancel()
 		if err != nil {
 			t.Errorf("stop runtime: %v", err)
-		} else if stop.GetStatus().GetState() != runtimev0.StopStatus_SUCCESS {
+		} else if stop.GetStatus().GetState() != runtimev1.StopStatus_SUCCESS {
 			t.Errorf("stop runtime: %v", stop.GetStatus())
 		}
 
 		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		destroy, err := runtime.Destroy(ctx, &runtimev0.DestroyRequest{})
+		destroy, err := runtime.Destroy(ctx, &runtimev1.DestroyRequest{})
 		if err != nil {
 			t.Errorf("destroy runtime: %v", err)
-		} else if destroy.GetStatus().GetState() != runtimev0.DestroyStatus_SUCCESS {
+		} else if destroy.GetStatus().GetState() != runtimev1.DestroyStatus_SUCCESS {
 			t.Errorf("destroy runtime: %v", destroy.GetStatus())
 		}
 	})
@@ -126,7 +126,7 @@ func TestCreateToRunWithConnectNative(t *testing.T) {
 	}
 }
 
-func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withConnect bool) {
+func testCreateToRun(t *testing.T, runtimeContext *basev1.RuntimeContext, withConnect bool) {
 	wool.SetGlobalLogLevel(wool.DEBUG)
 	ctx := context.Background()
 
@@ -167,7 +167,7 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 		filepath.Join(tmpDir, "mod", resources.ModuleConfigurationName),
 		[]byte("name: mod\nservices:\n    - name: svc\n      path: svc\n"), 0o600))
 
-	identity := &basev0.ServiceIdentity{
+	identity := &basev1.ServiceIdentity{
 		Name:                service.Name,
 		Version:             service.Version,
 		Module:              "mod",
@@ -182,15 +182,15 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 
 	builder := NewBuilder(NewService())
 
-	creationMode := &builderv0.CreationMode{Communicate: withConnect}
-	resp, err := builder.Load(ctx, &builderv0.LoadRequest{Identity: identity, CreationMode: creationMode})
+	creationMode := &builderv1.CreationMode{Communicate: withConnect}
+	resp, err := builder.Load(ctx, &builderv1.LoadRequest{Identity: identity, CreationMode: creationMode})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	if withConnect {
-		confirm := func(value bool) *agentv0.Answer {
-			return &agentv0.Answer{Value: &agentv0.Answer_Confirm{Confirm: &agentv0.ConfirmAnswer{Confirmed: value}}}
+		confirm := func(value bool) *agentv1.Answer {
+			return &agentv1.Answer{Value: &agentv1.Answer_Confirm{Confirm: &agentv1.ConfirmAnswer{Confirmed: value}}}
 		}
-		builder.answers = map[string]*agentv0.Answer{
+		builder.answers = map[string]*agentv1.Answer{
 			HotReload:                 confirm(true),
 			DebugSymbols:              confirm(false),
 			RaceConditionDetectionRun: confirm(false),
@@ -209,11 +209,11 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 		protoCompanionMu.Lock()
 		defer protoCompanionMu.Unlock()
 
-		createResponse, err := builder.Create(ctx, &builderv0.CreateRequest{})
+		createResponse, err := builder.Create(ctx, &builderv1.CreateRequest{})
 		require.NoError(t, err)
 		require.Equal(
 			t,
-			builderv0.CreateStatus_CREATED,
+			builderv1.CreateStatus_CREATED,
 			createResponse.GetState().GetState(),
 			createResponse.GetState().GetMessage(),
 		)
@@ -225,16 +225,16 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 		require.NoError(t, err)
 		require.Contains(t, string(spec), "mode: grpc")
 
-		syncResponse, err := builder.Sync(ctx, &builderv0.SyncRequest{DryRun: true})
+		syncResponse, err := builder.Sync(ctx, &builderv1.SyncRequest{DryRun: true})
 		require.NoError(t, err)
-		require.Equal(t, builderv0.SyncStatus_SUCCESS, syncResponse.GetState().GetState(), syncResponse.GetState().GetMessage())
+		require.Equal(t, builderv1.SyncStatus_SUCCESS, syncResponse.GetState().GetState(), syncResponse.GetState().GetMessage())
 		require.Empty(t, syncResponse.GetChangedFiles(), "a newly created service must already be sync-clean")
 	}()
 
 	// Now run it
 	runtime := NewRuntime(NewService())
 
-	_, err = runtime.Load(ctx, &runtimev0.LoadRequest{
+	_, err = runtime.Load(ctx, &runtimev1.LoadRequest{
 		Identity:     identity,
 		Environment:  shared.Must(env.Proto()),
 		DisableCatch: true})
@@ -257,12 +257,12 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 	require.Equal(t, expectedEndpoints, len(networkMappings))
 
 	cleanupRuntime(t, runtime)
-	init, err := runtime.Init(ctx, &runtimev0.InitRequest{
+	init, err := runtime.Init(ctx, &runtimev1.InitRequest{
 		RuntimeContext:          runtimeContext,
 		ProposedNetworkMappings: networkMappings})
 	require.NoError(t, err)
 	require.NotNil(t, init)
-	require.Equal(t, runtimev0.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus().GetMessage())
+	require.Equal(t, runtimev1.InitStatus_READY, init.GetStatus().GetState(), init.GetStatus().GetMessage())
 
 	testRun(t, runtime, ctx, identity, networkMappings)
 
@@ -270,18 +270,18 @@ func testCreateToRun(t *testing.T, runtimeContext *basev0.RuntimeContext, withCo
 	testConnectEndpoint(t, runtime, ctx, identity, networkMappings)
 
 	// Test
-	test, err := runtime.Test(ctx, &runtimev0.TestRequest{})
+	test, err := runtime.Test(ctx, &runtimev1.TestRequest{})
 	require.NoError(t, err)
-	require.Equal(t, runtimev0.TestRunResult_PASSED, test.GetResult().GetState(), test.GetResult().GetMessage())
+	require.Equal(t, runtimev1.TestRunResult_PASSED, test.GetResult().GetState(), test.GetResult().GetMessage())
 
 }
 
-func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev0.ServiceIdentity, networkMappings []*basev0.NetworkMapping) {
+func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev1.ServiceIdentity, networkMappings []*basev1.NetworkMapping) {
 
 	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.GoGrpc.RestEndpoint, resources.NewNativeNetworkAccess())
 	require.NoError(t, err)
 
-	_, err = runtime.Start(ctx, &runtimev0.StartRequest{})
+	_, err = runtime.Start(ctx, &runtimev1.StartRequest{})
 	require.NoError(t, err)
 
 	const readinessTimeout = 30 * time.Second
@@ -333,7 +333,7 @@ func testRun(t *testing.T, runtime *Runtime, ctx context.Context, identity *base
 	t.Fatalf("REST endpoint %s was not ready within %s: %v", instance.Address, readinessTimeout, lastErr)
 }
 
-func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev0.ServiceIdentity, networkMappings []*basev0.NetworkMapping) {
+func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, identity *basev1.ServiceIdentity, networkMappings []*basev1.NetworkMapping) {
 	if runtime.GoGrpc.ConnectEndpoint == nil {
 		t.Log("no connect endpoint configured, skipping connect test")
 		return
@@ -394,7 +394,7 @@ func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, id
 	t.Fatalf("Connect endpoint %s was not ready within %s: %v", baseURL, readinessTimeout, lastErr)
 }
 
-func testNoApi(t *testing.T, runtime *Runtime, ctx context.Context, networkMappings []*basev0.NetworkMapping) {
+func testNoApi(t *testing.T, runtime *Runtime, ctx context.Context, networkMappings []*basev1.NetworkMapping) {
 	instance, err := resources.FindNetworkInstanceInNetworkMappings(ctx, networkMappings, runtime.GoGrpc.RestEndpoint, resources.NewNativeNetworkAccess())
 	require.NoError(t, err)
 

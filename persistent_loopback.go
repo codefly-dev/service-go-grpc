@@ -10,7 +10,7 @@ import (
 
 	dockerhelpers "github.com/codefly-dev/core/agents/helpers/docker"
 	"github.com/codefly-dev/core/agents/services"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/shared"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -69,19 +69,19 @@ func (s *PersistentLoopbackSpec) Validate() error {
 	return nil
 }
 
-func (s *PersistentLoopbackSpec) imageInput() *builderv0.BuildImageInput {
-	return &builderv0.BuildImageInput{Role: "application", Reference: s.Image, Variant: "persistent-loopback-v1"}
+func (s *PersistentLoopbackSpec) imageInput() *builderv1.BuildImageInput {
+	return &builderv1.BuildImageInput{Role: "application", Reference: s.Image, Variant: "persistent-loopback-v1"}
 }
 
 //go:embed packaged/templates/builder
 var packagedFS embed.FS
 
-func (s *Builder) buildPackagedImage(ctx context.Context, req *builderv0.BuildRequest, settings *PersistentLoopbackSpec) (*builderv0.BuildResponse, error) {
+func (s *Builder) buildPackagedImage(ctx context.Context, req *builderv1.BuildRequest, settings *PersistentLoopbackSpec) (*builderv1.BuildResponse, error) {
 	builder := s.Base.Builder
 	if err := settings.Validate(); err != nil {
 		return builder.BuildError(err)
 	}
-	inputs, err := services.ResolveBuildImages([]*builderv0.BuildImageInput{settings.imageInput()}, req.GetBuildContext().GetDockerBuildContext().GetImageBindings())
+	inputs, err := services.ResolveBuildImages([]*builderv1.BuildImageInput{settings.imageInput()}, req.GetBuildContext().GetDockerBuildContext().GetImageBindings())
 	if err != nil {
 		return builder.BuildError(err)
 	}

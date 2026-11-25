@@ -1,11 +1,11 @@
 package main
 
 import (
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
 )
 
-func goGrpcTechniques() []*agentv0.AgentTechnique {
-	return []*agentv0.AgentTechnique{
+func goGrpcTechniques() []*agentv1.AgentTechnique {
+	return []*agentv1.AgentTechnique{
 		{
 			Id:          "go-grpc-file-layout",
 			Name:        "Go gRPC File Layout",

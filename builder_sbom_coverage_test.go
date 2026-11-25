@@ -11,8 +11,8 @@ import (
 
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/agents/services/sbom"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -28,7 +28,7 @@ const fixtureGoVersion = "1.21"
 // goGrpcServiceFixture writes the on-disk service a Builder.Load accepts, plus a
 // self-contained Go module at the source location so the source inventory
 // resolves without reaching the network.
-func goGrpcServiceFixture(t *testing.T) *basev0.ServiceIdentity {
+func goGrpcServiceFixture(t *testing.T) *basev1.ServiceIdentity {
 	t.Helper()
 
 	ctx := context.Background()
@@ -45,7 +45,7 @@ func goGrpcServiceFixture(t *testing.T) *basev0.ServiceIdentity {
 	require.NoError(t, os.WriteFile(filepath.Join(codeDir, "go.mod"), []byte("module example.com/svc\n\ngo "+fixtureGoVersion+"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(codeDir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
 
-	return &basev0.ServiceIdentity{
+	return &basev1.ServiceIdentity{
 		Name:                service.Name,
 		Version:             service.Version,
 		Module:              "mod",
@@ -59,20 +59,20 @@ func goGrpcServiceFixture(t *testing.T) *basev0.ServiceIdentity {
 // client plus the Builder itself, for callers that need agent state the wire
 // does not expose. Build is go-grpc's own and SBOM is inherited from the generic
 // Go builder, so only the wire surface proves the composed agent answers both.
-func startBuilderAgent(t *testing.T, identity *basev0.ServiceIdentity) (*services.BuilderAgent, *Builder) {
+func startBuilderAgent(t *testing.T, identity *basev1.ServiceIdentity) (*services.BuilderAgent, *Builder) {
 	t.Helper()
 
 	builder := NewBuilder(NewService())
 	// CreationMode short-circuits endpoint discovery, which neither the recipe
 	// nor the inventory path needs — they render templates and read the module
 	// graph, never compiling.
-	_, err := builder.Load(context.Background(), &builderv0.LoadRequest{Identity: identity, CreationMode: &builderv0.CreationMode{}})
+	_, err := builder.Load(context.Background(), &builderv1.LoadRequest{Identity: identity, CreationMode: &builderv1.CreationMode{}})
 	require.NoError(t, err)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := grpc.NewServer()
-	builderv0.RegisterBuilderServer(server, builder)
+	builderv1.RegisterBuilderServer(server, builder)
 
 	// Serve's result is handed back through a channel and reported during
 	// cleanup rather than logged from the goroutine: a t.Errorf that lands after
@@ -98,17 +98,17 @@ func startBuilderAgent(t *testing.T, identity *basev0.ServiceIdentity) (*service
 // emits. The image subjects a caller must cover are derived from this plan, so
 // coverage is measured against what go-grpc actually ships rather than a
 // restatement of it.
-func buildRecipePlan(ctx context.Context, t *testing.T, client *services.BuilderAgent, identity *basev0.ServiceIdentity) *builderv0.DockerBuildPlan {
+func buildRecipePlan(ctx context.Context, t *testing.T, client *services.BuilderAgent, identity *basev1.ServiceIdentity) *builderv1.DockerBuildPlan {
 	t.Helper()
 
-	resp, err := client.Build(ctx, &builderv0.BuildRequest{
+	resp, err := client.Build(ctx, &builderv1.BuildRequest{
 		OutputDirectory: filepath.Join(identity.GetWorkspacePath(), identity.GetRelativeToWorkspace(), "builder"),
-		BuildContext: &builderv0.BuildContext{Kind: &builderv0.BuildContext_DockerBuildContext{
-			DockerBuildContext: &builderv0.DockerBuildContext{DockerRepository: "registry.example.com"},
+		BuildContext: &builderv1.BuildContext{Kind: &builderv1.BuildContext_DockerBuildContext{
+			DockerBuildContext: &builderv1.DockerBuildContext{DockerRepository: "registry.example.com"},
 		}},
 	})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
+	require.Equal(t, builderv1.BuildStatus_SUCCESS, resp.GetState().GetState(), resp.GetState().GetMessage())
 
 	plan := resp.GetResult().GetDockerBuildPlan()
 	require.NotNil(t, plan)
@@ -126,10 +126,10 @@ func TestSourceInventoryRemainsAvailable(t *testing.T) {
 	identity := goGrpcServiceFixture(t)
 	client, _ := startBuilderAgent(t, identity)
 
-	resp, err := client.SBOM(ctx, &builderv0.SBOMRequest{})
+	resp, err := client.SBOM(ctx, &builderv1.SBOMRequest{})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.SBOMStatus_COMPLETE, resp.GetState().GetState(), resp.GetState().GetMessage())
-	require.Equal(t, builderv0.SBOMScope_SBOM_SCOPE_SOURCE, resp.GetScope())
+	require.Equal(t, builderv1.SBOMStatus_COMPLETE, resp.GetState().GetState(), resp.GetState().GetMessage())
+	require.Equal(t, builderv1.SBOMScope_SBOM_SCOPE_SOURCE, resp.GetScope())
 	require.NotEmpty(t, resp.GetSha256())
 	require.Equal(t, "pkg:golang/example.com/svc", resp.GetBom().GetMetadata().GetComponent().GetPurl())
 }
@@ -145,18 +145,18 @@ func TestImageScopeWithoutSubjectsIsAPreconditionFailure(t *testing.T) {
 	identity := goGrpcServiceFixture(t)
 	client, _ := startBuilderAgent(t, identity)
 
-	resp, err := client.SBOM(ctx, &builderv0.SBOMRequest{Scope: builderv0.SBOMScope_SBOM_SCOPE_IMAGE})
+	resp, err := client.SBOM(ctx, &builderv1.SBOMRequest{Scope: builderv1.SBOMScope_SBOM_SCOPE_IMAGE})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.SBOMStatus_ERROR, resp.GetState().GetState())
-	require.Equal(t, builderv0.SBOMScope_SBOM_SCOPE_IMAGE, resp.GetScope())
-	require.Equal(t, basev0.FailureCode_FAILURE_CODE_PRECONDITION_FAILED, resp.GetState().GetFailure().GetCode())
+	require.Equal(t, builderv1.SBOMStatus_ERROR, resp.GetState().GetState())
+	require.Equal(t, builderv1.SBOMScope_SBOM_SCOPE_IMAGE, resp.GetScope())
+	require.Equal(t, basev1.FailureCode_FAILURE_CODE_PRECONDITION_FAILED, resp.GetState().GetFailure().GetCode())
 }
 
 // resolvedFromPlan stands in for the build the caller ran, which this agent
 // never runs itself: one resolved image per recipe and platform, each with its
 // own digest so a subject satisfied by another platform's evidence would show
 // up as a mismatch rather than as coverage.
-func resolvedFromPlan(plan *builderv0.DockerBuildPlan) []sbom.ResolvedImage {
+func resolvedFromPlan(plan *builderv1.DockerBuildPlan) []sbom.ResolvedImage {
 	var resolved []sbom.ResolvedImage
 	for _, recipe := range plan.GetRecipes() {
 		for _, platform := range recipe.GetPlatforms() {
@@ -175,11 +175,11 @@ func resolvedFromPlan(plan *builderv0.DockerBuildPlan) []sbom.ResolvedImage {
 // Deriving subjects this way is the mistake the contract exists to refuse, so
 // they are assembled here rather than obtained from a helper that now refuses to
 // produce them.
-func unpinnedPlanSubjects(plan *builderv0.DockerBuildPlan, service string) []*builderv0.ImageSubject {
-	var subjects []*builderv0.ImageSubject
+func unpinnedPlanSubjects(plan *builderv1.DockerBuildPlan, service string) []*builderv1.ImageSubject {
+	var subjects []*builderv1.ImageSubject
 	for _, recipe := range plan.GetRecipes() {
 		for _, platform := range recipe.GetPlatforms() {
-			subjects = append(subjects, &builderv0.ImageSubject{
+			subjects = append(subjects, &builderv1.ImageSubject{
 				Reference: recipe.GetImage(),
 				Platform:  platform,
 				Role:      recipe.GetName(),
@@ -253,12 +253,12 @@ func TestUnpinnedSubjectsAreRefused(t *testing.T) {
 	subjects := unpinnedPlanSubjects(plan, unique)
 	require.NotEmpty(t, subjects)
 
-	resp, err := client.SBOM(ctx, &builderv0.SBOMRequest{
-		Scope:    builderv0.SBOMScope_SBOM_SCOPE_IMAGE,
+	resp, err := client.SBOM(ctx, &builderv1.SBOMRequest{
+		Scope:    builderv1.SBOMScope_SBOM_SCOPE_IMAGE,
 		Subjects: subjects,
 	})
 	require.NoError(t, err)
-	require.Equal(t, builderv0.SBOMStatus_ERROR, resp.GetState().GetState())
-	require.Equal(t, builderv0.SBOMScope_SBOM_SCOPE_IMAGE, resp.GetScope())
+	require.Equal(t, builderv1.SBOMStatus_ERROR, resp.GetState().GetState())
+	require.Equal(t, builderv1.SBOMScope_SBOM_SCOPE_IMAGE, resp.GetScope())
 	require.Error(t, sbom.ValidateCoverage(unique, subjects, resp))
 }
