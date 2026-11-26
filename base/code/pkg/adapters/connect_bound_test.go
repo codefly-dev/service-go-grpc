@@ -78,7 +78,7 @@ func (b *endlessBody) Read(p []byte) (int, error) {
 // with ("" when it served the call), and its message.
 func postConnect(t *testing.T, client *http.Client, base string, body io.Reader, contentLength int64) (string, string) {
 	t.Helper()
-	request, err := http.NewRequest(http.MethodPost, base+"/api.WebService/Version", body)
+	request, err := http.NewRequest(http.MethodPost, base+"/api.v1.WebService/Version", body)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}

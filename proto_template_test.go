@@ -21,6 +21,9 @@ func TestProtoTemplatePinsGoPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read api proto template: %v", err)
 	}
+	if !strings.Contains(string(protoTemplate), "package api.v1;") {
+		t.Fatal("new services must publish their v1 protobuf namespace")
+	}
 	if !strings.Contains(string(protoTemplate), `option go_package = "{{ .GoModule }}/pkg/gen;gen";`) {
 		t.Fatal("api proto template does not pin the generated Go package")
 	}

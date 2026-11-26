@@ -408,7 +408,7 @@ func TestConnectOnlyEntrypointStartsOnAListenerNotNamedConnect(t *testing.T) {
 	default:
 	}
 	// The same listener answers the service's own API over Connect.
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+address+"/api.WebService/Version", strings.NewReader("{}"))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+address+"/api.v1.WebService/Version", strings.NewReader("{}"))
 	require.NoError(t, err)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Connect-Protocol-Version", "1")

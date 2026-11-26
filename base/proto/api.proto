@@ -1,5 +1,5 @@
 syntax = "proto3";
-package api;
+package api.v1;
 
 option go_package = "codefly-base/pkg/gen;gen";
 

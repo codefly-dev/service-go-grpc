@@ -23,14 +23,13 @@ import (
 // moduleScopedTemplates are the factory templates that name the service's own
 // Go module, with the path each must render under it.
 var moduleScopedTemplates = map[string]string{
-	"templates/factory/code/go.mod.tmpl":                            "module %s\n",
-	"templates/factory/code/main.go.tmpl":                           `"%s/pkg/adapters"`,
-	"templates/factory/code/plugins/registry_gen.go.tmpl":           `"%s/pkg/framework"`,
-	"templates/factory/code/pkg/adapters/rest_gen.go.tmpl":          `"%s/plugins"`,
-	"templates/factory/code/pkg/adapters/server_gen.go.tmpl":        `"%s/plugins"`,
-	"templates/factory/code/pkg/adapters/grpc_gen.go.tmpl":          `gen "%s/pkg/gen"`,
-	"templates/factory/code/pkg/gen/genconnect/api.connect.go.tmpl": `gen "%s/pkg/gen"`,
-	"templates/factory/proto/api.proto.tmpl":                        `option go_package = "%s/pkg/gen;gen";`,
+	"templates/factory/code/go.mod.tmpl":                     "module %s\n",
+	"templates/factory/code/main.go.tmpl":                    `"%s/pkg/adapters"`,
+	"templates/factory/code/plugins/registry_gen.go.tmpl":    `"%s/pkg/framework"`,
+	"templates/factory/code/pkg/adapters/rest_gen.go.tmpl":   `"%s/plugins"`,
+	"templates/factory/code/pkg/adapters/server_gen.go.tmpl": `"%s/plugins"`,
+	"templates/factory/code/pkg/adapters/grpc_gen.go.tmpl":   `gen "%s/pkg/gen"`,
+	"templates/factory/proto/api.proto.tmpl":                 `option go_package = "%s/pkg/gen;gen";`,
 }
 
 // The templates once rendered the service name as the Go module (`module

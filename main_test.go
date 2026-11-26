@@ -353,7 +353,7 @@ func testConnectEndpoint(t *testing.T, runtime *Runtime, ctx context.Context, id
 	deadline := time.Now().Add(readinessTimeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		procedure := fmt.Sprintf("/api.%sService/Version", shared.ToTitle(identity.Name))
+		procedure := fmt.Sprintf("/api.v1.%sService/Version", shared.ToTitle(identity.Name))
 		req, err := http.NewRequest("POST", baseURL+procedure, strings.NewReader("{}"))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")

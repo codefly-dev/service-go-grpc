@@ -94,7 +94,7 @@ func TestConnectListenerDialsThroughTheGatewayDialOptions(t *testing.T) {
 		}
 	})
 	base := fmt.Sprintf("http://127.0.0.1:%d", ports[2])
-	waitForHTTP(t, base+"/api.WebService/")
+	waitForHTTP(t, base+"/api.v1.WebService/")
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
 	for _, protocol := range []struct {

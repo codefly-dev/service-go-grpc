@@ -22,7 +22,7 @@ const _ = connect.IsAtLeastVersion1_13_0
 
 const (
 	// WebServiceName is the fully-qualified name of the WebService service.
-	WebServiceName = "api.WebService"
+	WebServiceName = "api.v1.WebService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -34,16 +34,16 @@ const (
 // period.
 const (
 	// WebServiceVersionProcedure is the fully-qualified name of the WebService's Version RPC.
-	WebServiceVersionProcedure = "/api.WebService/Version"
+	WebServiceVersionProcedure = "/api.v1.WebService/Version"
 )
 
-// WebServiceClient is a client for the api.WebService service.
+// WebServiceClient is a client for the api.v1.WebService service.
 type WebServiceClient interface {
 	Version(context.Context, *connect.Request[gen.VersionRequest]) (*connect.Response[gen.VersionResponse], error)
 }
 
-// NewWebServiceClient constructs a client for the api.WebService service. By default, it uses the
-// Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and sends
+// NewWebServiceClient constructs a client for the api.v1.WebService service. By default, it uses
+// the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and sends
 // uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or
 // connect.WithGRPCWeb() options.
 //
@@ -67,12 +67,12 @@ type webServiceClient struct {
 	version *connect.Client[gen.VersionRequest, gen.VersionResponse]
 }
 
-// Version calls api.WebService.Version.
+// Version calls api.v1.WebService.Version.
 func (c *webServiceClient) Version(ctx context.Context, req *connect.Request[gen.VersionRequest]) (*connect.Response[gen.VersionResponse], error) {
 	return c.version.CallUnary(ctx, req)
 }
 
-// WebServiceHandler is an implementation of the api.WebService service.
+// WebServiceHandler is an implementation of the api.v1.WebService service.
 type WebServiceHandler interface {
 	Version(context.Context, *connect.Request[gen.VersionRequest]) (*connect.Response[gen.VersionResponse], error)
 }
@@ -90,7 +90,7 @@ func NewWebServiceHandler(svc WebServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(webServiceMethods.ByName("Version")),
 		connect.WithHandlerOptions(opts...),
 	)
-	return "/api.WebService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return "/api.v1.WebService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case WebServiceVersionProcedure:
 			webServiceVersionHandler.ServeHTTP(w, r)
@@ -104,5 +104,5 @@ func NewWebServiceHandler(svc WebServiceHandler, opts ...connect.HandlerOption) 
 type UnimplementedWebServiceHandler struct{}
 
 func (UnimplementedWebServiceHandler) Version(context.Context, *connect.Request[gen.VersionRequest]) (*connect.Response[gen.VersionResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("api.WebService.Version is not implemented"))
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("api.v1.WebService.Version is not implemented"))
 }

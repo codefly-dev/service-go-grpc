@@ -66,7 +66,7 @@ func startTimedFace(t *testing.T, config *Configuration) (string, *GrpcServer) {
 	go func() { _ = face.Run(context.Background()) }()
 	t.Cleanup(func() { _ = face.server.Close(); grpcServer.gRPC.Stop() })
 	address := fmt.Sprintf("127.0.0.1:%d", ports[1])
-	waitForHTTP(t, "http://"+address+"/api.WebService/")
+	waitForHTTP(t, "http://"+address+"/api.v1.WebService/")
 	return address, grpcServer
 }
 
@@ -133,7 +133,7 @@ func TestConnectListenerCutsOffADrippedBody(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		if _, err := fmt.Fprintf(conn, "POST /api.WebService/Version HTTP/1.1\r\nHost: web\r\nContent-Type: application/proto\r\nConnect-Protocol-Version: 1\r\nContent-Length: 100000\r\n\r\n"); err != nil {
+		if _, err := fmt.Fprintf(conn, "POST /api.v1.WebService/Version HTTP/1.1\r\nHost: web\r\nContent-Type: application/proto\r\nConnect-Protocol-Version: 1\r\nContent-Length: 100000\r\n\r\n"); err != nil {
 			t.Fatal(err)
 		}
 		start := time.Now()
@@ -154,7 +154,7 @@ func TestConnectListenerCutsOffADrippedBody(t *testing.T) {
 		conn, framer := h2cConn(t, address)
 		var block bytes.Buffer
 		encoder := hpack.NewEncoder(&block)
-		for _, field := range [][2]string{{":method", "POST"}, {":scheme", "http"}, {":path", "/api.WebService/Version"},
+		for _, field := range [][2]string{{":method", "POST"}, {":scheme", "http"}, {":path", "/api.v1.WebService/Version"},
 			{":authority", "web"}, {"content-type", "application/grpc"}, {"te", "trailers"}} {
 			_ = encoder.WriteField(hpack.HeaderField{Name: field[0], Value: field[1]})
 		}
@@ -320,7 +320,7 @@ func TestConnectListenerCutsOffDrippedHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if _, err := fmt.Fprintf(conn, "POST /api.WebService/Version HTTP/1.1\r\n"); err != nil {
+	if _, err := fmt.Fprintf(conn, "POST /api.v1.WebService/Version HTTP/1.1\r\n"); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
@@ -343,7 +343,7 @@ func TestConnectListenerClosesIdleConnections(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		if _, err := fmt.Fprintf(conn, "POST /api.WebService/Version HTTP/1.1\r\nHost: web\r\nContent-Type: application/json\r\nConnect-Protocol-Version: 1\r\nContent-Length: 2\r\n\r\n{}"); err != nil {
+		if _, err := fmt.Fprintf(conn, "POST /api.v1.WebService/Version HTTP/1.1\r\nHost: web\r\nContent-Type: application/json\r\nConnect-Protocol-Version: 1\r\nContent-Length: 2\r\n\r\n{}"); err != nil {
 			t.Fatal(err)
 		}
 		reader := bufio.NewReader(conn)

@@ -237,7 +237,7 @@ func TestRESTGatewayDialsWithServiceDialOptions(t *testing.T) {
 	for len(dialled) > 0 {
 		methods[<-dialled] = true
 	}
-	for _, want := range []string{"/api.WebService/Version", "/grpc.health.v1.Health/Check"} {
+	for _, want := range []string{"/api.v1.WebService/Version", "/grpc.health.v1.Health/Check"} {
 		if !methods[want] {
 			t.Errorf("the service's dial options did not reach the call to %s (saw %v)", want, methods)
 		}

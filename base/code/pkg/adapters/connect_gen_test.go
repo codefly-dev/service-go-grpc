@@ -102,7 +102,7 @@ func startConfiguredService(t *testing.T, config *Configuration) (string, *http.
 		}
 	})
 	base := fmt.Sprintf("http://127.0.0.1:%d", *config.EndpointConnectPort)
-	waitForHTTP(t, base+"/api.WebService/")
+	waitForHTTP(t, base+"/api.v1.WebService/")
 	return base, &http.Client{Timeout: 10 * time.Second}
 }
 
@@ -224,7 +224,7 @@ func TestConnectListenerAppliesGRPCTransportPolicy(t *testing.T) {
 	oversized := make([]byte, 0, 4+(64<<10))
 	oversized = append(oversized, 0x7a, 0x80, 0x80, 0x04)
 	oversized = append(oversized, make([]byte, 64<<10)...)
-	request, err := http.NewRequest(http.MethodPost, base+"/api.WebService/Version", bytes.NewReader(oversized))
+	request, err := http.NewRequest(http.MethodPost, base+"/api.v1.WebService/Version", bytes.NewReader(oversized))
 	if err != nil {
 		t.Fatalf("build oversized request: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestConnectListenerAppliesGRPCTransportPolicy(t *testing.T) {
 	if compressed.Len() >= receiveBound {
 		t.Fatalf("compressed payload is %d bytes, which the bound (%d) refuses before inflating it", compressed.Len(), receiveBound)
 	}
-	request, err = http.NewRequest(http.MethodPost, base+"/api.WebService/Version", bytes.NewReader(compressed.Bytes()))
+	request, err = http.NewRequest(http.MethodPost, base+"/api.v1.WebService/Version", bytes.NewReader(compressed.Bytes()))
 	if err != nil {
 		t.Fatalf("build compressed request: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestConnectListenerAppliesGRPCTransportPolicy(t *testing.T) {
 func TestConnectListenerServesRPCProtocolsOnly(t *testing.T) {
 	base, httpClient := startServedService(t)
 
-	// api.WebService.Version is annotated `get: "/version"`; that route is the
+	// api.v1.WebService.Version is annotated `get: "/version"`; that route is the
 	// REST listener's alone.
 	response, err := httpClient.Get(base + "/version")
 	if err != nil {

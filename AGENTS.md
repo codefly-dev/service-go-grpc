@@ -137,7 +137,9 @@ bug it prevents is possible. The existing tests do; match them.
   byte-for-byte to `base/**` — `go.mod`, `go.sum`, `grpc_gen.go`, the CORS
   adapter — and `base/code/go.mod`'s `core` line must equal this module's. Edit
   `base/code`, then mirror into the `.tmpl`s in the same commit. Dependabot does
-  not watch `base/code`; that mirror is manual.
+  not watch `base/code`; that mirror is manual. The protobuf source template declares
+  `api.v1`. Create runs Sync to generate bindings and OpenAPI for the actual
+  service name and Go module. Their generated base fixtures come from Buf.
 - **Production `Build` emits a recipe, never builds an image.** It renders
   `templates/builder` and returns a `DockerBuildPlan` for the CLI. The maintained
   opt-in packaging tests may build that exact recipe to qualify runtime behavior.
